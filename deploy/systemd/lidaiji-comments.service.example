@@ -1,0 +1,16 @@
+[Unit]
+Description=Lidaiji comments service
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_VALUE_HERE
+Group=YOUR_VALUE_HERE
+WorkingDirectory=/path/to/comments-service
+EnvironmentFile=/path/to/comments.env
+ExecStart=/usr/bin/node --experimental-sqlite src/server.js
+Restart=on-failure
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

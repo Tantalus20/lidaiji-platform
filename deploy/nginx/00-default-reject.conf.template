@@ -1,0 +1,15 @@
+# 服务器尚无默认拒绝站点时才启用；先确认不会覆盖现有默认站点。
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    return 444;
+}
+
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name _;
+    ssl_reject_handshake on;
+}
+

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>评论审核 · 历代纪</title>
+  <link rel="stylesheet" href="/admin/comments/admin.css?v=0400">
+  <script src="/admin/comments/admin.js?v=0400" defer></script>
+</head>
+<body>
+  <header class="admin-header">
+    <div><p>历代纪</p><h1>评论审核</h1></div>
+    <button id="logout" type="button" hidden>退出登录</button>
+  </header>
+  <main>
+    <section id="login-panel" class="panel narrow" aria-labelledby="login-title">
+      <h2 id="login-title">站主登录</h2>
+      <p>这里只用于审核游客段评与章评，不会修改文章正文。</p>
+      <form id="login-form">
+        <label>用户名<input name="username" autocomplete="username" required maxlength="40"></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+        <button type="submit">进入审核后台</button>
+        <p class="form-status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="stats" id="stats" aria-label="段评统计"></div>
+      <form id="filters" class="filters">
+        <label>状态
+          <select name="status">
+            <option value="pending">待审核</option>
+            <option value="approved">已通过</option>
+            <option value="rejected">已拒绝</option>
+            <option value="spam">垃圾</option>
+            <option value="hidden">已隐藏</option>
+            <option value="orphaned">原段落已删除</option>
+            <option value="deleted">逻辑删除</option>
+          </select>
+        </label>
+        <label>类型
+          <select name="scope">
+            <option value="all">全部类型</option>
+            <option value="paragraph">段评</option>
+            <option value="article">章评</option>
+          </select>
+        </label>
+        <label>搜索<input name="q" placeholder="昵称或正文" maxlength="80"></label>
+        <label>文章ID<input name="articleId" placeholder="article-…" maxlength="40"></label>
+        <label class="inline-filter"><input type="checkbox" name="containsLink" value="1"> 含链接</label>
+        <label class="inline-filter"><input type="checkbox" name="duplicatesOnly" value="1"> 疑似重复</label>
+        <button type="submit">筛选</button>
+      </form>
+      <p id="dashboard-status" class="form-status" aria-live="polite"></p>
+      <div class="batch-actions">
+        <button type="button" data-batch="approve">批量通过所选</button>
+        <button type="button" class="secondary" data-batch="reject">批量拒绝所选</button>
+        <button type="button" class="danger" data-batch="spam">批量标记垃圾</button>
+      </div>
+      <div id="comment-list" class="comment-list"></div>
+      <nav id="pagination" class="pagination" aria-label="审核列表翻页"></nav>
+    </section>
+  </main>
+</body>
+</html>

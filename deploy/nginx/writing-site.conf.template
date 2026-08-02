@@ -1,0 +1,92 @@
+# 将 __WRITING_DOMAIN__ 替换为最终域名后启用。
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __WRITING_DOMAIN__;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name __WRITING_DOMAIN__;
+
+    ssl_certificate __CERT_FULLCHAIN__;
+    ssl_certificate_key __CERT_KEY__;
+
+    root /opt/writing-site/current;
+    index index.html;
+    autoindex off;
+    charset utf-8;
+
+    server_tokens off;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; media-src 'self'; upgrade-insecure-requests" always;
+
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml application/xml application/rss+xml application/javascript application/json image/svg+xml;
+
+    location /api/comments/ {
+        client_max_body_size 40k;
+        proxy_pass http://127.0.0.1:4317;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_hide_header X-Powered-By;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "same-origin" always;
+    }
+
+    # ^~ prevents the generic static-asset regex below from intercepting
+    # admin.js/admin.css and returning a 404 from the Hugo document root.
+    location ^~ /admin/comments/ {
+        client_max_body_size 40k;
+        proxy_pass http://127.0.0.1:4317;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        add_header Cache-Control "no-store" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "same-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+        add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'" always;
+    }
+
+    location ~ /\.(?!well-known/) {
+        deny all;
+    }
+
+    location ~* \.(?:md|markdown|toml|yaml|yml|sh|command|env|bak|sql|git)$ {
+        return 404;
+    }
+
+    location ~* \.(?:css|js)$ {
+        try_files $uri =404;
+        expires 1y;
+    }
+
+    location ~* \.(?:png|jpe?g|webp|avif|svg|ico)$ {
+        try_files $uri =404;
+        expires 30d;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+        expires -1;
+    }
+
+    error_page 404 /404.html;
+    location = /404.html {
+        internal;
+        expires -1;
+    }
+}

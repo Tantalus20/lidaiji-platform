@@ -1,0 +1,14 @@
+{
+  "name": "lidaiji-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "历代纪静态站本地预览入口（构建后由段评服务同源托管）",
+  "scripts": {
+    "dev": "bash scripts/dev-preview.sh",
+    "studio": "bash scripts/start-studio.sh",
+    "build": "bash scripts/build.sh",
+    "check": "bash scripts/check.sh",
+    "comments:init": "bash scripts/comments-init-local.sh",
+    "comments:create-admin": "bash scripts/comments-create-admin-local.sh"
+  }
+}

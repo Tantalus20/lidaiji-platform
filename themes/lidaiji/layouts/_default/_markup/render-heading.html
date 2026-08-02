@@ -1,0 +1,4 @@
+<h{{ .Level }} id="{{ .Anchor }}">
+  {{- .Text | safeHTML -}}
+  <a class="heading-anchor" href="#{{ .Anchor }}" aria-label="复制本节链接：{{ .Text | plainify }}"><span aria-hidden="true">§</span></a>
+</h{{ .Level }}>

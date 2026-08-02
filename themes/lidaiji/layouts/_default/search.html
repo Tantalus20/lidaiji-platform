@@ -1,0 +1,17 @@
+{{ define "main" }}
+<header class="page-header search-header">
+  <h1>{{ .Title }}</h1>
+  <p>{{ .Description }}</p>
+  <form class="search-form" role="search" data-search-form>
+    <label for="site-search">搜索本站文章</label>
+    <div>
+      <input id="site-search" name="q" type="search" autocomplete="off" maxlength="120" placeholder="输入标题、文集、标签或正文关键词">
+      <button type="submit">搜索</button>
+    </div>
+  </form>
+</header>
+<section class="page-shell search-results" aria-live="polite" aria-busy="false" data-search-results>
+  <p class="empty-state">搜索完全在当前浏览器中进行，不会把关键词发送给任何第三方。</p>
+</section>
+{{ end }}
+

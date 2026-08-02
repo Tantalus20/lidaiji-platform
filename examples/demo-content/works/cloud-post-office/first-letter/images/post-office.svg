@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 480" role="img" aria-labelledby="title desc">
+  <title id="title">虚构海岛邮局</title><desc id="desc">蓝色海面旁的一座红顶小屋</desc>
+  <rect width="800" height="480" fill="#d8edf2"/><path d="M0 340Q200 300 400 350T800 330V480H0Z" fill="#6ca7b4"/>
+  <rect x="285" y="205" width="230" height="170" fill="#f4e6c8"/><path d="M250 220L400 115l150 105Z" fill="#9b4b42"/>
+  <rect x="375" y="285" width="50" height="90" fill="#6d4b3a"/><circle cx="410" cy="330" r="4" fill="#e8cf75"/>
+</svg>

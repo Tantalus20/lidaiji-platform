@@ -1,0 +1,4 @@
+python-docx==1.2.0
+Pillow==12.2.0
+PyYAML==6.0.2
+pypinyin==0.55.0

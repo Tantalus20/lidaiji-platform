@@ -1,0 +1,173 @@
+{{ define "main" }}
+{{ $hasToc := gt (len .Fragments.Headings) 0 }}
+{{ $commentMode := false }}
+{{ with .Params.comments }}
+  {{ if reflect.IsMap . }}{{ $commentMode = index . "paragraph" }}{{ end }}
+{{ end }}
+{{ $commentsOn := and .Site.Params.comments.enabled .Site.Params.comments.paragraphComments $commentMode .Params.articleId }}
+<article class="reading-layout">
+  <div class="article-main">
+    <header class="article-header">
+      <p class="eyebrow">{{ with .Params.collections }}《{{ index . 0 }}》{{ else }}{{ .Section }}{{ end }}</p></p>
+      <h1>{{ .Title }}</h1>
+      {{ with .Params.subtitle }}
+      <div class="article-subtitle">
+        {{ range split . " · " }}
+          {{ $entry := . }}
+          {{ range $genre := slice "本纪" "世家" "列传" }}
+            {{ $entry = replace $entry $genre (printf "<em class=\"subtitle-genre\">%s</em>" $genre) }}
+          {{ end }}
+          <span class="subtitle-entry">{{ $entry | safeHTML }}</span>
+        {{ end }}
+      </div>
+      {{ end }}
+      {{ if not .Params.hideDescription }}
+        {{ with .Description }}<p class="article-description">{{ . }}</p>{{ end }}
+      {{ end }}
+      <p class="article-byline">
+        <time datetime="{{ $.Date.Format "2006-01-02" }}">{{ $.Date.Format "2006年1月2日" }}</time> 写于
+        {{- if ne ($.Lastmod.Format "2006-01-02") ($.Date.Format "2006-01-02") }} · 修订于 <time datetime="{{ $.Lastmod.Format "2006-01-02" }}">{{ $.Lastmod.Format "2006年1月2日" }}</time>{{ end }}
+        · 全文 {{ .WordCount }} 字 · 约 {{ .ReadingTime }} 分钟
+      </p>
+      <div class="reader-tools" hidden>
+        <span class="reader-tools-label" id="reader-font-label">字号</span>
+        <div class="reader-font-group" role="group" aria-labelledby="reader-font-label">
+          <button type="button" data-reader-font="small" aria-pressed="false">小</button>
+          <button type="button" data-reader-font="standard" aria-pressed="true">标准</button>
+          <button type="button" data-reader-font="large" aria-pressed="false">大</button>
+        </div>
+      </div>
+    </header>
+
+    {{ if and (gt .WordCount 300) $hasToc }}
+    <details class="mobile-toc">
+      <summary>文章目录</summary>
+      {{ .TableOfContents | replaceRE `<nav id="TableOfContents">` `<nav id="TableOfContents-mobile" aria-label="文章目录（移动端）">` | safeHTML }}
+    </details>
+    {{ end }}
+
+    <div class="article-content">
+      {{ .Content }}
+      {{ partial "author-notes.html" . }}
+    </div>
+
+    <footer class="article-footer">
+      {{ if $commentsOn }}
+      <section class="article-comments" id="article-comments" data-article-comments>
+        <header class="article-comments-header">
+          <h2>章评<span class="article-comments-total" data-ac-total></span></h2>
+          <button type="button" class="article-comments-open" data-ac-open hidden>写章评</button>
+        </header>
+        <p class="article-comments-note">对整篇文章的整体评论；逐自然段的批注请使用段尾〔评〕。</p>
+        <div class="article-comments-list" data-ac-list aria-live="polite"></div>
+        <button type="button" class="article-comments-more" data-ac-more hidden>查看更多章评</button>
+        <form class="article-comment-form" data-ac-form hidden>
+          <h3>写一则章评</h3>
+          <p>章评提交后需经站主审核，通过后公开显示。昵称未经身份核验。</p>
+          <label>显示名
+            <input name="displayName" required minlength="1" maxlength="40" autocomplete="nickname">
+          </label>
+          <label>章评正文
+            <textarea name="body" required minlength="10" maxlength="3000" rows="6" data-ac-body></textarea>
+          </label>
+          <p class="article-comment-count" data-ac-count>0 / 3000</p>
+          <label class="comments-honeypot" aria-hidden="true">网站
+            <input name="website" tabindex="-1" autocomplete="off">
+          </label>
+          <label class="privacy-confirm">
+            <input name="privacy" type="checkbox" required>
+            <span>我确认内容可以在审核后公开，且不含他人隐私、违法内容或无权公开的信息。本站会使用必要的技术信息防止垃圾提交，但不公开IP或技术标识。</span>
+          </label>
+          <div class="article-comment-form-actions">
+            <button type="submit">提交章评，等待审核</button>
+            <button type="button" class="article-comment-cancel" data-ac-cancel>取消</button>
+          </div>
+        </form>
+        <p class="comments-status article-comments-status" data-ac-status aria-live="polite"></p>
+      </section>
+      {{ end }}
+      <div class="article-taxonomies">
+        {{ with .GetTerms "categories" }}<div><strong>分类</strong>{{ range . }}<a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ end }}</div>{{ end }}
+        {{ with .GetTerms "tags" }}<div><strong>标签</strong>{{ range . }}<a href="{{ .RelPermalink }}">#{{ .LinkTitle }}</a>{{ end }}</div>{{ end }}
+        {{ with .GetTerms "people" }}<div><strong>人物</strong>{{ range . }}<a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ end }}</div>{{ end }}
+        {{ with .GetTerms "periods" }}<div><strong>时期</strong>{{ range . }}<a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ end }}</div>{{ end }}
+        {{ with .GetTerms "places" }}<div><strong>地点</strong>{{ range . }}<a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ end }}</div>{{ end }}
+      </div>
+      {{ if eq .Section "works" }}
+        <a class="back-collection" href="{{ .CurrentSection.RelPermalink }}">返回《{{ .CurrentSection.Title }}》</a>
+      {{ end }}
+      {{ $orderedPages := .CurrentSection.RegularPages.ByWeight }}
+      {{ with .Params.series }}
+        {{ $orderedPages = (where $.Site.RegularPages "Params.series" "intersect" .).ByWeight }}
+      {{ end }}
+      {{ $currentIndex := -1 }}
+      {{ range $index, $page := $orderedPages }}
+        {{ if eq $page.RelPermalink $.RelPermalink }}{{ $currentIndex = $index }}{{ end }}
+      {{ end }}
+      {{ if ge $currentIndex 0 }}
+        <nav class="article-pager" aria-label="文章前后篇">
+          {{ if gt $currentIndex 0 }}
+            {{ $previous := index $orderedPages (sub $currentIndex 1) }}
+            <a rel="prev" href="{{ $previous.RelPermalink }}"><small>上一篇</small><span>{{ $previous.Title }}</span></a>
+          {{ end }}
+          {{ if lt (add $currentIndex 1) (len $orderedPages) }}
+            {{ $next := index $orderedPages (add $currentIndex 1) }}
+            <a rel="next" href="{{ $next.RelPermalink }}"><small>下一篇</small><span>{{ $next.Title }}</span></a>
+          {{ end }}
+        </nav>
+      {{ end }}
+      {{ with .Params.series }}
+        <section class="series-nav" aria-labelledby="series-heading">
+          <h2 id="series-heading">系列：{{ index . 0 }}</h2>
+          <ol>
+            {{ $current := $ }}
+            {{ range (where $.Site.RegularPages "Params.series" "intersect" .).ByWeight }}
+              <li{{ if eq .RelPermalink $current.RelPermalink }} class="current"{{ end }}><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>
+            {{ end }}
+          </ol>
+        </section>
+      {{ end }}
+    </footer>
+  </div>
+  {{ if and (gt .WordCount 300) $hasToc }}
+  <aside class="desktop-toc" aria-label="文章目录">
+    <p aria-hidden="true">文章目录</p>
+    {{ .TableOfContents | replaceRE `<nav id="TableOfContents">` `<nav aria-label="文章目录（桌面端）">` | safeHTML }}
+  </aside>
+  {{ end }}
+</article>
+{{ if $commentsOn }}
+<dialog id="paragraph-comments" class="paragraph-comments-dialog" aria-labelledby="paragraph-comments-title">
+  <div class="paragraph-comments-shell">
+    <header>
+      <div>
+        <p class="eyebrow">读者批注</p>
+        <h2 id="paragraph-comments-title" data-comments-title>本段段评</h2>
+      </div>
+      <button type="button" class="comments-close" data-comments-close aria-label="关闭段评面板">关闭</button>
+    </header>
+    <blockquote data-comments-excerpt></blockquote>
+    <div class="paragraph-comments-list" data-comments-list></div>
+    <form class="paragraph-comment-form">
+      <h3>写一则段评</h3>
+      <p>昵称未经身份核验。所有段评均须经站主审核，通过后才会公开。</p>
+      <label>显示名
+        <input name="displayName" required minlength="1" maxlength="40" autocomplete="nickname">
+      </label>
+      <label>段评正文
+        <textarea name="body" required minlength="5" maxlength="3000" rows="7"></textarea>
+      </label>
+      <label class="comments-honeypot" aria-hidden="true">网站
+        <input name="website" tabindex="-1" autocomplete="off">
+      </label>
+      <label class="privacy-confirm">
+        <input name="privacy" type="checkbox" required>
+        <span>我确认内容可以在审核后公开，且不含他人隐私、违法内容或无权公开的信息。本站会使用必要的技术信息防止垃圾提交，但不公开IP或技术标识。</span>
+      </label>
+      <button type="submit">提交段评，等待审核</button>
+    </form>
+    <p class="comments-status" data-comments-status aria-live="polite"></p>
+  </div>
+</dialog>
+{{ end }}
+{{ end }}

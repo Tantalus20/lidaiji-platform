@@ -1,0 +1,12 @@
+{{ define "main" }}
+<header class="page-header">
+  <h1>{{ .Title }}</h1>
+  <p>按{{ .Title }}浏览站内文章。</p>
+</header>
+<div class="page-shell term-cloud term-cloud-large">
+  {{ range .Data.Terms.Alphabetical }}
+    <a href="{{ .Page.RelPermalink }}">{{ .Page.Title }} <small>{{ .Count }}</small></a>
+  {{ end }}
+</div>
+{{ end }}
+

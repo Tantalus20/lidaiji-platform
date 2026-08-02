@@ -1,0 +1,54 @@
+baseURL = "https://example.com/"
+title = "示例文集"
+locale = "zh-CN"
+defaultContentLanguage = "zh-cn"
+hasCJKLanguage = true
+enableRobotsTXT = true
+enableGitInfo = false
+theme = "lidaiji"
+summaryLength = 90
+timeout = "120s"
+
+[permalinks]
+  essays = "/essays/:slug/"
+  archives = "/archives/:slug/"
+
+[taxonomies]
+  category = "categories"
+  tag = "tags"
+  series = "series"
+  collection = "collections"
+  period = "periods"
+  person = "people"
+  place = "places"
+
+[outputs]
+  home = ["HTML", "RSS", "JSON"]
+  section = ["HTML", "RSS"]
+  taxonomy = ["HTML", "RSS"]
+  term = ["HTML", "RSS"]
+
+[outputFormats.JSON]
+  mediaType = "application/json"
+  baseName = "search-index"
+  isPlainText = true
+  notAlternative = true
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = false
+  [markup.highlight]
+    noClasses = false
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 4
+    ordered = false
+
+[sitemap]
+  changefreq = "weekly"
+  priority = 0.5
+  filename = "sitemap.xml"
+
+[security]
+  enableInlineShortcodes = false

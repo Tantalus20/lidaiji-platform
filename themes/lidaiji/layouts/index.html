@@ -1,0 +1,90 @@
+{{ define "main" }}
+{{ $allPages := .Site.RegularPages }}
+{{ $totalWords := newScratch }}
+{{ range $allPages }}{{ $totalWords.Add "words" .WordCount }}{{ end }}
+<section class="home-hero">
+  <div class="home-hero-copy">
+    <p class="eyebrow">{{ .Site.Params.homeEyebrow }}</p>
+    <h1>{{ .Site.Params.siteName }}</h1>
+    <p class="hero-subtitle">{{ .Site.Params.siteSubtitle }}</p>
+    <p class="hero-intro">{{ .Site.Params.homeIntro }}</p>
+    <div class="hero-actions">
+      <a class="button primary" href="{{ "/works/" | relURL }}">进入文集</a>
+      <a class="button quiet" href="{{ "/search/" | relURL }}">全文搜索</a>
+    </div>
+  </div>
+  <div class="archive-plaque" aria-label="站点档案统计">
+    <span class="plaque-vertical" aria-hidden="true">{{ .Site.Params.siteName }}</span>
+    <div class="plaque-body">
+      <span class="plaque-label">档案著录</span>
+      <dl class="plaque-facts">
+        <div><dt>收录文章</dt><dd>{{ len $allPages }} 篇</dd></div>
+        <div><dt>总字数</dt><dd>{{ partial "word-count.html" ($totalWords.Get "words") }}</dd></div>
+        {{ with (index $allPages.ByLastmod.Reverse 0) }}<div><dt>最近修订</dt><dd>{{ .Lastmod.Format "2006年1月" }}</dd></div>{{ end }}
+      </dl>
+      <small>Markdown 原稿 · 长期修订</small>
+    </div>
+  </div>
+</section>
+
+{{ $works := .Site.GetPage "/works" }}
+{{ $featured := where $works.Sections "Params.featured" true }}
+<section class="home-section">
+  <div class="section-heading">
+    <h2>精选文集</h2>
+    <a href="{{ "/works/" | relURL }}">查看全部</a>
+  </div>
+  <div class="collection-grid">
+    {{ range first 3 $featured }}
+      {{ $pages := .RegularPagesRecursive }}
+      {{ $scratch := newScratch }}
+      {{ range $pages }}{{ $scratch.Add "words" .WordCount }}{{ end }}
+      <a class="collection-card" href="{{ .RelPermalink }}">
+        <span class="collection-status">{{ .Params.status | default "整理中" }}</span>
+        <h3>{{ .Title }}</h3>
+        {{ with .Params.subtitle }}<p>{{ . }}</p>{{ end }}
+        <dl>
+          <div><dt>篇数</dt><dd>{{ len $pages }}</dd></div>
+          <div><dt>字数</dt><dd>{{ partial "word-count.html" ($scratch.Get "words") }}</dd></div>
+          <div><dt>更新</dt><dd>{{ .Lastmod.Format "2006.01" }}</dd></div>
+        </dl>
+      </a>
+    {{ else }}
+      <p class="empty-state">文集正在整理中。</p>
+    {{ end }}
+  </div>
+</section>
+
+<section class="home-section">
+  <div class="section-heading">
+    <h2>最近更新</h2>
+    <a href="{{ "/timeline/" | relURL }}">按时间查看</a>
+  </div>
+  <div class="index-list">
+    {{ range first 6 .Site.RegularPages.ByLastmod.Reverse }}
+      <a class="index-row" href="{{ .RelPermalink }}">
+        <time datetime="{{ .Lastmod.Format "2006-01-02" }}">{{ .Lastmod.Format "2006.01.02" }}</time>
+        <span class="index-title">{{ .Title }}</span>
+        <span class="index-meta">{{ with .Params.collections }}{{ index . 0 }}{{ else }}{{ with .CurrentSection }}{{ .Title }}{{ end }}{{ end }} · {{ .WordCount }} 字</span>
+      </a>
+    {{ end }}
+  </div>
+</section>
+
+<section class="home-section home-indexes">
+  <div>
+    <h2>分类入口</h2>
+    <div class="term-cloud">
+      {{ range first 8 .Site.Taxonomies.categories.ByCount }}
+        <a href="{{ .Page.RelPermalink }}">{{ .Page.Title }} <small>{{ .Count }}</small></a>
+      {{ end }}
+    </div>
+  </div>
+  <aside class="about-card">
+    <h2>{{ .Site.Params.authorName }}</h2>
+    <p>{{ .Site.Params.authorBlurb }}</p>
+    <a href="{{ "/about/" | relURL }}">关于本站与内容自主权</a>
+  </aside>
+</section>
+{{ end }}
+

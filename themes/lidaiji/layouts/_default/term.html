@@ -1,0 +1,10 @@
+{{ define "main" }}
+<header class="page-header">
+  <h1>{{ .Title }}</h1>
+  <p>共 {{ len .Pages }} 篇文章。</p>
+</header>
+<div class="page-shell article-list">
+  {{ range .Pages.ByLastmod.Reverse }}{{ partial "article-card.html" . }}{{ end }}
+</div>
+{{ end }}
+

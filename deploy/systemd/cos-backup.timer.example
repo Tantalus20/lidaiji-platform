@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Lidaiji off-site backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=15m
+Unit=cos-backup.service
+
+[Install]
+WantedBy=timers.target

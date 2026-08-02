@@ -1,0 +1,23 @@
+<header class="site-header">
+  <div class="header-inner">
+    <a class="site-brand" href="{{ "/" | relURL }}" aria-label="{{ .Site.Params.siteName }}首页">
+      <span class="brand-mark" aria-hidden="true">纪</span>
+      <span>
+        <strong>{{ .Site.Params.siteName }}</strong>
+        <small>{{ .Site.Params.siteSubtitle }}</small>
+      </span>
+    </a>
+    <nav class="site-nav" aria-label="主导航">
+      {{ $current := .RelPermalink }}
+      {{ range .Site.Params.navigation.items }}
+        {{ $href := .url | relURL }}
+        {{ $active := or (and (eq .url "/") $.IsHome) (and (ne .url "/") (hasPrefix $current $href)) }}
+        <a href="{{ $href }}"{{ if $active }} aria-current="page"{{ end }}>{{ .label }}</a>
+      {{ end }}
+    </nav>
+    <button class="theme-toggle" type="button" aria-label="切换明暗模式" title="切换明暗模式">
+      <span aria-hidden="true">◐</span>
+    </button>
+  </div>
+</header>
+

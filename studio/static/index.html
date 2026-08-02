@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>《历代纪》作者工作台</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-main">
+    <h1>《历代纪》作者工作台</h1>
+    <p class="subtitle">本地作者工作台 v0.1.1 · 仅在本机运行，不会上传任何文件</p>
+    <p id="workspaceTarget" class="workspace-target">正在确认内容仓库……</p>
+  </div>
+  <nav class="topnav" aria-label="主导航">
+    <a href="#/" data-nav="home">文章</a>
+    <a href="#/versions" data-nav="versions">版本</a>
+    <a href="#/media" data-nav="media">媒体</a>
+    <a href="#/publish" data-nav="publish">发布</a>
+    <a href="#/import" data-nav="import">导入</a>
+    <a href="#/feedback" data-nav="feedback">反馈</a>
+    <button id="themeToggle" class="theme-toggle" type="button" title="切换深浅色">深色</button>
+  </nav>
+</header>
+
+<div id="globalError" class="error-box hidden" role="alert"></div>
+<div id="dirtyBar" class="dirty-bar hidden" role="alert">
+  <span>当前文章有未保存的修改，离开将丢失这些修改。</span>
+  <button id="dirtyStay" class="secondary small" type="button">继续编辑</button>
+  <button id="dirtyLeave" class="danger small" type="button">放弃修改并离开</button>
+</div>
+
+<main>
+  <!-- 文章管理首页 -->
+  <section id="view-home" class="view">
+    <div class="home-toolbar">
+      <input id="searchInput" type="search" placeholder="搜索标题、标签、正文……" aria-label="搜索文章">
+      <a class="button primary" href="#/new">新建文章</a>
+      <a class="button secondary" href="#/import">Word 导入</a>
+      <button id="homePreviewBtn" class="secondary" type="button">启动预览</button>
+      <span id="homePreviewStatus" class="preview-status"></span>
+    </div>
+    <div id="searchResults" class="hidden"></div>
+    <div id="feedbackCard" class="panel feedback-card hidden">
+      <h2>阅读反馈</h2>
+      <div id="feedbackCardBody"></div>
+    </div>
+    <div id="articleGroups"></div>
+  </section>
+
+  <!-- 编辑页 -->
+  <section id="view-edit" class="view hidden">
+    <div class="edit-topbar">
+      <a class="button secondary small" href="#/" id="editBack">← 返回</a>
+      <h2 id="editTitle">（未命名）</h2>
+      <span id="editDraftBadge" class="badge hidden">草稿</span>
+      <span id="editWordCount" class="meta-text"></span>
+      <span class="spacer"></span>
+      <button id="editSave" class="primary" type="button">保存</button>
+      <span id="editSaveStatus" class="preview-status"></span>
+      <button id="editHugoPreview" class="secondary small" type="button">Hugo 真实预览</button>
+      <button id="editOpenFolder" class="secondary small" type="button">打开目录</button>
+    </div>
+    <div id="editError" class="error-box hidden"></div>
+    <details id="fmPanel" class="fm-panel">
+      <summary>Front Matter（点击展开）</summary>
+      <form id="fmForm" class="meta-form">
+        <div class="fm-grid">
+          <label>标题 <input name="title"></label>
+          <label>副标题 <input name="subtitle"></label>
+          <label>发布日期 <input name="date" type="date"></label>
+          <label>排序权重 weight <input name="weight" type="number" min="0" max="99999"></label>
+          <label class="checkbox"><input name="draft" type="checkbox"> 草稿</label>
+          <label class="checkbox"><input name="featured" type="checkbox"> 精选</label>
+        </div>
+        <label>摘要 <textarea name="description" rows="2"></textarea></label>
+        <div class="fm-grid">
+          <label>文集 collections <input name="collections" placeholder="逗号分隔"></label>
+          <label>分类 categories <input name="categories" placeholder="逗号分隔"></label>
+          <label>标签 tags <input name="tags" placeholder="逗号分隔"></label>
+          <label>系列 series <input name="series" placeholder="逗号分隔"></label>
+          <label>时代 period <input name="period" placeholder="逗号分隔"></label>
+          <label>人物 people <input name="people" placeholder="逗号分隔"></label>
+          <label>地点 places <input name="places" placeholder="逗号分隔"></label>
+        </div>
+        <dl class="fm-readonly">
+          <dt>slug</dt><dd id="fmSlug">—</dd>
+          <dt>articleId</dt><dd id="fmArticleId">—</dd>
+          <dt>articleRevision</dt><dd id="fmArticleRevision">—</dd>
+        </dl>
+      </form>
+    </details>
+    <details id="notesPanel" class="fm-panel notes-panel">
+      <summary>作者评（写给自己的批注，发布的会显示在文章页）</summary>
+      <div id="notesError" class="error-box hidden"></div>
+      <div id="notesList"></div>
+      <div class="actions">
+        <button id="noteAddParagraph" class="secondary small" type="button">新增段落评</button>
+        <button id="noteAddArticle" class="secondary small" type="button">新增篇章评</button>
+      </div>
+      <div id="noteForm" class="note-form hidden">
+        <h3 id="noteFormTitle">新增批注</h3>
+        <label id="noteParagraphWrap">选择段落
+          <select id="noteParagraph"></select>
+        </label>
+        <label>批注正文（1–5000 字）
+          <textarea id="noteBody" rows="4" maxlength="5000"></textarea>
+        </label>
+        <label class="checkbox"><input id="notePublished" type="checkbox"> 发布（公开显示在文章页；不勾选则为仅自己可见的草稿）</label>
+        <div class="actions">
+          <button id="noteSave" class="primary small" type="button">保存批注</button>
+          <button id="noteCancel" class="secondary small" type="button">取消</button>
+          <span id="noteSaveStatus" class="preview-status"></span>
+        </div>
+      </div>
+    </details>
+    <div class="editor-split">
+      <textarea id="editorBody" class="editor-body" spellcheck="false" placeholder="在这里写作……"></textarea>
+      <div class="editor-preview-wrap">
+        <p class="preview-banner">转换预览，不代表最终网站效果。</p>
+        <div id="editorPreview" class="rendered editor-preview"></div>
+      </div>
+    </div>
+    <p class="editor-hint">保存时会为新段落自动补充段评锚点，已有锚点不会改动。</p>
+  </section>
+
+  <!-- 新建文章 -->
+  <section id="view-new" class="view hidden">
+    <div class="panel">
+      <h2>新建文章</h2>
+      <p class="ok-text">新文章默认为草稿（draft: true），不会发布。</p>
+      <form id="newForm" class="meta-form">
+        <label>标题 <input name="title" required></label>
+        <label>副标题（可空） <input name="subtitle"></label>
+        <label>栏目
+          <select name="section">
+            <option value="works">作品（works）</option>
+            <option value="essays" selected>随笔（essays）</option>
+            <option value="archives">资料（archives）</option>
+          </select>
+        </label>
+        <label>slug（网址用，小写字母/数字/连字符） <input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*"></label>
+        <fieldset id="newCollectionFields" class="hidden">
+          <legend>文集（栏目为“作品”时必选）</legend>
+          <label>选择文集
+            <select name="collectionExisting"></select>
+          </label>
+          <label id="newCollectionNameWrap">新文集名称 <input name="collectionName"></label>
+        </fieldset>
+        <div id="newError" class="error-box hidden"></div>
+        <div class="actions">
+          <a class="button secondary" href="#/">取消</a>
+          <button id="newSubmit" class="primary" type="submit">创建草稿</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- Word 导入向导 -->
+  <section id="view-import" class="view hidden">
+    <nav class="steps" id="stepNav" aria-label="导入步骤">
+      <button data-step="1" class="step current">1 选择文件</button>
+      <button data-step="2" class="step" disabled>2 解析</button>
+      <button data-step="3" class="step" disabled>3 导入报告</button>
+      <button data-step="4" class="step" disabled>4 元数据</button>
+      <button data-step="5" class="step" disabled>5 预览</button>
+      <button data-step="6" class="step" disabled>6 确认写入</button>
+    </nav>
+
+    <!-- 第 1 步：选择文件 -->
+    <section id="step-1" class="panel">
+      <h2>选择 Word 文件</h2>
+      <p>选择或拖入一份 <strong>.docx</strong> 稿件（不超过 100MB）。文件只会上传到本机的工作台，在确认写入之前不会改动网站内容。</p>
+      <div id="dropzone" class="dropzone" tabindex="0">
+        <p>点击选择文件，或把 .docx 拖到这里</p>
+        <input type="file" id="fileInput" accept=".docx" hidden>
+      </div>
+      <div id="fileInfo" class="file-info hidden"></div>
+      <div class="actions">
+        <button id="startParse" class="primary" disabled>开始解析</button>
+      </div>
+    </section>
+
+    <!-- 第 2 步：解析状态 -->
+    <section id="step-2" class="panel hidden">
+      <h2>正在解析</h2>
+      <ul class="progress" id="progressList">
+        <li data-key="read">正在读取 Word</li>
+        <li data-key="body">正在提取正文</li>
+        <li data-key="images">正在提取图片</li>
+        <li data-key="report">正在生成导入报告</li>
+        <li data-key="risk">正在检查导入风险</li>
+      </ul>
+      <div id="parseError" class="error-box hidden"></div>
+      <div class="actions">
+        <button id="parseBack" class="secondary hidden">重新选择文件</button>
+      </div>
+    </section>
+
+    <!-- 第 3 步：导入报告 -->
+    <section id="step-3" class="panel hidden">
+      <h2>导入报告</h2>
+      <dl class="report" id="reportStats"></dl>
+      <div id="reportConflicts"></div>
+      <div id="reportWarnings"></div>
+      <div class="actions">
+        <button class="secondary" data-goto="1">重新选择</button>
+        <button id="reportNext" class="primary">下一步：填写元数据</button>
+      </div>
+    </section>
+
+    <!-- 第 4 步：元数据 -->
+    <section id="step-4" class="panel hidden">
+      <h2>元数据</h2>
+      <form id="metaForm" class="meta-form">
+        <label>标题 <input name="title" required></label>
+        <label>副标题 <input name="subtitle"></label>
+        <label>slug（网址用，小写字母/数字/连字符） <input name="slug" required pattern="[a-z0-9]+(-[a-z0-9]+)*"></label>
+        <label>栏目
+          <select name="section">
+            <option value="works">作品（works）</option>
+            <option value="essays">随笔（essays）</option>
+            <option value="archives">资料（archives）</option>
+          </select>
+        </label>
+        <fieldset id="collectionFields">
+          <legend>文集（栏目为“作品”时必填）</legend>
+          <label>选择既有文集
+            <select name="collectionExisting"><option value="">—— 新建文集 ——</option></select>
+          </label>
+          <label>文集名称 <input name="collectionName"></label>
+          <label>文集 slug <input name="collectionSlug" pattern="[a-z0-9]+(-[a-z0-9]+)*"></label>
+        </fieldset>
+        <label>摘要（留空自动取正文首段） <textarea name="description" rows="3"></textarea></label>
+        <label>发布日期（留空取今天） <input name="date" type="date"></label>
+        <label>排序权重 weight <input name="weight" type="number" value="10" min="0" max="99999"></label>
+        <label>articleId（留空自动生成） <input name="articleId"></label>
+        <label class="checkbox"><input name="draft" type="checkbox" checked> 导入为草稿（推荐）</label>
+        <p id="draftWarning" class="warning-text hidden">未勾选“草稿”：导入后将直接进入正式发布构建，请确认稿件已最终定稿。</p>
+      </form>
+      <div id="metaError" class="error-box hidden"></div>
+      <div id="metaConflicts"></div>
+      <div class="actions">
+        <button class="secondary" data-goto="3">上一步</button>
+        <button id="metaNext" class="primary">下一步：生成预览</button>
+      </div>
+    </section>
+
+    <!-- 第 5 步：预览 -->
+    <section id="step-5" class="panel hidden">
+      <h2>预览</h2>
+      <div class="tabs" role="tablist">
+        <button class="tab current" data-tab="render" role="tab">近似渲染</button>
+        <button class="tab" data-tab="markdown" role="tab">Markdown 源码</button>
+        <button class="tab" data-tab="images" role="tab">图片墙</button>
+      </div>
+      <div id="tab-render" class="tab-panel">
+        <p class="preview-banner">这是转换预览，不代表最终网站效果。
+          <button id="openHugoPreview" class="secondary small">打开 Hugo 真实预览</button>
+          <span id="previewStatus" class="preview-status"></span>
+        </p>
+        <div id="rendered" class="rendered"></div>
+      </div>
+      <div id="tab-markdown" class="tab-panel hidden">
+        <pre id="markdownSource" class="markdown-source"></pre>
+      </div>
+      <div id="tab-images" class="tab-panel hidden">
+        <div id="imageWall" class="image-wall"></div>
+      </div>
+      <div id="previewWarnings"></div>
+      <div class="actions">
+        <button class="secondary" data-goto="4">上一步</button>
+        <button class="primary" data-goto="6">下一步：确认写入</button>
+      </div>
+    </section>
+
+    <!-- 第 6 步：确认写入 -->
+    <section id="step-6" class="panel hidden">
+      <h2>确认写入</h2>
+      <p>将在项目中新建以下文件（写入前会自动校验，失败不会留下半成品）：</p>
+      <ul id="proposedFiles" class="proposed-files"></ul>
+      <div id="commitConflicts"></div>
+      <div id="commitError" class="error-box hidden"></div>
+      <div class="actions" id="commitActions">
+        <button class="secondary" data-goto="5">上一步</button>
+        <button id="commitButton" class="primary">导入为本地草稿</button>
+        <button id="abortButton" class="danger">放弃本次导入</button>
+      </div>
+      <div id="commitSuccess" class="success-box hidden">
+        <h3>导入成功</h3>
+        <p id="commitResult"></p>
+        <div class="actions">
+          <button id="openFolder" class="primary">打开草稿目录</button>
+          <button id="viewMarkdown" class="secondary">查看 Markdown</button>
+          <button id="openPreview" class="secondary">打开 Hugo 本地预览</button>
+          <a class="button secondary" href="#/">返回文章管理</a>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <!-- 版本管理 -->
+  <section id="view-versions" class="view hidden">
+    <div id="versionsError" class="error-box hidden"></div>
+    <div id="versionsContent">
+      <div class="panel">
+        <h2>仓库状态</h2>
+        <dl class="report" id="versionsRepoInfo"></dl>
+        <h3 class="section-sub">未提交的文件</h3>
+        <div id="versionsClean" class="ok-text hidden">工作区干净，没有未提交的修改。</div>
+        <div id="versionsFiles"></div>
+        <div id="versionsCommitBox" class="hidden">
+          <label class="commit-message-label">提交信息（可编辑）
+            <textarea id="versionsMessage" rows="2" maxlength="500"></textarea>
+          </label>
+          <div class="actions">
+            <button id="versionsCommitBtn" class="primary" type="button">提交勾选文件</button>
+            <span id="versionsCommitStatus" class="preview-status"></span>
+          </div>
+          <div id="versionsConfirm" class="confirm-bar hidden">
+            <span>将在本地创建 Git 提交（只影响本机仓库，不会推送、不会发布）。</span>
+            <button id="versionsConfirmYes" class="danger small" type="button">确认提交</button>
+            <button id="versionsConfirmNo" class="secondary small" type="button">取消</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>最近提交</h2>
+        <div id="versionsLog"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 文章历史 -->
+  <section id="view-history" class="view hidden">
+    <div class="edit-topbar">
+      <a class="button secondary small" href="#/" id="historyBack">← 返回</a>
+      <h2 id="historyTitle">版本历史</h2>
+      <span class="spacer"></span>
+      <button id="historyWorktree" class="secondary small" type="button">查看当前未提交修改</button>
+    </div>
+    <div id="historyError" class="error-box hidden"></div>
+    <div id="historyDiff" class="hidden"></div>
+    <div class="panel">
+      <h2>提交时间线</h2>
+      <div id="historyLog"></div>
+    </div>
+  </section>
+
+  <!-- 发布中心 -->
+  <section id="view-publish" class="view hidden">
+    <div id="publishError" class="error-box hidden"></div>
+    <div class="panel">
+      <h2>发布状态</h2>
+      <dl class="report" id="publishInfo"></dl>
+      <h3 class="section-sub">最近发布记录（CHANGELOG）</h3>
+      <div id="publishChangelog"></div>
+      <h3 class="section-sub">最近提交</h3>
+      <div id="publishCommits"></div>
+    </div>
+    <div class="panel">
+      <h2>发布前检查</h2>
+      <p class="meta-text">先在本机跑一遍构建检查（约 10–20 秒；完整检查更慢），通过后 30 分钟内可以发布。</p>
+      <div class="actions">
+        <button id="preflightBtn" class="primary" type="button">运行发布前检查</button>
+        <label class="checkbox-inline"><input id="preflightFull" type="checkbox"> 完整检查（scripts/check.sh，数分钟）</label>
+        <span id="preflightStatus" class="preview-status"></span>
+      </div>
+      <pre id="preflightLog" class="log-box hidden"></pre>
+    </div>
+    <div class="panel" id="publishRunPanel">
+      <h2>正式发布</h2>
+      <p class="meta-text">将打包本站并上传到服务器、原子切换线上版本。此操作会改变线上网站。</p>
+      <div class="actions">
+        <button id="publishRunBtn" class="danger" type="button" disabled>确认发布</button>
+        <span id="publishRunStatus" class="preview-status"></span>
+      </div>
+      <div id="publishConfirm" class="confirm-bar hidden">
+        <span>将上传并切换线上版本，确定继续？</span>
+        <button id="publishConfirmYes" class="danger small" type="button">确定发布</button>
+        <button id="publishConfirmNo" class="secondary small" type="button">取消</button>
+      </div>
+      <pre id="publishLog" class="log-box hidden"></pre>
+    </div>
+  </section>
+
+  <!-- 媒体库 -->
+  <section id="view-media" class="view hidden">
+    <div id="mediaError" class="error-box hidden"></div>
+    <div class="panel">
+      <h2>上传图片</h2>
+      <div class="media-upload-row">
+        <select id="mediaArticleSelect" aria-label="选择文章"></select>
+        <input type="file" id="mediaFileInput" accept=".jpg,.jpeg,.png,.webp,.gif">
+        <button id="mediaUploadBtn" class="primary" type="button" disabled>上传</button>
+        <span id="mediaUploadStatus" class="preview-status"></span>
+      </div>
+      <div id="mediaUploadResult" class="success-box hidden"></div>
+    </div>
+    <div id="mediaGroups"></div>
+  </section>
+
+  <!-- 阅读反馈（段评/章评审核） -->
+  <section id="view-feedback" class="view hidden">
+    <div id="feedbackError" class="error-box hidden"></div>
+    <div id="feedbackLoginPanel" class="panel">
+      <h2>阅读反馈</h2>
+      <div id="feedbackServiceOff">
+        <p class="meta-text">评论服务未运行。段评/章评由本机评论服务（127.0.0.1:4317）提供。</p>
+        <div class="actions">
+          <button id="feedbackServiceStart" class="primary" type="button">启动评论服务</button>
+          <span id="feedbackServiceStatus" class="preview-status"></span>
+        </div>
+      </div>
+      <form id="feedbackLoginForm" class="meta-form hidden">
+        <p class="meta-text">审核段评/章评需要站主账号。会话只保存在本机内存，关闭工作台即失效。</p>
+        <label>用户名 <input name="username" autocomplete="username" required></label>
+        <label>密码 <input name="password" type="password" autocomplete="current-password" required></label>
+        <div class="actions">
+          <button class="primary" type="submit">登录</button>
+          <span id="feedbackLoginStatus" class="preview-status"></span>
+        </div>
+      </form>
+    </div>
+    <div id="feedbackMain" class="hidden">
+      <div class="panel">
+        <div class="feedback-toolbar">
+          <select id="feedbackStatus" aria-label="状态筛选">
+            <option value="pending" selected>待审核</option>
+            <option value="approved">已通过</option>
+            <option value="rejected">已拒绝</option>
+            <option value="spam">垃圾</option>
+            <option value="hidden">已隐藏</option>
+            <option value="deleted">已删除</option>
+            <option value="orphaned">孤立</option>
+          </select>
+          <select id="feedbackScope" aria-label="类型筛选">
+            <option value="all" selected>全部类型</option>
+            <option value="paragraph">段评</option>
+            <option value="article">章评</option>
+          </select>
+          <select id="feedbackArticle" aria-label="文章筛选"><option value="">全部文章</option></select>
+          <input id="feedbackSearch" type="search" placeholder="搜索昵称或正文">
+          <button id="feedbackRefresh" class="secondary small" type="button">刷新</button>
+          <button id="feedbackQuickStart" class="primary small" type="button">下一条待审核</button>
+          <span class="spacer"></span>
+          <span id="feedbackUser" class="meta-text"></span>
+          <button id="feedbackLogout" class="secondary small" type="button">退出登录</button>
+          <button id="feedbackServiceStop" class="secondary small" type="button">停止服务</button>
+        </div>
+        <div id="feedbackStats" class="feedback-stats"></div>
+      </div>
+      <div id="feedbackQuick" class="panel hidden"></div>
+      <div id="feedbackList"></div>
+      <div id="feedbackPager" class="feedback-pager"></div>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

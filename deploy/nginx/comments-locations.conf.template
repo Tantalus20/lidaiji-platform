@@ -1,0 +1,29 @@
+# 放入“历代纪”HTTPS server块内。评论服务只监听127.0.0.1。
+location /api/comments/ {
+    client_max_body_size 40k;
+    proxy_pass http://127.0.0.1:4317;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_hide_header X-Powered-By;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+}
+
+# ^~ prevents a parent server's generic .js/.css regex from intercepting
+# the comment administration assets.
+location ^~ /admin/comments/ {
+    client_max_body_size 40k;
+    proxy_pass http://127.0.0.1:4317;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    add_header Cache-Control "no-store" always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()" always;
+    add_header Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'" always;
+}

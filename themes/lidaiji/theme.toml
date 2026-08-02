@@ -1,0 +1,5 @@
+name = "历代纪"
+license = "MIT"
+description = "面向中文长文的现代私人文集主题"
+min_version = "0.146.0"
+

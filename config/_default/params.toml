@@ -1,0 +1,46 @@
+# 站名、域名和文案集中在 config/_default/ 下，换名时只需修改这里和 hugo.toml。
+siteName = "示例文集"
+siteSubtitle = "中文长文出版平台"
+siteDescription = "使用虚构内容演示长文、评论与作者工作台。"
+authorName = "示例作者"
+authorBlurb = "这里的文章、人物与地点均为虚构。"
+homeEyebrow = "私人文集 · 长期档案"
+homeIntro = "此处收录持续修订的文章与文集。文字保留自己的节奏，也保留来日重读与迁移的余地。"
+footerNote = "演示内容采用CC0；平台不使用第三方追踪、远程字体或外部内容服务。"
+dateFormat = "2006年1月2日"
+searchMaxChars = 120000
+searchChunkChars = 4000
+demoContent = false
+
+[comments]
+  enabled = true
+  paragraphComments = true
+  apiBase = "/api/comments/v1"
+
+[reading]
+  bodyMin = "680px"
+  bodyMax = "760px"
+  showProgress = true
+
+[navigation]
+  [[navigation.items]]
+    label = "首页"
+    url = "/"
+  [[navigation.items]]
+    label = "文集"
+    url = "/works/"
+  [[navigation.items]]
+    label = "随笔"
+    url = "/essays/"
+  [[navigation.items]]
+    label = "资料"
+    url = "/archives/"
+  [[navigation.items]]
+    label = "归档"
+    url = "/timeline/"
+  [[navigation.items]]
+    label = "搜索"
+    url = "/search/"
+  [[navigation.items]]
+    label = "关于"
+    url = "/about/"

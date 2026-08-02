@@ -1,0 +1,2 @@
+{{- $w := . -}}
+{{- if ge $w 10000 -}}{{ lang.FormatNumber 1 (div (float $w) 10000) }} 万字{{- else -}}{{ $w }} 字{{- end -}}

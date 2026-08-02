@@ -1,0 +1,39 @@
+{{ define "main" }}
+<header class="page-header">
+  <h1>{{ .Title }}</h1>
+  {{ with .Description }}<p>{{ . }}</p>{{ end }}
+</header>
+<div class="page-shell">
+  {{ if eq .Section "works" }}
+    <div class="collection-grid">
+      {{ range .Sections.ByWeight }}
+        {{ $pages := .RegularPagesRecursive }}
+        {{ $scratch := newScratch }}
+        {{ range $pages }}{{ $scratch.Add "words" .WordCount }}{{ end }}
+        <a class="collection-card" href="{{ .RelPermalink }}">
+          <span class="collection-status">{{ .Params.status | default "整理中" }}</span>
+          <h2>{{ .Title }}</h2>
+          <p>{{ or .Description .Summary }}</p>
+          <dl>
+            <div><dt>篇数</dt><dd>{{ len $pages }}</dd></div>
+            <div><dt>字数</dt><dd>{{ partial "word-count.html" ($scratch.Get "words") }}</dd></div>
+            <div><dt>状态</dt><dd>{{ .Params.status }}</dd></div>
+          </dl>
+        </a>
+      {{ end }}
+    </div>
+  {{ else }}
+    {{ with .Content }}<div class="article-content page-content">{{ . }}</div>{{ end }}
+    {{ if .Pages }}
+      <div class="article-list">
+        {{ range .Pages.ByLastmod.Reverse }}
+          {{ partial "article-card.html" . }}
+        {{ end }}
+      </div>
+    {{ else if not $.Content }}
+      <p class="empty-state">这里还没有公开文章。</p>
+    {{ end }}
+  {{ end }}
+</div>
+{{ end }}
+

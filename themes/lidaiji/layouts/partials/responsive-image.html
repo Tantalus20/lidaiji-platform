@@ -1,0 +1,35 @@
+{{ $image := .image }}
+{{ $alt := .alt | default "" }}
+{{ $caption := .caption | default "" }}
+{{ $loading := .loading | default "lazy" }}
+{{ if $image }}
+  {{ if eq $image.MediaType.SubType "svg" }}
+  <figure class="article-figure">
+    <a href="{{ $image.RelPermalink }}" target="_blank" rel="noopener" aria-label="查看较大图片：{{ $alt }}">
+      <img src="{{ $image.RelPermalink }}" loading="{{ $loading }}" decoding="async" alt="{{ $alt }}">
+    </a>
+    {{ with $caption }}<figcaption>{{ . }}</figcaption>{{ end }}
+  </figure>
+  {{ else }}
+  {{ $small := $image.Process "webp q82" }}
+  {{ $medium := $small }}
+  {{ $large := $small }}
+  {{ if gt $image.Width 480 }}{{ $small = $image.Resize "480x webp q82" }}{{ end }}
+  {{ if gt $image.Width 960 }}{{ $medium = $image.Resize "960x webp q84" }}{{ else }}{{ $medium = $image.Process "webp q84" }}{{ end }}
+  {{ if gt $image.Width 1440 }}{{ $large = $image.Resize "1440x webp q86" }}{{ else }}{{ $large = $image.Process "webp q86" }}{{ end }}
+  <figure class="article-figure">
+    <a href="{{ $large.RelPermalink }}" target="_blank" rel="noopener" aria-label="查看较大图片：{{ $alt }}">
+      <img
+        src="{{ $medium.RelPermalink }}"
+        srcset="{{ $small.RelPermalink }} {{ $small.Width }}w, {{ $medium.RelPermalink }} {{ $medium.Width }}w, {{ $large.RelPermalink }} {{ $large.Width }}w"
+        sizes="(max-width: 760px) 94vw, 760px"
+        width="{{ $medium.Width }}"
+        height="{{ $medium.Height }}"
+        loading="{{ $loading }}"
+        decoding="async"
+        alt="{{ $alt }}">
+    </a>
+    {{ with $caption }}<figcaption>{{ . }}</figcaption>{{ end }}
+  </figure>
+  {{ end }}
+{{ end }}

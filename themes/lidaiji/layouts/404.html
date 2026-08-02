@@ -1,0 +1,12 @@
+{{ define "main" }}
+<section class="not-found">
+  <p class="eyebrow">404 · 佚页</p>
+  <h1>这一页暂未收入档案</h1>
+  <p>链接可能已经迁移，或文章仍在整理。可以返回文集，或使用全文搜索。</p>
+  <div class="hero-actions">
+    <a class="button primary" href="{{ "/" | relURL }}">返回首页</a>
+    <a class="button quiet" href="{{ "/search/" | relURL }}">全文搜索</a>
+  </div>
+</section>
+{{ end }}
+

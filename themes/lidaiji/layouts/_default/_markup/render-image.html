@@ -1,0 +1,10 @@
+{{ $resource := .Page.Resources.GetMatch .Destination }}
+{{ if $resource }}
+  {{ partial "responsive-image.html" (dict "image" $resource "alt" .Text "caption" .Title) }}
+{{ else }}
+  <figure class="article-figure image-missing">
+    <img src="{{ .Destination | safeURL }}" alt="{{ .Text }}" loading="lazy" decoding="async">
+    {{ with .Title }}<figcaption>{{ . }}</figcaption>{{ end }}
+  </figure>
+{{ end }}
+

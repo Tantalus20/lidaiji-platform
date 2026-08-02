@@ -1,0 +1,23 @@
+version: 1
+notes:
+  - id: note-111111111111
+    scope: paragraph
+    paragraphId: p-111111111111
+    body: '已发布段评：<script>、</script>、<img onerror="alert(1)">、引号“”与 emoji 🐈。 分隔 结束。'
+    status: published
+    created: '2026-08-02'
+    updated: '2026-08-02'
+  - id: note-222222222222
+    scope: article
+    paragraphId: null
+    body: '已发布章评：只应作为文字显示。'
+    status: published
+    created: '2026-08-02'
+    updated: '2026-08-02'
+  - id: note-333333333333
+    scope: article
+    paragraphId: null
+    body: '绝密草稿标记-DRAFT-AUTHOR-NOTE-9f7a6d'
+    status: draft
+    created: '2026-08-02'
+    updated: '2026-08-02'

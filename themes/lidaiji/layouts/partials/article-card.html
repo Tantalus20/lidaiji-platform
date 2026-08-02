@@ -1,0 +1,11 @@
+<article class="article-card">
+  <p class="card-kicker">「{{ with .Params.collections }}{{ index . 0 }}{{ else }}{{ with .CurrentSection }}{{ .Title }}{{ else }}文章{{ end }}{{ end }}」</p>
+  <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
+  {{ with .Params.subtitle }}<p class="card-subtitle">{{ . }}</p>{{ end }}
+  <p class="card-summary">{{ or .Description .Summary | plainify | truncate 130 }}</p>
+  <p class="card-meta">
+    <time datetime="{{ .Lastmod.Format "2006-01-02" }}">{{ .Lastmod.Format "2006年1月2日" }}</time>
+    <span>{{ .WordCount }} 字</span>
+  </p>
+</article>
+

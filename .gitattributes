@@ -1,0 +1,32 @@
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+
+# 发布源码包只包含可部署源码；以下内容即使误被跟踪也不导出。
+/.git export-ignore
+/.cache export-ignore
+/.author-app export-ignore
+/.author-settings export-ignore
+/.lidaiji-workspace.json export-ignore
+/.hugo-local export-ignore
+/.venv-importer export-ignore
+/artifacts export-ignore
+/backups export-ignore
+/dist export-ignore
+/incoming export-ignore
+/public export-ignore
+/resources export-ignore
+/screenshots export-ignore
+**/.DS_Store export-ignore
+**/._* export-ignore
+**/.env* export-ignore
+**/*.docx export-ignore
+**/*.docm export-ignore
+**/*.sqlite export-ignore
+**/*.sqlite3 export-ignore
+**/*.sqlite-wal export-ignore
+**/*.sqlite-shm export-ignore
+**/*.log export-ignore

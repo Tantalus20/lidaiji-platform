@@ -1,0 +1,13 @@
+<ol class="chapter-list">
+  {{ range . }}
+    <li>
+      <span class="chapter-number">{{ printf "%02d" .Weight }}</span>
+      <div>
+        <h3><a href="{{ .RelPermalink }}">{{ .Title }}</a></h3>
+        {{ with .Params.subtitle }}<p>{{ . }}</p>{{ end }}
+        <small>{{ .WordCount }} 字 · 写于 {{ .Date.Format "2006年1月2日" }}<span class="chapter-read" data-read-state></span></small>
+      </div>
+    </li>
+  {{ end }}
+</ol>
+

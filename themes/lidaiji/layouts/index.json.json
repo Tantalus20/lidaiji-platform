@@ -1,0 +1,16 @@
+[
+{{- $pages := .Site.RegularPages -}}
+{{- range $index, $page := $pages -}}
+  {{- if $index }},{{ end }}
+  {
+    "title": {{ $page.Title | jsonify }},
+    "subtitle": {{ ($page.Params.subtitle | default "") | jsonify }},
+    "description": {{ ($page.Description | default $page.Summary | plainify) | jsonify }},
+    "content": {{ ($page.Plain | truncate (int $.Site.Params.searchMaxChars)) | jsonify }},
+    "url": {{ $page.RelPermalink | jsonify }},
+    "collection": {{ (delimit ($page.Params.collections | default slice) "、") | jsonify }},
+    "tags": {{ ($page.Params.tags | default slice) | jsonify }},
+    "date": {{ ($page.Date.Format "2006-01-02") | jsonify }}
+  }
+{{- end -}}
+]

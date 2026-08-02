@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  {{ partial "head.html" . }}
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到正文</a>
+  {{ partial "header.html" . }}
+  {{ if and .IsPage .Site.Params.reading.showProgress }}<progress class="reading-progress" value="0" max="100" aria-label="阅读进度"></progress>{{ end }}
+  <main id="main-content">
+    {{ block "main" . }}{{ end }}
+  </main>
+  {{ partial "footer.html" . }}
+</body>
+</html>
+

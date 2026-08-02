@@ -1,0 +1,28 @@
+[Unit]
+Description=历代纪游客段评服务
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lidaiji-comments
+Group=lidaiji-comments
+WorkingDirectory=/opt/lidaiji-comments/current
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/lidaiji-comments.env
+ExecStart=/usr/bin/env node --experimental-sqlite /opt/lidaiji-comments/current/src/server.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/lidaiji-comments /var/backups/lidaiji-comments
+MemoryMax=160M
+TasksMax=64
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

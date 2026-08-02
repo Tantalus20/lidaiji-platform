@@ -1,0 +1,6 @@
+{
+  "contentRepoRoot": "../lidaiji-private",
+  "contentRoot": "../lidaiji-private/content",
+  "authorNotesRoot": "../lidaiji-private/data/author-notes",
+  "siteOverridesRoot": "../lidaiji-private/site-overrides"
+}

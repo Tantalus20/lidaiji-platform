@@ -1,0 +1,41 @@
+{{/* 作者评源文件位于 data/author-notes/<articleId>.yaml，不属于Page Bundle资源。
+     这里只服务端渲染published条目；普通文本节点负责转义，不输出草稿或原始YAML。
+     无JavaScript时，段评仍在文末可读；外部脚本仅负责把段评渐进增强到对应段落后。 */}}
+{{ $store := index hugo.Data "author-notes" | default (dict) }}
+{{ $articleId := .Params.articleId | default "" }}
+{{ $data := index $store $articleId | default (dict) }}
+{{ $paragraph := where ($data.notes | default (slice)) "status" "published" }}
+{{ $paragraph = where $paragraph "scope" "paragraph" }}
+{{ $article := where ($data.notes | default (slice)) "status" "published" }}
+{{ $article = where $article "scope" "article" }}
+{{ if or (gt (len $paragraph) 0) (gt (len $article) 0) }}
+<section class="author-notes" aria-label="作者评">
+  {{ if gt (len $paragraph) 0 }}
+  <section class="author-notes-paragraph-source">
+    <p class="author-notes-heading">作者段评</p>
+    {{ range $paragraph }}
+    <details class="author-note" data-author-note-paragraph="{{ .paragraphId }}">
+      <summary>作者评</summary>
+      <div class="author-note-body">{{ .body }}</div>
+    </details>
+    {{ end }}
+  </section>
+  {{ end }}
+  {{ if gt (len $article) 0 }}
+  <section class="author-notes-article">
+    <p class="author-notes-heading">作者章评</p>
+    {{ range $article }}
+    <details class="author-note" open>
+      <summary>作者评</summary>
+      <div class="author-note-body">{{ .body }}</div>
+    </details>
+    {{ end }}
+  </section>
+  {{ end }}
+</section>
+{{ with resources.Get "js/author-notes.js" }}
+  {{ with . | minify | fingerprint "sha384" }}
+    <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
+  {{ end }}
+{{ end }}
+{{ end }}

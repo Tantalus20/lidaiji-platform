@@ -1,0 +1,16 @@
+version: 1
+notes:
+  - id: note-100000000001
+    scope: paragraph
+    paragraphId: p-100000000001
+    body: 这条虚构段评用于演示作者评与稳定段落ID的关联。
+    status: published
+    created: '2026-01-01'
+    updated: '2026-01-01'
+  - id: note-100000000002
+    scope: article
+    paragraphId: null
+    body: 这条虚构章评用于演示无JavaScript时仍可阅读的作者评。
+    status: published
+    created: '2026-01-01'
+    updated: '2026-01-01'

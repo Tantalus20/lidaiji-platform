@@ -1,0 +1,8 @@
+[Unit]
+Description=Upload Lidaiji backups to object storage
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/path/to/backup-to-object-storage.sh

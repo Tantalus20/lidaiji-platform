@@ -1,0 +1,44 @@
+{{ define "main" }}
+{{ $pages := .RegularPagesRecursive.ByWeight }}
+{{ $scratch := newScratch }}
+{{ range $pages }}{{ $scratch.Add "words" .WordCount }}{{ end }}
+{{ $created := "" }}
+{{ with $pages.ByDate }}{{ if gt (len .) 0 }}{{ $created = (index . 0).Date.Format "2006年1月2日" }}{{ end }}{{ end }}
+<header class="collection-hero">
+  <div>
+    <h1>{{ .Title }}</h1>
+    {{ with .Params.subtitle }}<p class="hero-subtitle">{{ . }}</p>{{ end }}
+    <p class="collection-description">{{ or .Description .Summary }}</p>
+    <dl class="collection-facts">
+      <div><dt>状态</dt><dd>{{ .Params.status | default "整理中" }}</dd></div>
+      <div><dt>篇数</dt><dd>{{ len $pages }}</dd></div>
+      <div><dt>总字数</dt><dd>{{ partial "word-count.html" ($scratch.Get "words") }}</dd></div>
+      {{ with $created }}<div><dt>创建</dt><dd>{{ . }}</dd></div>{{ end }}
+      <div><dt>最近更新</dt><dd>{{ .Lastmod.Format "2006年1月2日" }}</dd></div>
+      {{ with .Params.startDate }}<div><dt>起始</dt><dd>{{ time.AsTime . | time.Format "2006年" }}</dd></div>{{ end }}
+      {{ with .Params.endDate }}<div><dt>完成</dt><dd>{{ time.AsTime . | time.Format "2006年" }}</dd></div>{{ end }}
+    </dl>
+  </div>
+  {{ with .Resources.GetMatch "cover.*" }}
+    <div class="collection-cover">{{ partial "responsive-image.html" (dict "image" . "alt" $.Title "loading" "eager") }}</div>
+  {{ else }}
+    <div class="collection-cover-placeholder" aria-hidden="true"><span>{{ substr .Title 0 1 }}</span></div>
+  {{ end }}
+</header>
+<div class="page-shell collection-contents">
+  <div class="section-heading">
+    <h2>篇目</h2>
+  </div>
+  {{ $grouped := where $pages "Params.volume" "ne" nil }}
+  {{ if gt (len $grouped) 0 }}
+    {{ range $pages.GroupByParam "volume" }}
+      <section class="collection-volume">
+        <h3>{{ .Key | default "未分卷" }}</h3>
+        {{ partial "chapter-list.html" .Pages }}
+      </section>
+    {{ end }}
+  {{ else }}
+    {{ partial "chapter-list.html" $pages }}
+  {{ end }}
+</div>
+{{ end }}
