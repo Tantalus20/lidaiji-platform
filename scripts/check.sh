@@ -2,6 +2,18 @@
 set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+
+# 真实构建测试统一通过 HUGO_BIN 取用 Hugo。开发机通常使用仓库内的
+# .hugo-local，持续集成环境则由安装动作把 hugo 放入 PATH。
+if [[ -z "${HUGO_BIN:-}" ]]; then
+  if [[ -x "$ROOT/.hugo-local" ]]; then
+    export HUGO_BIN="$ROOT/.hugo-local"
+  elif command -v hugo >/dev/null 2>&1; then
+    HUGO_BIN="$(command -v hugo)"
+    export HUGO_BIN
+  fi
+fi
+
 node "$ROOT/tests/check-source.mjs"
 node "$ROOT/tests/check-comment-button.mjs" "$ROOT"
 node "$ROOT/tests/check-reading-ui.mjs" "$ROOT"
