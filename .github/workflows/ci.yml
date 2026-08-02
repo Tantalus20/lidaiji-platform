@@ -31,4 +31,8 @@ jobs:
       - run: npm run check
       - name: 确认CI不含生产连接
         run: |
-          ! grep -R -E 'ssh +[^ ]+@|COS_SECRET|BEGIN PRIVATE KEY' .github
+          if git grep -n -E 'ssh +[^ ]+@|COS_SECRET|BEGIN PRIVATE KEY' -- \
+            '.github' ':!.github/workflows/ci.yml'; then
+            echo 'CI配置包含生产连接或敏感字段。' >&2
+            exit 1
+          fi
