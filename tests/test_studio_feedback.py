@@ -21,6 +21,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -304,6 +306,30 @@ class FeedbackTestCase(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["code"], "validation-failed")
+
+    def test_14双仓库模式从平台根目录启动评论服务(self):
+        private_root = self.root / "private"
+        platform_root = self.root / "platform"
+        private_root.mkdir()
+        script = platform_root / "scripts" / "comments-local.sh"
+        script.parent.mkdir(parents=True)
+        script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+        state = SimpleNamespace(
+            project_root=private_root,
+            platform_root=platform_root,
+            lock=threading.Lock(),
+            comments_process=None,
+        )
+
+        with patch.object(feedback, "service_running", return_value=False), patch.object(
+            feedback.subprocess, "Popen"
+        ) as popen:
+            feedback.start_service(state)
+
+        popen.assert_called_once()
+        args, kwargs = popen.call_args
+        self.assertEqual(args[0], ["bash", str(script)])
+        self.assertEqual(kwargs["cwd"], platform_root)
 
 
 if __name__ == "__main__":

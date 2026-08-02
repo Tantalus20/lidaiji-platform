@@ -253,12 +253,13 @@ def start_service(state) -> None:
     with state.lock:
         if service_running(state):
             return
-        script = state.project_root / "scripts" / "comments-local.sh"
+        platform_root = getattr(state, "platform_root", None) or state.project_root
+        script = platform_root / "scripts" / "comments-local.sh"
         if not script.is_file():
             raise FeedbackFailure("validation-failed", "找不到 scripts/comments-local.sh。")
         state.comments_process = subprocess.Popen(
-            ["bash", "scripts/comments-local.sh"],
-            cwd=state.project_root,
+            ["bash", str(script)],
+            cwd=platform_root,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
