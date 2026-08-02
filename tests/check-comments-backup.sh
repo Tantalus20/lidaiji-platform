@@ -65,14 +65,16 @@ export_dir="$TMP/export"
 "$ROOT/scripts/comments-export.sh" "$export_dir" >/dev/null
 json="$export_dir/comments.json"
 markdown="$export_dir/comments.md"
-rg -q '"id": "comment_recovery"' "$json"
-rg -q '恢复测试' "$markdown"
-if rg -q 'source_fingerprint|browser_fingerprint|password_hash|session_hash' "$json" "$markdown"; then
+grep -q '"id": "comment_recovery"' "$json"
+grep -q '恢复测试' "$markdown"
+if grep -Eq 'source_fingerprint|browser_fingerprint|password_hash|session_hash' "$json" "$markdown"; then
   printf '公开导出包含内部安全字段。\n' >&2
   exit 1
 fi
 
-if tar -tzf "$archive" | rg -q '(^|/)(\.env|id_rsa|id_ed25519|node_modules|public)(/|$)'; then
+archive_files="$TMP/archive-files.txt"
+tar -tzf "$archive" > "$archive_files"
+if grep -Eq '(^|/)(\.env|id_rsa|id_ed25519|node_modules|public)(/|$)' "$archive_files"; then
   printf '段评备份包含不应进入备份包的内容。\n' >&2
   exit 1
 fi
