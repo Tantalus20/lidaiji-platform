@@ -257,6 +257,42 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 .editor-preview-wrap { min-width: 0; }
 .editor-preview { max-height: 62vh; min-height: 20vh; }
 .editor-hint { color: var(--ink-faint); font-size: 0.85rem; }
+.inline-note-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -0.85rem 0 0.8rem;
+}
+.inline-note-button {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+.inline-note-button:hover,
+.inline-note-button:focus-visible { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.inline-note-composer {
+  display: grid;
+  gap: 0.55rem;
+  margin: -0.35rem 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--paper-muted);
+}
+.inline-note-composer textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.55rem 0.65rem;
+}
 
 /* ---------- 导入向导 ---------- */
 

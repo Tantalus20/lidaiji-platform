@@ -454,6 +454,7 @@ const refreshEditorPreview = debounce(async () => {
   try {
     const payload = await api("/api/render", { markdown: $("#editorBody").value });
     preview.innerHTML = payload.html;
+    decoratePreviewNotes();
   } catch (error) {
     preview.textContent = `预览渲染失败：${error.message}`;
   }
@@ -2408,6 +2409,7 @@ const notesState = {
   list: [],
   paragraphs: [],
   editing: null, // null=新增；否则为批注 id
+  inlineComposer: null,
 };
 
 async function loadNotes() {
@@ -2426,8 +2428,108 @@ async function loadNotes() {
     notesState.list = notesPayload.notes || [];
     notesState.paragraphs = paragraphsPayload.paragraphs || [];
     renderNotes();
+    decoratePreviewNotes();
   } catch (error) {
     showError($("#notesError"), error.message);
+  }
+}
+
+function closeInlineNoteComposer() {
+  if (notesState.inlineComposer?.isConnected) notesState.inlineComposer.remove();
+  notesState.inlineComposer = null;
+}
+
+function openInlineNoteComposer(paragraphId, actions) {
+  closeInlineNoteComposer();
+  hideError($("#notesError"));
+
+  const composer = document.createElement("div");
+  composer.className = "inline-note-composer";
+  const title = document.createElement("strong");
+  title.textContent = "写这段的作者评";
+  const textarea = document.createElement("textarea");
+  textarea.rows = 4;
+  textarea.maxLength = 5000;
+  textarea.placeholder = "写下补充、回忆或说明……";
+  textarea.setAttribute("aria-label", "作者段落评正文");
+  const status = document.createElement("span");
+  status.className = "preview-status";
+  const buttons = document.createElement("div");
+  buttons.className = "actions";
+
+  const save = async (noteStatus) => {
+    const body = textarea.value.trim();
+    if (!body) {
+      status.textContent = "请先写下批注正文。";
+      textarea.focus();
+      return;
+    }
+    const allButtons = buttons.querySelectorAll("button");
+    allButtons.forEach((button) => { button.disabled = true; });
+    status.textContent = "正在保存…";
+    try {
+      await api("/api/notes/save", {
+        path: editState.path,
+        note: { scope: "paragraph", paragraphId, body, status: noteStatus },
+      });
+      status.textContent = noteStatus === "published" ? "已保存并发布。" : "已保存为草稿。";
+      await loadNotes();
+    } catch (error) {
+      status.textContent = error.message;
+      allButtons.forEach((button) => { button.disabled = false; });
+    }
+  };
+
+  const draft = document.createElement("button");
+  draft.type = "button";
+  draft.className = "secondary small";
+  draft.textContent = "保存草稿";
+  draft.addEventListener("click", () => save("draft"));
+  const publish = document.createElement("button");
+  publish.type = "button";
+  publish.className = "primary small";
+  publish.textContent = "保存并发布";
+  publish.addEventListener("click", () => save("published"));
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "secondary small";
+  cancel.textContent = "取消";
+  cancel.addEventListener("click", closeInlineNoteComposer);
+
+  buttons.appendChild(draft);
+  buttons.appendChild(publish);
+  buttons.appendChild(cancel);
+  buttons.appendChild(status);
+  composer.appendChild(title);
+  composer.appendChild(textarea);
+  composer.appendChild(buttons);
+  actions.after(composer);
+  notesState.inlineComposer = composer;
+  textarea.focus();
+}
+
+function decoratePreviewNotes() {
+  const preview = $("#editorPreview");
+  if (!preview) return;
+  closeInlineNoteComposer();
+  preview.querySelectorAll(".inline-note-actions").forEach((element) => element.remove());
+  const validParagraphs = new Set(notesState.paragraphs.map((item) => item.paragraphId));
+  for (const paragraph of preview.querySelectorAll("p[data-paragraph-id]")) {
+    const paragraphId = paragraph.dataset.paragraphId;
+    if (!validParagraphs.has(paragraphId)) continue;
+    const count = notesState.list.filter(
+      (note) => note.scope === "paragraph" && note.paragraphId === paragraphId,
+    ).length;
+    const actions = document.createElement("div");
+    actions.className = "inline-note-actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "inline-note-button";
+    button.textContent = count ? `作者评 ${count} · 再写` : "写作者评";
+    button.setAttribute("aria-label", `为段落 ${paragraphId} 写作者评`);
+    button.addEventListener("click", () => openInlineNoteComposer(paragraphId, actions));
+    actions.appendChild(button);
+    paragraph.after(actions);
   }
 }
 

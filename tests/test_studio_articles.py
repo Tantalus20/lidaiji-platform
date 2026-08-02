@@ -398,9 +398,14 @@ class StudioArticlesTestCase(unittest.TestCase):
         self.assertEqual(run_calls, [["open", "http://127.0.0.1:1313/works/ce-shi-wen-ji/ce-shi-yi/"]])
 
     def test_10render接口与保存接口CSRF(self):
-        status, payload = self.post_json("/api/render", {"markdown": "**粗体** 普通"})
+        status, payload = self.post_json(
+            "/api/render",
+            {"markdown": "<!-- paragraph-id:p-aaaaaaaaaaaa -->\n\n**粗体** 普通"},
+        )
         self.assertEqual(status, 200)
         self.assertIn("<strong>粗体</strong>", payload["html"])
+        self.assertIn('data-paragraph-id="p-aaaaaaaaaaaa"', payload["html"])
+        self.assertNotIn("<!-- paragraph-id", payload["html"])
         # 缺自定义头 → 403
         status, _ = self.request(
             "POST",

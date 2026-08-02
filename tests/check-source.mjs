@@ -50,6 +50,10 @@ assert(JSON.parse(read("package.json")).version === "0.1.0", "平台发行版本
 assert(read("PLATFORM_VERSION").trim() === "0.1.0", "PLATFORM_VERSION不是0.1.0");
 assert(read("studio/static/index.html").includes("工作台 v0.1.1"), "Studio页面版本不是0.1.1");
 assert(JSON.parse(read("comments-service/package.json")).version === "0.4.0", "评论服务应保持0.4.0");
+const studioApp = read("studio/static/app.js");
+assert(studioApp.includes("decoratePreviewNotes"), "Studio编辑预览缺少段落作者评入口");
+assert(studioApp.includes('p[data-paragraph-id]'), "Studio没有按稳定段落ID绑定作者评入口");
+assert(studioApp.includes('save("draft")') && studioApp.includes('save("published")'), "段落旁作者评不能分别保存草稿和发布");
 for (const file of [
   "comments-service/src/server.js",
   "comments-service/src/app.js",

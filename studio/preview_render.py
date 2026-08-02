@@ -18,7 +18,7 @@ _HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
 _BULLET = re.compile(r"^[-*]\s+(.*)$")
 _NUMBERED = re.compile(r"^\d+\.\s+(.*)$")
 _TABLE_SEP = re.compile(r"^\|?[\s:\-|]+\|?$")
-_ANCHOR = re.compile(r"^<!--\s*paragraph-id:[\w-]+\s*-->$")
+_ANCHOR = re.compile(r"^<!--\s*paragraph-id:([\w-]+)\s*-->$")
 _IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
 _BOLD = re.compile(r"\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*")
 _ITALIC = re.compile(r"\*(.+?)\*")
@@ -63,6 +63,7 @@ def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> s
     output: list[str] = []
     block_index = 0
     index = 0
+    pending_paragraph_id = ""
 
     def emit(fragment: str) -> None:
         nonlocal block_index
@@ -72,16 +73,23 @@ def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> s
     while index < len(lines):
         line = lines[index]
         stripped = line.strip()
-        if not stripped or _ANCHOR.match(stripped):
+        if not stripped:
+            index += 1
+            continue
+        anchor = _ANCHOR.match(stripped)
+        if anchor:
+            pending_paragraph_id = anchor.group(1)
             index += 1
             continue
         heading = _HEADING.match(line)
         if heading:
+            pending_paragraph_id = ""
             level = len(heading.group(1))
             emit(f'<h{level} class="block">{_inline(heading.group(2).strip(), asset_map)}</h{level}>')
             index += 1
             continue
         if line.startswith(">"):
+            pending_paragraph_id = ""
             quote_lines = []
             while index < len(lines) and lines[index].startswith(">"):
                 quote_lines.append(lines[index].lstrip(">").strip())
@@ -90,6 +98,7 @@ def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> s
             continue
         bullet = _BULLET.match(line)
         if bullet:
+            pending_paragraph_id = ""
             items = []
             while index < len(lines):
                 matched = _BULLET.match(lines[index])
@@ -101,6 +110,7 @@ def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> s
             continue
         numbered = _NUMBERED.match(line)
         if numbered:
+            pending_paragraph_id = ""
             items = []
             while index < len(lines):
                 matched = _NUMBERED.match(lines[index])
@@ -111,6 +121,7 @@ def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> s
             emit(f'<ol class="block">{"".join(items)}</ol>')
             continue
         if stripped.startswith("|") and index + 1 < len(lines) and _TABLE_SEP.match(lines[index + 1].strip()):
+            pending_paragraph_id = ""
             table_lines = [line, lines[index + 1]]
             index += 2
             while index < len(lines) and lines[index].strip().startswith("|"):
@@ -127,5 +138,11 @@ def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> s
                 break
             paragraph_lines.append(lines[index])
             index += 1
-        emit(f'<p class="block">{_inline(" ".join(paragraph_lines), asset_map)}</p>')
+        paragraph_attr = (
+            f' data-paragraph-id="{html.escape(pending_paragraph_id, quote=True)}"'
+            if pending_paragraph_id
+            else ""
+        )
+        emit(f'<p class="block"{paragraph_attr}>{_inline(" ".join(paragraph_lines), asset_map)}</p>')
+        pending_paragraph_id = ""
     return "\n".join(output)
