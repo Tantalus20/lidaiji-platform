@@ -214,7 +214,7 @@ class DocxImportTests(unittest.TestCase):
             "--slug",
             "../unsafe",
         ]
-        completed = subprocess.run(command, text=True, capture_output=True)
+        completed = subprocess.run(command, text=True, encoding="utf-8", capture_output=True)
         self.assertEqual(completed.returncode, 2)
         self.assertIn("只接受.docx", completed.stderr)
 
