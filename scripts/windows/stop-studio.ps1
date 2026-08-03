@@ -15,14 +15,15 @@ if ($pidTarget -eq 0) {
 Write-LidaijiLog "stop: 验证 PID $pidTarget（命令行/项目根匹配通过）"
 # Windows 无 SIGTERM 语义；先尝试不带 /F 的 taskkill（尽力优雅），超时后强制终止。
 # 强制终止会跳过 Python 的 finally 清理；下次启动时 Studio 会自动清扫临时会话目录。
-& taskkill /PID $pidTarget 2>&1 | Out-Null
+# 经 cmd 执行并重定向 stderr，避免 PowerShell 5.1 的 NativeCommandError 中止脚本。
+& cmd /c "taskkill /PID $pidTarget 2>nul" | Out-Null
 Start-Sleep -Milliseconds 800
 
 if (Test-LidaijiPort) {
     $again = Get-LidaijiStudioPid
     if ($again -eq $pidTarget) {
         Write-LidaijiLog "stop: 优雅停止超时，强制终止 PID $pidTarget"
-        & taskkill /PID $pidTarget /F 2>&1 | Out-Null
+        & cmd /c "taskkill /PID $pidTarget /F 2>nul" | Out-Null
     }
 }
 
