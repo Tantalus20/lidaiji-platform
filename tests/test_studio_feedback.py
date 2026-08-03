@@ -13,6 +13,13 @@ delete 无 confirm → 400；未登录访问 → 401 not-logged-in；服务不�
 from __future__ import annotations
 
 import http.client
+import urllib.error
+import urllib.request
+import os
+import socket as _socket_module
+import shutil
+import subprocess
+import time
 import json
 import re
 import sys
@@ -307,13 +314,10 @@ class FeedbackTestCase(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(payload["error"]["code"], "validation-failed")
 
-    def test_14双仓库模式从平台根目录启动评论服务(self):
+    def test_14双仓库模式无服务时建立SSH隧道(self):
         private_root = self.root / "private"
         platform_root = self.root / "platform"
         private_root.mkdir()
-        script = platform_root / "scripts" / "comments-local.sh"
-        script.parent.mkdir(parents=True)
-        script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
         state = SimpleNamespace(
             project_root=private_root,
             platform_root=platform_root,
@@ -322,14 +326,305 @@ class FeedbackTestCase(unittest.TestCase):
         )
 
         with patch.object(feedback, "service_running", return_value=False), patch.object(
-            feedback.subprocess, "Popen"
-        ) as popen:
+            feedback, "wait_for_service", return_value=True
+        ), patch.object(feedback.subprocess, "Popen") as popen:
             feedback.start_service(state)
 
         popen.assert_called_once()
-        args, kwargs = popen.call_args
-        self.assertEqual(args[0], ["bash", str(script)])
-        self.assertEqual(kwargs["cwd"], platform_root)
+        args, _ = popen.call_args
+        self.assertEqual(args[0][0], "ssh")
+        self.assertIn("-L", args[0])
+        self.assertIn("127.0.0.1:4317:127.0.0.1:4317", args[0])
+        self.assertEqual(state.comments_process, popen.return_value)
+
+
+
+
+class FeedbackConnectionTests(FeedbackTestCase):
+    """评论服务连接来源与 SSH 隧道管理（修复：生产评论审核链路）。"""
+
+    def _state(self):
+        return SimpleNamespace(project_root=Path("."), platform_root=Path("."), lock=threading.Lock(), comments_process=None)
+
+    def test_20连接来源判定(self):
+        with patch.object(feedback, "port_ready", return_value=False):
+            self.assertEqual(feedback.service_source(), "none")
+        with patch.object(feedback, "port_ready", return_value=True), patch.object(
+            feedback, "_listener_command", return_value="ssh -N -L 127.0.0.1:4317:127.0.0.1:4317 game-server"
+        ):
+            self.assertEqual(feedback.service_source(), "production-tunnel")
+        with patch.object(feedback, "port_ready", return_value=True), patch.object(
+            feedback, "_listener_command",
+            return_value="node --experimental-sqlite comments-service/src/server.js",
+        ):
+            self.assertEqual(feedback.service_source(), "local-demo")
+        with patch.object(feedback, "service_source", return_value="none"):
+            self.assertEqual(feedback.service_source_label(), "未连接")
+        with patch.object(feedback, "service_source", return_value="production-tunnel"):
+            self.assertEqual(feedback.service_source_label(), "生产评论服务（SSH 隧道）")
+
+    def test_21本机演示服务占用时拒绝连接生产(self):
+        state = self._state()
+        with patch.object(feedback, "service_running", return_value=True), patch.object(
+            feedback, "service_source", return_value="local-demo"
+        ):
+            with self.assertRaises(feedback.FeedbackFailure) as ctx:
+                feedback.start_service(state)
+        self.assertIn("演示评论服务", str(ctx.exception.message))
+        self.assertIsNone(state.comments_process)
+
+    def test_22无服务时建立SSH隧道(self):
+        state = self._state()
+        with patch.object(feedback, "service_running", return_value=False), patch.object(
+            feedback, "wait_for_service", return_value=True
+        ), patch.object(feedback.subprocess, "Popen") as popen:
+            feedback.start_service(state)
+        popen.assert_called_once()
+        args, _ = popen.call_args
+        self.assertEqual(args[0][0], "ssh")
+        self.assertIn("-L", args[0])
+        self.assertIn("127.0.0.1:4317:127.0.0.1:4317", args[0])
+        self.assertIsNotNone(state.comments_process)
+
+    def test_23隧道建立后服务未就绪时报错(self):
+        state = self._state()
+
+        class FakeProcess:
+            def __init__(self):
+                self.pid = 999999
+
+            def poll(self):
+                return 1
+
+        with patch.object(feedback, "service_running", return_value=False), patch.object(
+            feedback, "wait_for_service", return_value=False
+        ), patch.object(feedback.subprocess, "Popen", return_value=FakeProcess()):
+            with self.assertRaises(feedback.FeedbackFailure) as ctx:
+                feedback.start_service(state)
+        self.assertIn("SSH 隧道", str(ctx.exception.message))
+        self.assertIsNone(state.comments_process)
+
+    def test_24停止非工作台演示服务时不动进程(self):
+        state = self._state()
+        with patch.object(feedback, "service_source", return_value="local-demo"):
+            feedback.stop_service(state)  # 安静返回，不误停演示服务
+
+    def test_25status接口标注连接来源(self):
+        status, payload = self.request("GET", "/api/feedback/status")
+        self.assertEqual(status, 200)
+        body = json.loads(payload)
+        self.assertIn("source", body["service"])
+        self.assertIn("sourceLabel", body["service"])
+        self.assertIn(body["service"]["source"], ("production-tunnel", "local-demo", "none"))
+
+
+
+
+class FeedbackE2ETest(unittest.TestCase):
+    """端到端：真实评论服务（临时数据库）+ Studio 代理全链路。
+
+    提交虚构评论 → 数据库 status=pending → 管理 API 返回 → Studio 列表显示
+    → 批准 → 公开列表可见。仅使用虚构文章与临时数据库。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.node = shutil.which("node")
+        if not cls.node:
+            raise unittest.SkipTest("需要 node 运行真实评论服务")
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="feedback-e2e-")
+        self.data_dir = Path(self.temp.name)
+        self.db = self.data_dir / "comments.sqlite3"
+        self.manifest = self.data_dir / "manifest.json"
+        self.port = self._free_port()
+        self.base = f"http://127.0.0.1:{self.port}"
+        self.comments_root = ROOT / "comments-service"
+        self.env = {
+            **os.environ,
+            "COMMENTS_DATA_DIR": str(self.data_dir),
+            "COMMENTS_DB": str(self.db),
+            "COMMENTS_PORT": str(self.port),
+            "COMMENTS_PUBLIC_ORIGIN": self.base,
+            "COMMENTS_STATIC_DIR": str(ROOT / "dist" / "site"),
+            "COMMENTS_HMAC_SECRET": "e2e-test-secret-not-for-production-0001",
+        }
+        self.article_id = "article-0000e2e00000feed"
+        self.revision = f"{self.article_id}@e2e0000revision"
+        self.paragraph_id = "p-0000e2e000fe"
+        self._write_manifest()
+        self._run_cli("migrate")
+        self._run_cli("sync-manifest", [str(self.manifest)])
+        self._run_cli("create-admin", ["owner"], input_bytes=b"e2e-password-123456\n")
+        self.proc = subprocess.Popen(
+            [self.node, "--experimental-sqlite", "src/server.js"],
+            cwd=str(self.comments_root), env=self.env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._stop_server)
+        self._wait_health()
+
+    def _free_port(self):
+        with _socket_module.socket(_socket_module.AF_INET, _socket_module.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            return s.getsockname()[1]
+
+    def _write_manifest(self):
+        manifest = {
+            "schemaVersion": 1,
+            "generatedAt": "2026-08-03T00:00:00.000Z",
+            "articles": [{
+                "articleId": self.article_id,
+                "revision": self.revision,
+                "title": "端到端测试文章（虚构）",
+                "canonicalPath": "/works/e2e/fake-article/",
+                "paragraphComments": "open",
+                "sourceChecksum": "0" * 64,
+                "paragraphs": [{
+                    "paragraphId": self.paragraph_id,
+                    "position": 0,
+                    "headingContext": "",
+                    "excerpt": "这是端到端测试用的虚构段落。",
+                    "checksum": "0" * 64,
+                }],
+            }],
+        }
+        self.manifest.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+
+    def _run_cli(self, command, args=(), input_bytes=None):
+        result = subprocess.run(
+            [self.node, "--experimental-sqlite", "src/cli.js", command, *args],
+            cwd=str(self.comments_root), env=self.env,
+            input=input_bytes, capture_output=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+        return result.stdout.decode("utf-8", "replace")
+
+    def _wait_health(self):
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(f"{self.base}/healthz", timeout=2) as resp:
+                    if resp.status == 200:
+                        return
+            except (OSError, urllib.error.URLError):
+                time.sleep(0.5)
+        self.fail("评论服务 30 秒内未就绪")
+
+    def _stop_server(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+
+    def tearDown(self):
+        self._stop_server()
+        self.temp.cleanup()
+
+    # -- HTTP 辅助（直接请求评论服务） --------------------------------------
+
+    def _post(self, path, payload, cookies=""):
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            self.base + path, data=body, method="POST",
+            headers={"Content-Type": "application/json", "Origin": self.base,
+                     "Cookie": cookies},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8")), resp.headers
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read().decode("utf-8")), error.headers
+
+    def _get(self, path, cookies=""):
+        request = urllib.request.Request(self.base + path, headers={"Cookie": cookies})
+        try:
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                return resp.status, json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read().decode("utf-8"))
+
+    def _db_row(self):
+        row = subprocess.run(
+            ["sqlite3", f"file:{self.db}?mode=ro",
+             "SELECT status, scope FROM comments WHERE id='comment_e2e000000000001';"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return row.stdout.strip() or None
+
+    def test_26端到端评论全链路(self):
+        unique = f"e2e-{time.time_ns()}"
+        # 1. 游客提交虚构段评
+        status, payload, _ = self._post("/api/comments/v1/comments", {
+            "articleId": self.article_id,
+            "clientId": "e2e-client-00000001",
+            "scope": "paragraph",
+            "paragraphId": self.paragraph_id,
+            "displayName": "测试读者",
+            "body": f"这是端到端测试段评 {unique}，仅用于验证待审核链路。",
+        })
+        self.assertEqual(status, 202, payload)
+        # 2. 数据库 status=pending
+        row = subprocess.run(
+            ["sqlite3", f"file:{self.db}?mode=ro",
+             f"SELECT status||'|'||scope FROM comments WHERE body LIKE '%{unique}%';"],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        self.assertEqual(row, "pending|paragraph")
+        # 3. 管理员登录（经评论服务 admin API）
+        status, login, headers = self._post("/api/comments/v1/admin/login", {
+            "username": "owner", "password": "e2e-password-123456",
+        })
+        self.assertEqual(status, 200, login)
+        set_cookie = headers.get("Set-Cookie") or ""
+        cookie = set_cookie.split(";")[0]
+        csrf = login.get("csrfToken")
+        # 4. 待审核列表包含段评
+        status, listing = self._get("/api/comments/v1/admin/comments?status=pending", cookie)
+        self.assertEqual(status, 200, listing)
+        paragraph_item = next((item for item in listing.get("comments", []) if unique in (item.get("body") or "")), None)
+        self.assertIsNotNone(paragraph_item, listing)
+        comment_id = paragraph_item["id"]
+        # 5. 章评也出现在待审核列表
+        status, _, _ = self._post("/api/comments/v1/comments", {
+            "articleId": self.article_id,
+            "clientId": "e2e-client-00000002",
+            "scope": "article",
+            "displayName": "测试读者",
+            "body": f"这是端到端测试章评 {unique}，仅用于验证待审核链路。",
+        })
+        self.assertEqual(status, 202)
+        status, listing = self._get("/api/comments/v1/admin/comments?status=pending", cookie)
+        self.assertEqual(status, 200)
+        self.assertTrue(
+            any((item.get("scope") == "article") and (unique in (item.get("body") or ""))
+                for item in listing.get("comments", [])),
+            listing,
+        )
+        # 6. 批准 → 公开列表可见
+        request = urllib.request.Request(
+            self.base + f"/api/comments/v1/admin/comments/{comment_id}/approve",
+            data=b"{}", method="POST",
+            headers={"Content-Type": "application/json", "Origin": self.base,
+                     "Cookie": cookie, "X-CSRF-Token": csrf},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=10) as resp:
+                moderate = json.loads(resp.read().decode("utf-8"))
+                moderate_status = resp.status
+        except urllib.error.HTTPError as error:
+            moderate_status = error.code
+            moderate = json.loads(error.read().decode("utf-8"))
+        self.assertEqual(moderate_status, 200, moderate)
+        self.assertEqual(status, 200, moderate)
+        status, public = self._get(
+            f"/api/comments/v1/articles/{self.article_id}/paragraphs/{self.paragraph_id}?revision={self.revision}", ""
+        )
+        self.assertEqual(status, 200, public)
+        self.assertTrue(any(unique in (item.get("body") or "") for item in public.get("comments", [])))
 
 
 if __name__ == "__main__":

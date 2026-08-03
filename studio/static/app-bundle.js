@@ -734,6 +734,7 @@
     loggedIn: false,
     username: "",
     serviceRunning: false,
+    serviceSourceLabel: "",
     page: 1,
     pages: 1,
     serviceTimer: 0,
@@ -768,11 +769,15 @@
     $("#feedbackLoginPanel").classList.toggle("hidden", serviceRunning && loggedIn);
     $("#feedbackMain").classList.toggle("hidden", !(serviceRunning && loggedIn));
     $("#feedbackUser").textContent = loggedIn ? `\u7AD9\u4E3B\uFF1A${feedbackState.username}` : "";
+    if (feedbackState.serviceSourceLabel) {
+      $("#feedbackServiceStatus").textContent = feedbackState.serviceSourceLabel;
+    }
   }
   async function refreshFeedbackStatus() {
     try {
       const payload = await apiGet("/api/feedback/status");
       feedbackState.serviceRunning = Boolean(payload.service && payload.service.running);
+      feedbackState.serviceSourceLabel = payload.service && payload.service.sourceLabel || "";
       feedbackState.loggedIn = Boolean(payload.loggedIn);
       feedbackState.username = payload.username || "";
       renderFeedbackPanels();
@@ -787,23 +792,22 @@
     feedbackState.serviceTimer = setTimeout(async () => {
       const payload = await refreshFeedbackStatus();
       if (payload && payload.service.running) {
-        $("#feedbackServiceStatus").textContent = "\u8BC4\u8BBA\u670D\u52A1\u5DF2\u8FD0\u884C\u3002";
         return;
       }
       if (Date.now() < deadline) {
         pollFeedbackService(deadline);
       } else {
-        $("#feedbackServiceStatus").textContent = "\u7B49\u5F85\u8D85\u65F6\uFF1A\u670D\u52A1\u4ECD\u672A\u5C31\u7EEA\uFF0C\u8BF7\u67E5\u770B\u7EC8\u7AEF\u8F93\u51FA\u3002";
+        $("#feedbackServiceStatus").textContent = "\u7B49\u5F85\u8D85\u65F6\uFF1A\u8BC4\u8BBA\u670D\u52A1\u4ECD\u672A\u5C31\u7EEA\uFF0C\u8BF7\u68C0\u67E5 SSH \u96A7\u9053\u6216\u670D\u52A1\u5668\u72B6\u6001\u3002";
       }
     }, 3e3);
   }
   $("#feedbackServiceStart").addEventListener("click", async () => {
     hideError($("#feedbackError"));
     const status = $("#feedbackServiceStatus");
-    status.textContent = "\u6B63\u5728\u542F\u52A8\u8BC4\u8BBA\u670D\u52A1\uFF08\u9996\u6B21\u542F\u52A8\u9700\u5148\u5B8C\u6574\u6784\u5EFA\u7F51\u7AD9\uFF0C\u53EF\u80FD\u8981\u4E00\u4E24\u5206\u949F\uFF0C\u8BF7\u8010\u5FC3\u7B49\u5F85\uFF09\u2026";
+    status.textContent = "\u6B63\u5728\u8FDE\u63A5\u751F\u4EA7\u8BC4\u8BBA\u670D\u52A1\uFF08SSH \u96A7\u9053\uFF09\u2026";
     try {
       await api("/api/feedback/service", { action: "start" });
-      pollFeedbackService(Date.now() + 18e4);
+      pollFeedbackService(Date.now() + 6e4);
     } catch (error) {
       status.textContent = error.message;
     }

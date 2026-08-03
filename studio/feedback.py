@@ -1,4 +1,4 @@
-"""评论服务代理：作者工作台 ↔ 本地 comments-service（默认 127.0.0.1:4317）。
+"""评论服务代理：作者工作台 ↔ 评论服务（默认 127.0.0.1:4317）。
 
 边界与约定：
 - 只用标准库 urllib 发请求，不引入第三方依赖；
@@ -6,9 +6,13 @@
   不落盘、不写日志，工作台退出即失效；
 - 登录请求按评论服务要求带 ``Origin: http://127.0.0.1:4317`` 头；
   写操作（审核动作）带 Cookie + ``X-CSRF-Token`` 头；
-- 评论服务进程管理仿照 server.py 的 preview_process：进程组启动、
-  退出时 killpg 清理；4317 已被占用（作者自己起的）则直接复用；
-- 本模块不改评论服务的任何数据模型，只是 admin API 的本地代理。
+- 生产评论保存在服务器（评论服务只监听服务器回环地址）。作者工作台
+  审核生产评论的推荐方式是本机 SSH 隧道：
+  ``ssh -fN -L 127.0.0.1:4317:127.0.0.1:4317 <目标>``；
+  隧道目标通过环境变量 ``LIDAIJI_COMMENTS_SSH_TARGET`` 指定（默认 game-server，
+  由用户自己的 ~/.ssh/config 管理，脚本不读取任何凭据）；
+- 本机演示评论服务（.cache/comments-local）仅供离线演示，不得用它假装
+  审核生产评论；连接来源由 status 接口明确标注。
 """
 
 from __future__ import annotations
@@ -224,7 +228,7 @@ def pending_counts(state) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 评论服务进程管理（仿 server.py 的 preview_process）
+# 评论服务连接管理（生产经 SSH 隧道；本机演示服务仅供离线演示）
 # ---------------------------------------------------------------------------
 
 
@@ -240,49 +244,131 @@ def port_ready(port: int | None = None) -> bool:
         return False
 
 
+def _listener_command() -> str:
+    """返回本机 4317 监听进程的命令行（无则空串）。"""
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", "-iTCP:4317", "-sTCP:LISTEN"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    # 第二行起是监听进程；取 PID 列与命令行
+    lines = [line for line in out.splitlines() if line.strip() and not line.startswith("COMMAND")]
+    if not lines:
+        return ""
+    parts = lines[0].split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return ""
+    try:
+        proc = subprocess.run(["ps", "-p", parts[1], "-o", "command="], capture_output=True, text=True, timeout=3)
+        return proc.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def service_source() -> str:
+    """连接来源：production-tunnel（SSH 隧道到生产）/ local-demo / none。
+
+    判定：4317 监听进程命令行含 ssh -L 视为生产隧道；
+    含 comments-service 的 node 进程视为本机演示服务。
+    """
+    if not port_ready():
+        return "none"
+    command = _listener_command()
+    if "ssh" in command and ("-L" in command or "4317" in command):
+        return "production-tunnel"
+    return "local-demo"
+
+
 def service_running(state) -> bool:
-    """评论服务在线：本工作台管的进程活着，或 4317 已被占用（作者自己起的）。"""
+    """评论服务在线：4317 可连即可（隧道或本机服务）。"""
     managed = getattr(state, "comments_process", None)
     if managed is not None and managed.poll() is None:
         return True
     return port_ready()
 
 
+def _tunnel_target() -> str:
+    return os.environ.get("LIDAIJI_COMMENTS_SSH_TARGET", "game-server").strip()
+
+
 def start_service(state) -> None:
-    """以进程组启动 scripts/comments-local.sh（首次含构建，较慢，前端轮询等待）。"""
+    """确保 4317 上是生产评论服务（经 SSH 隧道）。
+
+    - 已有可用服务：复用，并在状态里标注来源；
+    - 本机演示服务占用 4317：明确报错，要求先停止演示服务，避免误审演示库；
+    - 无服务：建立 SSH 隧道（LIDAIJI_COMMENTS_SSH_TARGET，默认 game-server）。
+    """
     with state.lock:
         if service_running(state):
+            source = service_source()
+            if source == "production-tunnel":
+                return
+            if source == "local-demo":
+                raise FeedbackFailure(
+                    "service-error",
+                    "当前 4317 是本机演示评论服务（.cache/comments-local），"
+                    "不是生产评论。请先停止演示服务，再连接生产评论服务。",
+                )
             return
-        platform_root = getattr(state, "platform_root", None) or state.project_root
-        script = platform_root / "scripts" / "comments-local.sh"
-        if not script.is_file():
-            raise FeedbackFailure("validation-failed", "找不到 scripts/comments-local.sh。")
-        state.comments_process = subprocess.Popen(
-            ["bash", str(script)],
-            cwd=platform_root,
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        target = _tunnel_target()
+        tunnel = [
+            "ssh",
+            "-fN",
+            "-L",
+            "127.0.0.1:4317:127.0.0.1:4317",
+            target,
+        ]
+        try:
+            process = subprocess.Popen(
+                tunnel,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as error:
+            raise FeedbackFailure("service-error", f"无法建立 SSH 隧道：{error}") from error
+        state.comments_process = process
+        if not wait_for_service(15):
+            state.comments_process = None
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            raise FeedbackFailure(
+                "service-error",
+                "SSH 隧道已建立但评论服务未就绪。请确认目标可访问且 ~/.ssh/config "
+                f"配置了 {target}（生产评论服务只监听服务器回环地址）。",
+            )
 
 
 def stop_service(state) -> None:
-    """停止本工作台启动的评论服务进程组；作者自己起的服务不动。"""
+    """停止本工作台建立的 SSH 隧道；本机演示服务（非工作台启动）不动。"""
     with state.lock:
         process = getattr(state, "comments_process", None)
         state.comments_process = None
-        if process is None or process.poll() is not None:
-            return
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-            process.wait(timeout=8)
-        except (ProcessLookupError, PermissionError):
-            pass
-        except subprocess.TimeoutExpired:
+        if process is not None and process.poll() is None:
             try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                process.wait(timeout=8)
             except (ProcessLookupError, PermissionError):
                 pass
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+
+def service_source_label() -> str:
+    return {
+        "production-tunnel": "生产评论服务（SSH 隧道）",
+        "local-demo": "本机演示评论服务",
+        "none": "未连接",
+    }[service_source()]
 
 
 def wait_for_service(timeout: float = 120.0) -> bool:

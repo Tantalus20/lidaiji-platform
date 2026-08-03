@@ -986,7 +986,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         session = self.state.feedback_session
         payload = {
             "ok": True,
-            "service": {"running": running, "url": feedback.COMMENTS_BASE},
+            "service": {
+                "running": running,
+                "url": feedback.COMMENTS_BASE,
+                "source": feedback.service_source(),
+                "sourceLabel": feedback.service_source_label(),
+            },
             "loggedIn": False,
         }
         if running and session:

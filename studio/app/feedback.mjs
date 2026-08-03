@@ -8,6 +8,7 @@ const feedbackState = {
   loggedIn: false,
   username: "",
   serviceRunning: false,
+  serviceSourceLabel: "",
   page: 1,
   pages: 1,
   serviceTimer: 0,
@@ -44,12 +45,16 @@ function renderFeedbackPanels() {
   $("#feedbackLoginPanel").classList.toggle("hidden", serviceRunning && loggedIn);
   $("#feedbackMain").classList.toggle("hidden", !(serviceRunning && loggedIn));
   $("#feedbackUser").textContent = loggedIn ? `站主：${feedbackState.username}` : "";
+  if (feedbackState.serviceSourceLabel) {
+    $("#feedbackServiceStatus").textContent = feedbackState.serviceSourceLabel;
+  }
 }
 
 async function refreshFeedbackStatus() {
   try {
     const payload = await apiGet("/api/feedback/status");
     feedbackState.serviceRunning = Boolean(payload.service && payload.service.running);
+    feedbackState.serviceSourceLabel = (payload.service && payload.service.sourceLabel) || "";
     feedbackState.loggedIn = Boolean(payload.loggedIn);
     feedbackState.username = payload.username || "";
     renderFeedbackPanels();
@@ -65,13 +70,12 @@ function pollFeedbackService(deadline) {
   feedbackState.serviceTimer = setTimeout(async () => {
     const payload = await refreshFeedbackStatus();
     if (payload && payload.service.running) {
-      $("#feedbackServiceStatus").textContent = "评论服务已运行。";
       return;
     }
     if (Date.now() < deadline) {
       pollFeedbackService(deadline);
     } else {
-      $("#feedbackServiceStatus").textContent = "等待超时：服务仍未就绪，请查看终端输出。";
+      $("#feedbackServiceStatus").textContent = "等待超时：评论服务仍未就绪，请检查 SSH 隧道或服务器状态。";
     }
   }, 3000);
 }
@@ -79,10 +83,10 @@ function pollFeedbackService(deadline) {
 $("#feedbackServiceStart").addEventListener("click", async () => {
   hideError($("#feedbackError"));
   const status = $("#feedbackServiceStatus");
-  status.textContent = "正在启动评论服务（首次启动需先完整构建网站，可能要一两分钟，请耐心等待）…";
+  status.textContent = "正在连接生产评论服务（SSH 隧道）…";
   try {
     await api("/api/feedback/service", { action: "start" });
-    pollFeedbackService(Date.now() + 180000);
+    pollFeedbackService(Date.now() + 60000);
   } catch (error) {
     status.textContent = error.message;
   }
