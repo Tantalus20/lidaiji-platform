@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { IS_WIN, ROOT, findPython, log, npmCommand, run } from "./common.mjs";
+import { IS_WIN, ROOT, findPython, log, run } from "./common.mjs";
 import { buildSite } from "./build.mjs";
 
 const nodeChecks = [
@@ -44,7 +44,13 @@ export function runCrossPlatformCheck() {
   }
 
   log("评论服务测试……");
-  run(npmCommand, ["--prefix", path.join(ROOT, "comments-service"), "run", "check"]);
+  if (IS_WIN) {
+    // Windows 上 npm 是 .cmd 包装，需经 cmd /c 执行；路径加引号以支持空格/中文
+    const prefix = path.join(ROOT, "comments-service");
+    run("cmd", ["/d", "/s", "/c", `npm --prefix "${prefix}" run check`]);
+  } else {
+    run("npm", ["--prefix", path.join(ROOT, "comments-service"), "run", "check"]);
+  }
 
   // Python 测试需要 DOCX 导入依赖（setup.ps1 / CI 负责安装）
   const python = process.env.LIDAIJI_PYTHON || findPython() || "python";
