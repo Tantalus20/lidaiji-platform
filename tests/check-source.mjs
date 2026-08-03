@@ -62,7 +62,7 @@ assert(/^\d+\.\d+\.\d+$/.test(studioVersion), "package.json.studioVersion 格式
 assert(read("studio/static/index.html").includes(`工作台 v${studioVersion}`), "Studio页面版本与 studioVersion 不一致");
 assert(read("README.md").includes(`studio v${studioVersion}`), "README组件版本与 studioVersion 不一致");
 assert(read("scripts/macos/common.sh").includes(`STUDIO_APP_VERSION="${studioVersion}"`), "macOS应用版本与 studioVersion 不一致");
-assert(JSON.parse(read("comments-service/package.json")).version === "0.4.0", "评论服务应保持0.4.0");
+assert(JSON.parse(read("comments-service/package.json")).version === "0.4.1", "评论服务应保持0.4.1");
 const studioNotes = read("studio/app/notes.mjs");
 assert(studioNotes.includes("decoratePreviewNotes"), "Studio编辑预览缺少段落作者评入口");
 assert(studioNotes.includes('p[data-paragraph-id]'), "Studio没有按稳定段落ID绑定作者评入口");
