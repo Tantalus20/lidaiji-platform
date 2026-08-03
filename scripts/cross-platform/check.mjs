@@ -1,6 +1,8 @@
-/* 跨平台核心检查（Windows 使用；Unix 继续走 scripts/check.sh 全套）。
- * Windows 分支执行：Node 静态/引擎检查、核心 Python 测试、
- * 评论服务测试、Hugo 构建、PowerShell 脚本语法检查。 */
+/* 跨平台核心检查（Windows 与 Linux 使用；macOS 继续走 scripts/check.sh 全套）。
+ * Windows 分支执行：Node 静态/引擎检查、核心 Python 测试、评论服务测试、
+ * Hugo 构建、PowerShell 脚本语法检查。
+ * Linux 分支执行：同一套 Node/Python/评论/构建检查 + bash 脚本语法检查
+ * （排除 macOS 专用测试，如 test_author_workflow）。 */
 
 import fs from "node:fs";
 import path from "node:path";
@@ -21,8 +23,20 @@ const pythonChecks = [
   "tests/test_docx_import.py",
 ];
 
-export function runWindowsCheck() {
-  log("Windows 核心检查开始……");
+// Linux 额外可跨平台的 Studio/导入器测试（test_author_workflow 依赖 macOS 桌面入口，排除）
+const linuxPythonChecks = [
+  "tests/test_studio.py",
+  "tests/test_studio_articles.py",
+  "tests/test_studio_versions.py",
+  "tests/test_studio_media.py",
+  "tests/test_studio_feedback.py",
+  "tests/test_studio_notes.py",
+  "tests/test_import_stages.py",
+  "tests/test_docx_series_importer.py",
+];
+
+export function runCrossPlatformCheck() {
+  log(`${IS_WIN ? "Windows" : "Linux"} 核心检查开始……`);
 
   for (const check of nodeChecks) {
     log(`运行 ${check}……`);
@@ -34,7 +48,7 @@ export function runWindowsCheck() {
 
   // Python 测试需要 DOCX 导入依赖（setup.ps1 / CI 负责安装）
   const python = process.env.LIDAIJI_PYTHON || findPython() || "python";
-  for (const check of pythonChecks) {
+  for (const check of pythonChecks.concat(IS_WIN ? [] : linuxPythonChecks)) {
     log(`运行 ${check}……`);
     run(python, [path.join(ROOT, check)]);
   }
@@ -42,23 +56,44 @@ export function runWindowsCheck() {
   log("Hugo 构建验证……");
   buildSite();
 
-  log("PowerShell 脚本语法检查……");
-  const psDir = path.join(ROOT, "scripts", "windows");
-  if (fs.existsSync(psDir)) {
+  if (IS_WIN) {
+    log("PowerShell 脚本语法检查……");
+    const psDir = path.join(ROOT, "scripts", "windows");
     const bad = [];
-    for (const file of fs.readdirSync(psDir)) {
-      if (!file.endsWith(".ps1")) continue;
-      const check = runCapturePowerShell(psDir, file);
-      if (check) bad.push(`${file}: ${check}`);
+    if (fs.existsSync(psDir)) {
+      for (const file of fs.readdirSync(psDir)) {
+        if (!file.endsWith(".ps1")) continue;
+        const message = runCapturePowerShell(psDir, file);
+        if (message) bad.push(`${file}: ${message}`);
+      }
     }
     if (bad.length) {
       console.error(`PowerShell 语法检查失败：\n${bad.join("\n")}`);
       process.exit(1);
     }
-    log(`PowerShell 脚本语法检查通过（${fs.readdirSync(psDir).filter((f) => f.endsWith(".ps1")).length} 个文件）。`);
+    log(`PowerShell 脚本语法检查通过（${bad.length === 0 ? "全部" : "部分"}）。`);
+  } else {
+    log("bash 脚本语法检查……");
+    const scripts = [];
+    for (const dir of ["scripts", "tests", "deploy"]) {
+      if (fs.existsSync(path.join(ROOT, dir))) {
+        for (const entry of fs.readdirSync(path.join(ROOT, dir))) {
+          if (entry.endsWith(".sh")) scripts.push(path.join(ROOT, dir, entry));
+        }
+      }
+    }
+    for (const script of scripts) {
+      try {
+        execFileSync("bash", ["-n", script], { stdio: "pipe" });
+      } catch (error) {
+        console.error(`bash 语法错误：${script}\n${(error.stderr || "").toString()}`);
+        process.exit(1);
+      }
+    }
+    log(`bash 脚本语法检查通过（${scripts.length} 个文件）。`);
   }
 
-  log("Windows 核心检查通过。");
+  log(`${IS_WIN ? "Windows" : "Linux"} 核心检查通过。`);
 }
 
 function runCapturePowerShell(dir, file) {
@@ -78,4 +113,4 @@ function runCapturePowerShell(dir, file) {
   }
 }
 
-if (IS_WIN) runWindowsCheck();
+if (!process.platform.includes("darwin")) runCrossPlatformCheck();

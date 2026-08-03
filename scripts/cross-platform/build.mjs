@@ -10,12 +10,12 @@ import { execFileSync } from "node:child_process";
 import { IS_WIN, ROOT, die, ensureDir, findPython, log, run, runCapture } from "./common.mjs";
 
 const DIST = path.join(ROOT, "dist");
-const STAGING = fs.mkdtempSync(path.join(DIST, ".site."));
-const WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-build-workspace."));
+let STAGING = "";
+let WORKSPACE = "";
 
 function cleanup() {
-  fs.rmSync(STAGING, { recursive: true, force: true });
-  fs.rmSync(WORKSPACE, { recursive: true, force: true });
+  if (STAGING) fs.rmSync(STAGING, { recursive: true, force: true });
+  if (WORKSPACE) fs.rmSync(WORKSPACE, { recursive: true, force: true });
 }
 process.on("exit", cleanup);
 
@@ -30,6 +30,8 @@ function findHugo() {
 
 export function buildSite({ layoutTestSource = "" } = {}) {
   ensureDir(DIST);
+  STAGING = fs.mkdtempSync(path.join(DIST, ".site."));
+  WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-build-workspace."));
   const python = findPython() || die("未找到 Python（需 docx/PIL/yaml/pypinyin）。请先运行 setup 完成环境初始化。");
 
   log("物化构建工作区（平台代码 + 内容仓库）……");

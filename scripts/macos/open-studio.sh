@@ -4,13 +4,6 @@
 set -Eeuo pipefail
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
-if [[ ! -f "$INSTALL_JSON" ]]; then
-  lidaiji_log "open: 未安装（缺少 install.json）"
-  printf '错误：还没有安装本机作者工作台。请先在项目目录运行 npm run studio:install。\n' >&2
-  exit 1
-fi
-PROJECT_ROOT="$(find_project_root)"
-
 if studio_health_ok; then
   lidaiji_log "open: 已在运行，直接打开 $STUDIO_URL"
   if [[ "${LIDAIJI_DRY_OPEN:-}" != "1" ]]; then
@@ -20,6 +13,14 @@ if studio_health_ok; then
   fi
   exit 0
 fi
+
+# 需要启动时才要求安装记录（已运行的实例不依赖 LaunchAgent 配置）
+if [[ ! -f "$INSTALL_JSON" ]]; then
+  lidaiji_log "open: 未安装（缺少 install.json）"
+  printf '错误：还没有安装本机作者工作台。请先在项目目录运行 npm run studio:install。\n' >&2
+  exit 1
+fi
+PROJECT_ROOT="$(find_project_root)"
 
 if launchd_job_loaded; then
   lidaiji_log "open: 未运行，唤醒 LaunchAgent"

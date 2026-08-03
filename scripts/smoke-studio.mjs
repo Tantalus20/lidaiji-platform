@@ -140,9 +140,18 @@ const chrome = spawn(
 
 let cdp = null;
 try {
-  await sleep(1500);
-  const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-  const page = targets.find((target) => target.type === "page");
+  // Chrome 冷启动可能需要较长时间；最多等待 20 秒让 CDP 端口就绪
+  let page = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+      page = targets.find((target) => target.type === "page");
+      if (page) break;
+    } catch {
+      /* 尚未就绪 */
+    }
+    await sleep(1000);
+  }
   check("Chrome CDP 可用", Boolean(page), "未找到页面目标");
   if (!page) process.exit(1);
 

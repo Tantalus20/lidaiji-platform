@@ -69,7 +69,6 @@ jobs:
       # setup.ps1 只读预检模式
       - shell: pwsh
         run: |
-          $env:LIDAIJI_PYTHON = (Join-Path $env:GITHUB_WORKSPACE '.venv-importer\Scripts\python.exe')
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\setup.ps1 -CheckOnly
       # 中文 + 空格路径：复制仓库到临时目录后运行核心 Node 测试与 PowerShell 语法检查
       - shell: pwsh
@@ -92,7 +91,6 @@ jobs:
       # Windows 后台启动 Studio 冒烟：启动 → 健康检查 → 停止
       - shell: pwsh
         run: |
-          $env:LIDAIJI_PYTHON = (Join-Path $env:GITHUB_WORKSPACE '.venv-importer\Scripts\python.exe')
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\start-studio.ps1
           Start-Sleep -Seconds 2
           if (-not (Test-NetConnection -ComputerName 127.0.0.1 -Port 4173 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
@@ -125,6 +123,5 @@ jobs:
       - run: npm ci
       - run: npm --prefix comments-service ci
       - run: npm run comments:init
-      # Linux 上 check 走 scripts/check.sh（既有全套）；跳过浏览器冒烟（无 Chrome/演示依赖时自动跳过）
-      - run: HUGO_BIN=hugo npm run check
-      - run: bash -n scripts/*.sh deploy/*.sh
+      # Linux 上 npm run check 走跨平台检查集（Node + Python + Hugo + bash 语法）
+      - run: npm run check
