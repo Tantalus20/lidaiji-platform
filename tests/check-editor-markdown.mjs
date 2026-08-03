@@ -11,10 +11,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const { parseMarkdown, serializeMarkdown } = await import(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "studio", "editor", "markdown.mjs")
+  pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "studio", "editor", "markdown.mjs")).href
 );
 
 let failures = 0;
@@ -342,7 +342,7 @@ test("超长文本（5万字/1000段/粗斜混合）往返一致且快速", () =
 /* 21. 可选深测：ProseMirror 层（本机有 node_modules 时执行） */
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 if (fs.existsSync(path.join(root, "node_modules", "prosemirror-model"))) {
-  const editor = await import(path.join(root, "studio", "editor", "editor.mjs"));
+  const editor = await import(pathToFileURL(path.join(root, "studio", "editor", "editor.mjs")).href);
 
   test("ProseMirror 层 JSON↔节点往返", () => {
     const md = "第一段**加粗**。\n\n<!-- paragraph-id:p-abc123 -->\n\n第二段*斜体*。\n\n| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 |\n";
