@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { IS_WIN, ROOT, findPython, log, run } from "./common.mjs";
+import { IS_WIN, ROOT, findPython, log, npmCommand, run } from "./common.mjs";
 import { buildSite } from "./build.mjs";
 
 const nodeChecks = [
@@ -44,7 +44,7 @@ export function runCrossPlatformCheck() {
   }
 
   log("评论服务测试……");
-  run("npm", ["--prefix", path.join(ROOT, "comments-service"), "run", "check"]);
+  run(npmCommand, ["--prefix", path.join(ROOT, "comments-service"), "run", "check"]);
 
   // Python 测试需要 DOCX 导入依赖（setup.ps1 / CI 负责安装）
   const python = process.env.LIDAIJI_PYTHON || findPython() || "python";

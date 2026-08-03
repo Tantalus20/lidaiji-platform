@@ -33,6 +33,24 @@ function makeTar(sourceDir, outputFile) {
 }
 
 function gitArchive(outputFile) {
+  if (process.platform === "win32") {
+    // Windows 自带 tar.exe（bsdtar）支持 --exclude 与 gzip；
+    // 从工作树打包源码（排除 .git/node_modules/.cache/dist）
+    const result = spawnSync(
+      "tar",
+      [
+        "-czf", outputFile,
+        "--exclude", ".git",
+        "--exclude", "node_modules",
+        "--exclude", ".cache",
+        "--exclude", "dist",
+        ".",
+      ],
+      { stdio: "pipe", cwd: ROOT, windowsHide: true },
+    );
+    if (result.status !== 0) die(`源码包打包失败：${(result.stderr || "").toString().trim()}`);
+    return;
+  }
   const result = spawnSync("git", ["archive", "--format=tar", "HEAD"], {
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 512 * 1024 * 1024,
@@ -55,14 +73,18 @@ if (!fs.existsSync(path.join(siteDir, "index.html"))) {
 
 const releaseTar = path.join(outDir, `lidaiji-site-v${version}_${stamp}.tar.gz`);
 const sourceTar = path.join(outDir, `lidaiji-source-v${version}_${stamp}.tar.gz`);
-const sourceTmp = path.join(outDir, "source.tar");
 
 makeTar(siteDir, releaseTar);
-gitArchive(sourceTmp);
-const gzip = spawnSync("gzip", ["-c", sourceTmp], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
-if (gzip.status !== 0) die("源码包压缩失败。");
-fs.writeFileSync(sourceTar, gzip.stdout);
-fs.rmSync(sourceTmp, { force: true });
+if (process.platform === "win32") {
+  gitArchive(sourceTar); // Windows 分支直接生成 .tar.gz
+} else {
+  const sourceTmp = path.join(outDir, "source.tar");
+  gitArchive(sourceTmp);
+  const gzip = spawnSync("gzip", ["-c", sourceTmp], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+  if (gzip.status !== 0) die("源码包压缩失败。");
+  fs.writeFileSync(sourceTar, gzip.stdout);
+  fs.rmSync(sourceTmp, { force: true });
+}
 
 // 源码包清单
 const manifestLines = spawnSync("git", ["ls-files"], { encoding: "utf8", cwd: ROOT })

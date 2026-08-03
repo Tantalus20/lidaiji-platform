@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(HERE, "..", "..");
 export const IS_WIN = process.platform === "win32";
+/* Windows 上 npm/git 等命令是 .cmd 包装，spawnSync 需要显式后缀 */
+export const npmCommand = IS_WIN ? "npm.cmd" : "npm";
 
 export function die(message) {
   console.error(`错误：${message}`);
