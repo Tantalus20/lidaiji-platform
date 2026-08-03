@@ -7,9 +7,36 @@
 公开仓库只包含平台代码和完全虚构的演示作品；真实文章、图片、作者评与私人配置放在
 独立的私有内容仓库中。
 
-> 平台发行版：**v0.1.0**
+> **不需要 Mac。** 《历代纪》的核心平台可以在 Windows、macOS 和 Linux 上运行。
+> Windows 用户可以在本机导入 DOCX、使用作者工作台编辑作品、预览和构建网站，
+> 并把发布包部署到自己的服务器。macOS 专用的一键应用只是可选便利功能，
+> 不是使用前提。
+
+> 平台发行版：**v0.2.0**
 >
-> 组件版本：site v0.4.2 · comments v0.4.0 · studio v0.1.1
+> 组件版本：site v0.4.2 · comments v0.4.0 · studio v0.2.0
+
+## 平台支持
+
+| 功能 | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| 作者工作台（Studio） | 支持 | 支持 | 支持 |
+| DOCX 导入 | 支持 | 支持 | 支持 |
+| Hugo 构建 | 支持 | 支持 | 支持 |
+| 评论服务（本机） | 支持 | 支持 | 支持 |
+| 桌面一键启动 | PowerShell 快捷方式 | `.app` | 脚本或桌面入口 |
+| 登录自动启动 | 任务计划程序 | LaunchAgent | systemd 用户服务或桌面自启 |
+| 完整服务器部署 | 实验性（Windows Server） | 不推荐 | 推荐 |
+
+结构上是“跨平台核心 + 各系统可选启动工具”，而不是三套互相复制的核心逻辑：
+Windows 使用 PowerShell 脚本（`scripts/windows/`），macOS 使用
+LaunchAgent 与 `.app`（`scripts/macos/`），Linux 使用既有脚本；
+通用 npm 命令（`npm run studio` / `npm run check` / `npm run build` /
+`npm run dev` / `npm run package`）在三个平台均可用。
+
+- Windows 用户指南：[docs/windows.md](docs/windows.md)
+- WSL 是可选的开发方式，不是 Windows 支持的前提；原生 PowerShell 与 Node.js 流程即可完成全部工作。
+
 
 ## 适合谁
 

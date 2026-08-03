@@ -1,6 +1,6 @@
 /*! Lidaiji Studio 编辑器前端包（自动生成，请勿手改）。
  * 源码：studio/editor/*.mjs；重新生成：npm run build:editor。
- * 包含 ProseMirror（MIT，https://prosemirror.net）及其依赖。平台版本 0.1.0。 */
+ * 包含 ProseMirror（MIT，https://prosemirror.net）及其依赖。平台版本 0.2.0。 */
 var LidaijiEditor = (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;

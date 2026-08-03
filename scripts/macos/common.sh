@@ -18,7 +18,7 @@ STUDIO_LABEL="cn.lidaiji.studio"
 STUDIO_PORT="4173"
 STUDIO_URL="http://127.0.0.1:4173/"
 STUDIO_APP_NAME="历代纪作者工作台.app"
-STUDIO_APP_VERSION="0.1.1"
+STUDIO_APP_VERSION="0.2.0"
 
 LAUNCH_AGENT_DIR="${LIDAIJI_LAUNCH_AGENT_DIR:-$HOME/Library/LaunchAgents}"
 STATE_DIR="${LIDAIJI_STATE_DIR:-$HOME/Library/Application Support/LidaijiStudio}"

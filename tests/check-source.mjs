@@ -46,8 +46,8 @@ assert(serverRollback.includes("umask 077"), "服务器回滚未固定私有文�
 assert(serverRollback.includes('chmod 0600 "$ROLLBACK_BACKUP"'), "回滚前评论数据库备份未固定0600权限");
 assert(read("scripts/comments-backup.sh").includes("umask 077"), "评论备份未固定私有文件掩码");
 assert(read("VERSION").trim() === "0.4.2", "公开网站版本不是0.4.2");
-assert(JSON.parse(read("package.json")).version === "0.1.0", "平台发行版本不是0.1.0");
-assert(read("PLATFORM_VERSION").trim() === "0.1.0", "PLATFORM_VERSION不是0.1.0");
+assert(JSON.parse(read("package.json")).version === "0.2.0", "平台发行版本不是0.2.0");
+assert(read("PLATFORM_VERSION").trim() === "0.2.0", "PLATFORM_VERSION不是0.2.0");
 // Studio 版本单一来源：package.json 的 studioVersion；其余展示位置必须一致
 const studioVersion = JSON.parse(read("package.json")).studioVersion;
 assert(/^\d+\.\d+\.\d+$/.test(studioVersion), "package.json.studioVersion 格式不正确");
@@ -148,7 +148,7 @@ const studioServer = read("studio/server.py");
 assert(studioServer.includes('"127.0.0.1"'), "作者工作台必须只绑定127.0.0.1");
 assert(!studioServer.includes('"0.0.0.0"') && !studioServer.includes("'0.0.0.0'"), "作者工作台不得绑定0.0.0.0");
 const pkg = JSON.parse(read("package.json"));
-assert(pkg.scripts && pkg.scripts.studio === "bash scripts/start-studio.sh", "package.json缺少studio启动脚本");
+assert(pkg.scripts && pkg.scripts.studio === "node scripts/run-studio.mjs", "package.json缺少studio启动脚本");
 for (const name of ["studio:open", "studio:status", "studio:stop", "studio:restart", "studio:install", "studio:uninstall"]) {
   assert(pkg.scripts && pkg.scripts[name], `package.json缺少${name}命令`);
 }
@@ -289,6 +289,59 @@ assert(editorPkg.scripts && editorPkg.scripts["build:app"], "package.json缺少b
 assert(editorPkg.devDependencies && editorPkg.devDependencies.esbuild, "缺少esbuild开发依赖");
 assert(editorPkg.devDependencies && editorPkg.devDependencies["prosemirror-model"], "缺少prosemirror-model依赖");
 assert(read(".gitignore").includes("node_modules/"), ".gitignore缺少node_modules条目");
+
+// Windows 正式支持：PowerShell 脚本、跨平台 npm 入口、文档与 CI
+for (const file of [
+  "scripts/windows/common.ps1",
+  "scripts/windows/setup.ps1",
+  "scripts/windows/start-studio.ps1",
+  "scripts/windows/stop-studio.ps1",
+  "scripts/windows/restart-studio.ps1",
+  "scripts/windows/status-studio.ps1",
+  "scripts/windows/open-studio.ps1",
+  "scripts/windows/install-startup-task.ps1",
+  "scripts/windows/uninstall-startup-task.ps1",
+  "scripts/windows/create-shortcut.ps1",
+  "scripts/run-studio.mjs",
+  "scripts/run-studio-tool.mjs",
+  "scripts/run-check.mjs",
+  "scripts/run-build.mjs",
+  "scripts/run-dev.mjs",
+  "scripts/run-package.mjs",
+  "scripts/run-publish.mjs",
+  "scripts/run-comments.mjs",
+  "scripts/cross-platform/common.mjs",
+  "scripts/cross-platform/build.mjs",
+  "scripts/cross-platform/check.mjs",
+  "docs/windows.md",
+]) {
+  assert(fs.existsSync(file), `缺少Windows/跨平台文件：${file}`);
+}
+const pkgScripts = JSON.parse(read("package.json")).scripts;
+for (const [name, command] of Object.entries({
+  studio: "node scripts/run-studio.mjs",
+  check: "node scripts/run-check.mjs",
+  build: "node scripts/run-build.mjs",
+  dev: "node scripts/run-dev.mjs",
+  package: "node scripts/run-package.mjs",
+  "comments:init": "node scripts/run-comments.mjs",
+})) {
+  assert(pkgScripts[name] === command, `npm script ${name} 未跨平台化：${pkgScripts[name]}`);
+}
+const readme = read("README.md");
+assert(readme.includes("不需要 Mac"), "README 缺少跨平台表述");
+assert(readme.includes("平台支持") && readme.includes("Windows"), "README 缺少平台支持表");
+assert(read("docs/deployment.md").includes("Windows 作者电脑 + Linux 服务器"), "部署文档缺少 Windows 方案");
+assert(read(".github/workflows/ci.yml").includes("windows-latest"), "CI 缺少 windows-latest job");
+assert(read(".github/workflows/ci.yml").includes("ubuntu-latest"), "CI 缺少 ubuntu-latest job");
+assert(
+  read("scripts/windows/setup.ps1").includes("-CheckOnly"),
+  "setup.ps1 缺少只读预检模式",
+);
+assert(
+  !/Stop-Process -Name node\b|taskkill \/IM node\.exe \/F/i.test(read("scripts/windows/stop-studio.ps1")),
+  "stop-studio.ps1 不得误杀全部 Node 进程",
+);
 
 if (failures.length) {
   console.error(`源码检查失败（${failures.length}项）：`);
