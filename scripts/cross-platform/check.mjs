@@ -108,12 +108,13 @@ export function runCrossPlatformCheck() {
 
 function runCapturePowerShell(dir, file) {
   try {
+    const target = path.join(dir, file).replace(/'/g, "''");
     execFileSync(
       "powershell.exe",
       [
         "-NoProfile",
         "-Command",
-        `$null = [System.Management.Automation.Language.Parser]::ParseFile('${(path.join(dir, file)).replace(/'/g, "''")}', [ref]$null, [ref]$errors); if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message }; exit 1 }`,
+        `$errs = $null; $null = [System.Management.Automation.Language.Parser]::ParseFile('${target}', [ref]$null, [ref]$errs); if ($errs.Count -gt 0) { $errs | ForEach-Object { $_.Message }; exit 1 }`,
       ],
       { stdio: "pipe", windowsHide: true },
     );
