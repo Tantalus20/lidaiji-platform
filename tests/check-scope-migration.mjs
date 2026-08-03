@@ -55,8 +55,9 @@ migrate(migrated, database);
 // 3. 迁移前自动备份已生成。
 const backups = fs.readdirSync(directory).filter((name) => name.includes(".pre-v2-"));
 assert.equal(backups.length, 1, "迁移前必须自动生成一个备份");
-const backupRowCount = new DatabaseSync(path.join(directory, backups[0]), { readOnly: true })
-  .prepare("SELECT COUNT(*) count FROM comments").get().count;
+const backupRead = new DatabaseSync(path.join(directory, backups[0]), { readOnly: true });
+const backupRowCount = backupRead.prepare("SELECT COUNT(*) count FROM comments").get().count;
+backupRead.close();
 assert.equal(Number(backupRowCount), 3, "自动备份必须包含全部旧段评");
 
 // 4. 旧段评逐字段零变化。
@@ -103,5 +104,20 @@ assert.equal(Number(restored.prepare("SELECT COUNT(*) count FROM comments WHERE 
 assert.equal(restored.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
 restored.close();
 
-fs.rmSync(directory, { recursive: true, force: true });
+// Windows 上 SQLite 文件句柄释放可能有延迟；清理失败时带重试
+let cleaned = false;
+for (let attempt = 0; attempt < 5; attempt += 1) {
+  try {
+    fs.rmSync(directory, { recursive: true, force: true });
+    cleaned = true;
+    break;
+  } catch (error) {
+    if (attempt === 4) throw error;
+    const until = Date.now() + 300;
+    while (Date.now() < until) {
+      /* 等待句柄释放 */
+    }
+  }
+}
+if (!cleaned) fs.rmSync(directory, { recursive: true, force: true });
 console.log("scope迁移演练通过：旧段评零变化、触发器约束、自动备份、恢复后重迁移均正常。");
