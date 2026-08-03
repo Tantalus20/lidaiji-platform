@@ -476,3 +476,26 @@ test("管理员登录：http 回环不设置 Secure cookie", async (t) => {
   assert.ok(setCookie.includes("SameSite=Strict"), setCookie);
   assert.ok(!setCookie.includes("Secure"), "http 回环登录不得下发 Secure cookie");
 });
+
+test("回环来源校验：非回环无头请求拒绝，IPv4映射回环放行", async (t) => {
+  const { adminOriginAllowed, isLoopbackAddress } = require("../src/app");
+  const config = { publicOrigin: "http://example.test" };
+  const evt = (remoteAddress, headers = {}) => ({ headers, socket: { remoteAddress } });
+  // 非回环地址、无 Origin 无 Referer → 拒绝
+  assert.equal(adminOriginAllowed(evt("10.8.0.99"), config), false);
+  assert.equal(adminOriginAllowed(evt("2001:db8::1"), config), false);
+  // 回环地址、无 Origin 无 Referer → 允许
+  assert.equal(adminOriginAllowed(evt("127.0.0.1"), config), true);
+  assert.equal(adminOriginAllowed(evt("::1"), config), true);
+  // IPv4 映射回环 → 允许
+  assert.equal(adminOriginAllowed(evt("::ffff:127.0.0.1"), config), true);
+  assert.equal(isLoopbackAddress("::ffff:127.5.6.7"), true);
+  // 回环地址 + 错误 Origin → 拒绝
+  assert.equal(adminOriginAllowed(evt("127.0.0.1", { origin: "https://evil.test" }), config), false);
+  // 正确公开 Origin → 允许
+  assert.equal(adminOriginAllowed(evt("10.8.0.99", { origin: "http://example.test" }), config), true);
+  // 无 Origin 但 Referer 匹配公开来源 → 允许
+  assert.equal(adminOriginAllowed(evt("10.8.0.99", { referer: "http://example.test/admin/" }), config), true);
+  // 无 Origin、Referer 不匹配 → 拒绝
+  assert.equal(adminOriginAllowed(evt("10.8.0.99", { referer: "http://other.test/admin/" }), config), false);
+});

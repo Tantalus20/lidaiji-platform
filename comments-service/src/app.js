@@ -111,12 +111,22 @@ function originAllowed(request, config) {
   return origin === config.publicOrigin || (!origin && referer.startsWith(`${config.publicOrigin}/`));
 }
 
+function isLoopbackAddress(address) {
+  // 回环地址：127.0.0.0/8、::1、IPv4 映射的 ::ffff:127.x.x.x
+  return address === "::1"
+    || address.startsWith("127.")
+    || address.startsWith("::ffff:127.");
+}
+
 function adminOriginAllowed(request, config) {
-  // 管理端点：带来源头时必须是公开来源（正式站 admin 页面）；不带来源头的
-  // 回环管理请求（SSH 隧道、CLI、curl）放行——评论服务只监听服务器回环。
+  // 管理端点：带来源头时必须是公开来源（正式站 admin 页面）；
+  // 无 Origin 且无 Referer 时，只有连接来源为回环地址才放行
+  // （SSH 隧道、CLI、curl）。错误 Origin 即使来自回环也拒绝。
   const origin = String(request.headers.origin || "");
   const referer = String(request.headers.referer || "");
-  return origin === config.publicOrigin || (!origin && !referer);
+  if (origin) return origin === config.publicOrigin;
+  if (referer) return referer.startsWith(`${config.publicOrigin}/`);
+  return isLoopbackAddress(String(request.socket?.remoteAddress || ""));
 }
 
 function overHttps(request) {
@@ -327,7 +337,7 @@ function createApp({ db, config }) {
       const method = request.method || "GET";
       if (method === "GET" && url.pathname === "/healthz") {
         const integrity = db.prepare("PRAGMA quick_check").get();
-        return json(response, 200, { ok: integrity.quick_check === "ok", version: "0.4.0" }, { "Cache-Control": "no-store" });
+        return json(response, 200, { ok: integrity.quick_check === "ok", version: "0.4.1" }, { "Cache-Control": "no-store" });
       }
       if (method === "GET" && url.pathname === "/admin/comments/") {
         return html(response, 200, fs.readFileSync(path.join(ADMIN_DIR, "index.html"), "utf8"));
@@ -423,4 +433,4 @@ function createApp({ db, config }) {
   });
 }
 
-module.exports = { createApp, publicComment, clientAddress, originAllowed };
+module.exports = { createApp, publicComment, clientAddress, originAllowed, adminOriginAllowed, isLoopbackAddress };
