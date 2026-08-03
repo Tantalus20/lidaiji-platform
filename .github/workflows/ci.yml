@@ -16,7 +16,9 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: comments-service/package-lock.json
+          cache-dependency-path: |
+            comments-service/package-lock.json
+            package-lock.json
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
@@ -26,6 +28,7 @@ jobs:
           extended: true
       - run: python -m venv .venv-importer
       - run: .venv-importer/bin/pip install -r importer/requirements.txt
+      - run: npm ci
       - run: npm --prefix comments-service ci
       - run: npm run comments:init
       - run: npm run check

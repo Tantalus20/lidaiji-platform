@@ -71,8 +71,9 @@ STUDIO_SESSION_COOKIE = "lidaiji_studio_session"
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
-    "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/app-bundle.js": ("app-bundle.js", "text/javascript; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/vendor/prosemirror-bundle.js": ("vendor/prosemirror-bundle.js", "text/javascript; charset=utf-8"),
 }
 ASSET_MEDIA_TYPES = {
     ".webp": "image/webp",
@@ -677,6 +678,14 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        # 工作台页面无内联脚本/样式，可安全收紧 CSP；样式由 CSSOM 设置不受 style-src 限制
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+        )
+        self.send_header("X-Content-Type-Options", "nosniff")
         if path in ("/", "/index.html"):
             self.send_header(
                 "Set-Cookie",

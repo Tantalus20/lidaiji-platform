@@ -1,14 +1,37 @@
 {
   "name": "lidaiji-platform",
   "version": "0.1.0",
+  "studioVersion": "0.1.1",
   "private": true,
   "description": "历代纪静态站本地预览入口（构建后由段评服务同源托管）",
   "scripts": {
     "dev": "bash scripts/dev-preview.sh",
     "studio": "bash scripts/start-studio.sh",
+    "studio:open": "bash scripts/macos/open-studio.sh",
+    "studio:status": "bash scripts/macos/status-studio.sh",
+    "studio:stop": "bash scripts/macos/stop-studio.sh",
+    "studio:restart": "bash scripts/macos/restart-studio.sh",
+    "studio:install": "bash scripts/macos/install-launch-agent.sh",
+    "studio:uninstall": "bash scripts/macos/uninstall-launch-agent.sh",
     "build": "bash scripts/build.sh",
+    "build:editor": "node scripts/build-editor-bundle.mjs",
+    "build:app": "node scripts/build-studio-app.mjs",
     "check": "bash scripts/check.sh",
     "comments:init": "bash scripts/comments-init-local.sh",
     "comments:create-admin": "bash scripts/comments-create-admin-local.sh"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.11",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-tables": "^1.8.5",
+    "prosemirror-view": "^1.42.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }

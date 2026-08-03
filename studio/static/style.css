@@ -207,21 +207,36 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 
 /* ---------- 编辑页 ---------- */
 
+/* 编辑页不锁死最大高度：元数据/作者评面板展开时页面整体滚动，
+   而不是把正文编辑区压扁。 */
+#view-edit {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 7.5rem);
+}
+
 .edit-topbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 0.7rem;
-  margin-bottom: 0.8rem;
+  margin-bottom: 0.5rem;
 }
 .edit-topbar h2 { margin: 0; font-size: 1.15rem; }
 
+/* 保存状态 */
+.save-status { font-size: 0.85rem; color: var(--ink-faint); }
+.save-status.saved { color: var(--ok); }
+.save-status.failed { color: var(--danger); }
+.save-status.saving { color: var(--gold); }
+
+/* 元数据与作者评折叠面板 */
 .fm-panel {
   background: var(--paper-raised);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0.6rem 1rem;
-  margin-bottom: 0.8rem;
+  margin-top: 0.7rem;
 }
 .fm-panel summary { cursor: pointer; color: var(--ink-soft); }
 .fm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.6rem; }
@@ -235,28 +250,196 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 }
 .fm-readonly dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; }
 
-.editor-split {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.9rem;
-  align-items: stretch;
-}
-.editor-body {
-  width: 100%;
-  min-height: 62vh;
-  font-family: var(--font-serif);
-  font-size: 1.05rem;
-  line-height: 1.95;
-  color: var(--ink);
+/* 格式工具栏 */
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
   background: var(--paper-raised);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 1rem 1.2rem;
-  resize: vertical;
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.6rem;
 }
-.editor-preview-wrap { min-width: 0; }
-.editor-preview { max-height: 62vh; min-height: 20vh; }
-.editor-hint { color: var(--ink-faint); font-size: 0.85rem; }
+.editor-toolbar .tool {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+}
+.editor-toolbar .tool:hover:not(:disabled) {
+  background: var(--paper-muted);
+  color: var(--ink);
+}
+.editor-toolbar .tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.editor-toolbar .tool:disabled {
+  color: var(--ink-faint);
+  opacity: 0.55;
+  cursor: default;
+}
+.editor-toolbar .tool[aria-pressed="true"] {
+  background: var(--banner);
+  border-color: var(--banner-line);
+  color: var(--accent);
+  font-weight: 700;
+}
+.toolbar-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  margin: 0 0.3rem;
+}
+
+/* 大面积正文编辑区：高度约为两屏（2 × (100vh - 顶部占用)），
+   编辑区内独立上下滚动；元数据/作者评面板展开时由页面滚动承担，
+   编辑区高度不变、不会被压扁；鼠标悬停在编辑区内滚轮直接滚动正文。 */
+.editor-area {
+  flex: 0 0 auto;
+  height: calc(2 * (100vh - 21rem));
+  min-height: 24rem;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.editor-host .ProseMirror {
+  min-height: 100%;
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 2rem 2.5rem 8rem;
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  line-height: 1.85;
+  color: var(--ink);
+  outline: none;
+  caret-color: var(--accent);
+}
+.editor-host .ProseMirror p { margin: 0 0 0.9em; }
+.editor-host .ProseMirror h1,
+.editor-host .ProseMirror h2,
+.editor-host .ProseMirror h3 {
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  margin: 1.4em 0 0.6em;
+}
+.editor-host .ProseMirror h1 { font-size: 1.5rem; }
+.editor-host .ProseMirror h2 { font-size: 1.3rem; }
+.editor-host .ProseMirror h3 { font-size: 1.15rem; }
+.editor-host .ProseMirror blockquote {
+  margin: 0 0 0.9em;
+  padding-left: 1em;
+  border-left: 3px solid var(--gold);
+  color: var(--ink-soft);
+}
+.editor-host .ProseMirror ul,
+.editor-host .ProseMirror ol { margin: 0 0 0.9em; padding-left: 1.6em; }
+.editor-host .ProseMirror li { margin: 0.2em 0; }
+.editor-host .ProseMirror strong { font-weight: 700; }
+.editor-host .ProseMirror em { font-style: italic; }
+.editor-host .ProseMirror .text-align-center { text-align: center; }
+.editor-host .ProseMirror .text-align-right { text-align: right; }
+.editor-host .ProseMirror .text-align-left { text-align: left; }
+.editor-host .ProseMirror .poetry-block {
+  width: fit-content;
+  max-width: 100%;
+  margin: 1em auto;
+  text-align: left;
+}
+.editor-host .ProseMirror .poetry-block p {
+  margin: 0.12em 0;
+  line-height: 1.7;
+}
+.editor-host .ProseMirror .end-note {
+  margin-top: 1.6em;
+  text-align: right;
+  font-size: 0.92em;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+.editor-host .ProseMirror .end-note p { margin: 0.15em 0; }
+.editor-host .ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.4em 0;
+}
+.editor-host .ProseMirror pre {
+  background: var(--paper-muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.6rem 0.9rem;
+  overflow-x: auto;
+  margin: 0 0 0.9em;
+}
+.editor-host .ProseMirror code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.88em;
+  background: var(--paper-muted);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+.editor-host .ProseMirror pre code {
+  background: none;
+  padding: 0;
+}
+.editor-host .ProseMirror a { color: var(--accent); }
+.editor-host .ProseMirror table {
+  border-collapse: collapse;
+  margin: 0 0 0.9em;
+  font-size: 0.95em;
+}
+.editor-host .ProseMirror th,
+.editor-host .ProseMirror td {
+  border: 1px solid var(--line);
+  padding: 0.3rem 0.6rem;
+}
+.editor-host .ProseMirror ::selection { background: rgba(154, 120, 64, 0.35); }
+.editor-host .ProseMirror p.is-empty::before {
+  content: "在这里写作……";
+  color: var(--ink-faint);
+  pointer-events: none;
+  float: left;
+}
+
+.editor-preview-wrap,
+.editor-source-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.2rem 1.2rem 3rem;
+}
+.editor-preview {
+  max-width: 66rem;
+  margin: 0 auto;
+}
+.editor-source {
+  max-width: 66rem;
+  margin: 0 auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink-soft);
+}
+.preview-banner { font-size: 0.85rem; color: var(--ink-faint); }
 .inline-note-actions {
   display: flex;
   justify-content: flex-end;
@@ -585,8 +768,8 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 @media (max-width: 700px) {
   .panel { padding: 0.9rem; }
   .report { grid-template-columns: 6em 1fr; }
-  .editor-split { grid-template-columns: 1fr; }
-  .editor-body { min-height: 40vh; }
+  .editor-area { height: calc(2 * (100vh - 17rem)); min-height: 18rem; }
+  .editor-host .ProseMirror { padding: 1rem 1rem 4rem; font-size: 1.05rem; }
   .topnav { margin-left: 0; }
 }
 

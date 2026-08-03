@@ -256,7 +256,35 @@ class StudioTestCase(unittest.TestCase):
     def test_12前端源码不使用浏览器弹窗(self):
         static_dir = ROOT / "studio" / "static"
         for file in static_dir.iterdir():
+            if not file.is_file():
+                continue
             self.assertNotIn("al" + "ert(", file.read_text(encoding="utf-8"), f"{file.name} 含有弹窗调用")
+
+    def test_12b页面引用的静态资源必须都在服务端白名单中(self):
+        import re
+        html = (ROOT / "studio" / "static" / "index.html").read_text(encoding="utf-8")
+        references = re.findall(r'(?:src|href)="(/[^"#]+)"', html)
+        references = [item for item in references if not item.startswith("/api/")]
+        self.assertTrue(references, "index.html 未找到任何静态资源引用")
+        for reference in references:
+            self.assertIn(reference, studio_server.STATIC_FILES, f"页面引用 {reference} 不在服务端静态白名单")
+            filename, _ = studio_server.STATIC_FILES[reference]
+            self.assertTrue(
+                (ROOT / "studio" / "static" / filename).is_file(),
+                f"{reference} 对应的静态文件不存在：{filename}",
+            )
+
+    def test_12c静态响应带CSP与nosniff(self):
+        connection = http.client.HTTPConnection(self.host, self.port, timeout=30)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        response.read()
+        csp = response.getheader("Content-Security-Policy", "")
+        self.assertIn("default-src 'none'", csp)
+        self.assertIn("script-src 'self'", csp)
+        self.assertIn("object-src 'none'", csp)
+        self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
+        connection.close()
 
     def test_13关闭服务后会话目录被清理(self):
         _, payload = self.upload()

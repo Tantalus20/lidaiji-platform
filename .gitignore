@@ -18,6 +18,7 @@ incoming/*.docx
 incoming/*.docm
 !incoming/README.md
 comments-service/node_modules/
+node_modules/
 comments-service/data/
 comments-service/*.sqlite3*
 comments-service/.env

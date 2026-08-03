@@ -74,6 +74,22 @@ class ParagraphIdentityTests(unittest.TestCase):
         result, _ = assign_ids("# 标题\n\n- 条目\n\n2. 有序条目\n\n[^note]: 脚注。\n\n普通段。\n")
         self.assertEqual(len(records_from_markdown(result)), 1)
 
+    def test_11诗歌尾注容器内段落不生成段落ID(self):
+        body = (
+            "普通段。\n\n"
+            "{{< poetry >}}\n\n山有木兮木有枝\n\n心悦君兮君不知\n\n{{< /poetry >}}\n\n"
+            "{{< endnote >}}\n\n写于二〇二六年八月\n\n{{< /endnote >}}\n\n"
+            "{{< align center >}}\n\n居中题记\n\n{{< /align >}}\n"
+        )
+        # 无锚点注释时 records 为空（含普通段）；关键看 assign_ids 只给普通段建锚点
+        self.assertEqual(len(records_from_markdown(body)), 0)
+        result, report = assign_ids(body, body)
+        self.assertEqual(report.created, 1, "只给普通段创建锚点")
+        self.assertEqual(len(records_from_markdown(result)), 1, "只有普通段参与段评身份")
+        self.assertNotIn("paragraph-id:", result.split("{{< poetry >}}")[1].split("{{< /poetry >}}")[0])
+        self.assertNotIn("paragraph-id:", result.split("{{< endnote >}}")[1].split("{{< /endnote >}}")[0])
+        self.assertNotIn("paragraph-id:", result.split("{{< align center >}}")[1].split("{{< /align >}}")[0])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

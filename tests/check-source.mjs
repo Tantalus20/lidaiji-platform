@@ -45,15 +45,23 @@ const serverRollback = read("scripts/server-rollback.sh");
 assert(serverRollback.includes("umask 077"), "服务器回滚未固定私有文件掩码");
 assert(serverRollback.includes('chmod 0600 "$ROLLBACK_BACKUP"'), "回滚前评论数据库备份未固定0600权限");
 assert(read("scripts/comments-backup.sh").includes("umask 077"), "评论备份未固定私有文件掩码");
-assert(read("VERSION").trim() === "0.4.1", "公开网站版本不是0.4.1");
+assert(read("VERSION").trim() === "0.4.2", "公开网站版本不是0.4.2");
 assert(JSON.parse(read("package.json")).version === "0.1.0", "平台发行版本不是0.1.0");
 assert(read("PLATFORM_VERSION").trim() === "0.1.0", "PLATFORM_VERSION不是0.1.0");
-assert(read("studio/static/index.html").includes("工作台 v0.1.1"), "Studio页面版本不是0.1.1");
+// Studio 版本单一来源：package.json 的 studioVersion；其余展示位置必须一致
+const studioVersion = JSON.parse(read("package.json")).studioVersion;
+assert(/^\d+\.\d+\.\d+$/.test(studioVersion), "package.json.studioVersion 格式不正确");
+assert(read("studio/static/index.html").includes(`工作台 v${studioVersion}`), "Studio页面版本与 studioVersion 不一致");
+assert(read("README.md").includes(`studio v${studioVersion}`), "README组件版本与 studioVersion 不一致");
+assert(read("scripts/macos/common.sh").includes(`STUDIO_APP_VERSION="${studioVersion}"`), "macOS应用版本与 studioVersion 不一致");
 assert(JSON.parse(read("comments-service/package.json")).version === "0.4.0", "评论服务应保持0.4.0");
-const studioApp = read("studio/static/app.js");
-assert(studioApp.includes("decoratePreviewNotes"), "Studio编辑预览缺少段落作者评入口");
-assert(studioApp.includes('p[data-paragraph-id]'), "Studio没有按稳定段落ID绑定作者评入口");
-assert(studioApp.includes('save("draft")') && studioApp.includes('save("published")'), "段落旁作者评不能分别保存草稿和发布");
+const studioNotes = read("studio/app/notes.mjs");
+assert(studioNotes.includes("decoratePreviewNotes"), "Studio编辑预览缺少段落作者评入口");
+assert(studioNotes.includes('p[data-paragraph-id]'), "Studio没有按稳定段落ID绑定作者评入口");
+assert(
+  studioNotes.includes('save("draft")') && studioNotes.includes('save("published")'),
+  "段落旁作者评不能分别保存草稿和发布",
+);
 for (const file of [
   "comments-service/src/server.js",
   "comments-service/src/app.js",
@@ -104,7 +112,7 @@ for (const file of [
   if (fs.existsSync(file)) assert((fs.statSync(file).mode & 0o111) !== 0, `${file}没有执行权限`);
 }
 const requirements = read("importer/requirements.txt");
-for (const dependency of ["python-docx", "Pillow", "PyYAML", "pypinyin"]) {
+for (const dependency of ["python-docx", "Pillow", "PyYAML", "pypinyin", "markdown-it-py"]) {
   assert(requirements.includes(dependency), `Word导入器缺少依赖：${dependency}`);
 }
 for (const file of [
@@ -117,7 +125,7 @@ for (const file of [
   "studio/publish_center.py",
   "studio/media.py",
   "studio/static/index.html",
-  "studio/static/app.js",
+  "studio/static/app-bundle.js",
   "studio/static/style.css",
   "scripts/start-studio.sh",
   "scripts/check-studio.sh",
@@ -141,6 +149,9 @@ assert(studioServer.includes('"127.0.0.1"'), "作者工作台必须只绑定127.
 assert(!studioServer.includes('"0.0.0.0"') && !studioServer.includes("'0.0.0.0'"), "作者工作台不得绑定0.0.0.0");
 const pkg = JSON.parse(read("package.json"));
 assert(pkg.scripts && pkg.scripts.studio === "bash scripts/start-studio.sh", "package.json缺少studio启动脚本");
+for (const name of ["studio:open", "studio:status", "studio:stop", "studio:restart", "studio:install", "studio:uninstall"]) {
+  assert(pkg.scripts && pkg.scripts[name], `package.json缺少${name}命令`);
+}
 assert(backup.includes("studio"), "源码备份未包含作者工作台目录");
 const publish = read("scripts/publish.sh");
 assert(publish.includes('create-source-package.sh" "$SOURCE_ARCHIVE" site'), "发布未使用Git源码包生成器");
@@ -183,6 +194,101 @@ assert(
   read("tests/check-site.mjs").includes("author-notes.yaml"),
   "check-site.mjs 必须断言产物不含 author-notes.yaml",
 );
+
+// macOS 作者工作台（LaunchAgent + .app + 启动器脚本）
+const macosScripts = [
+  "common.sh",
+  "start-studio.sh",
+  "stop-studio.sh",
+  "restart-studio.sh",
+  "status-studio.sh",
+  "open-studio.sh",
+  "install-launch-agent.sh",
+  "uninstall-launch-agent.sh",
+  "install-app.sh",
+  "rotate-logs.sh",
+];
+for (const file of macosScripts) {
+  const path = `scripts/macos/${file}`;
+  assert(fs.existsSync(path), `缺少macOS工作台脚本：${path}`);
+  assert((fs.statSync(path).mode & 0o111) !== 0, `${path}没有执行权限`);
+  const content = read(path);
+  assert(!/\/Users\/|\/mnt\/data\//.test(content), `${path}包含本机绝对路径`);
+}
+for (const file of [
+  "scripts/macos/launcher.applescript",
+  "scripts/macos/icon.py",
+  "packaging/macos/cn.lidaiji.studio.plist.template",
+]) {
+  assert(fs.existsSync(file), `缺少macOS工作台文件：${file}`);
+  if (fs.existsSync(file)) {
+    assert(!/\/Users\/|\/mnt\/data\//.test(read(file)), `${file}包含本机绝对路径`);
+  }
+}
+// check-macos-studio.sh 自身包含“/Users/”扫描模式，只断言存在与执行权限
+assert(fs.existsSync("scripts/check-macos-studio.sh"), "缺少check-macos-studio.sh");
+assert((fs.statSync("scripts/check-macos-studio.sh").mode & 0o111) !== 0, "check-macos-studio.sh没有执行权限");
+const plistTemplate = read("packaging/macos/cn.lidaiji.studio.plist.template");
+assert(
+  plistTemplate.includes("__PROJECT_ROOT__") && plistTemplate.includes("__LOG_DIR__") && plistTemplate.includes("__PATH_VALUE__"),
+  "plist模板缺少占位符",
+);
+assert(!fs.existsSync("scripts/macos/cn.lidaiji.studio.plist"), "本机生成的plist不能进入仓库");
+assert(!fs.existsSync("scripts/macos/install.json"), "本机安装配置不能进入仓库");
+
+// 正文所见即所得编辑器（ProseMirror 前端包 + 纯函数 Markdown 引擎）
+for (const file of [
+  "studio/editor/markdown.mjs",
+  "studio/editor/editor.mjs",
+  "studio/static/vendor/prosemirror-bundle.js",
+  "scripts/build-editor-bundle.mjs",
+  "scripts/check-editor-bundle.sh",
+  "tests/check-editor-markdown.mjs",
+  "tests/check-editor-format.mjs",
+]) {
+  assert(fs.existsSync(file), `缺少编辑器文件：${file}`);
+}
+const editorBundle = read("studio/static/vendor/prosemirror-bundle.js");
+assert(editorBundle.length > 100000, "编辑器前端包过小");
+assert(editorBundle.includes("createStudioEditor"), "编辑器前端包缺少编辑器入口");
+assert(!/\/Users\/[^ ]*/.test(editorBundle), "编辑器前端包包含本机绝对路径");
+const editorHtml = read("studio/static/index.html");
+assert(editorHtml.includes('id="editorHost"'), "编辑页缺少编辑区容器");
+assert(editorHtml.includes("/vendor/prosemirror-bundle.js"), "编辑页未引入编辑器前端包");
+assert(!editorHtml.includes('id="editorBody"'), "编辑页不应再使用 textarea 编辑器");
+const editorApp = read("studio/app/editor-page.mjs");
+assert(editorApp.includes("LidaijiEditor.createStudioEditor"), "app 未接入所见即所得编辑器");
+assert(editorApp.includes("replaceDocKeepCursor"), "app 缺少保存后光标保持");
+assert(editorApp.includes("AUTOSAVE_DELAY"), "app 缺少自动保存");
+assert(editorApp.includes("localStorage"), "app 缺少本地草稿机制");
+assert(editorApp.includes('setAlignment("left")'), "app 缺少左对齐按钮接线");
+assert(editorApp.includes("togglePoetry"), "app 缺少诗歌块接线");
+assert(editorApp.includes("toggleEndnote"), "app 缺少尾注块接线");
+const editorHtml2 = read("studio/static/index.html");
+for (const id of ["tbAlignLeft", "tbAlignCenter", "tbAlignRight", "tbPoetry", "tbEndnote"]) {
+  assert(editorHtml2.includes(`id="${id}"`), `工具栏缺少按钮：${id}`);
+}
+const markdownEngine = read("studio/editor/markdown.mjs");
+assert(markdownEngine.includes("SHORTCODE_OPEN"), "Markdown 引擎缺少短代码解析");
+assert(markdownEngine.includes("poetry_block"), "Markdown 引擎缺少诗歌块");
+assert(markdownEngine.includes("endnote_block"), "Markdown 引擎缺少尾注块");
+assert(read("studio/preview_render.py").includes("shortcode_block_rule"), "预览渲染器缺少短代码支持");
+for (const file of [
+  "themes/lidaiji/layouts/shortcodes/align.html",
+  "themes/lidaiji/layouts/shortcodes/poetry.html",
+  "themes/lidaiji/layouts/shortcodes/endnote.html",
+]) {
+  assert(fs.existsSync(file), `缺少短代码模板：${file}`);
+}
+const appBundle = read("studio/static/app-bundle.js");
+assert(appBundle.length > 50000, "工作台前端包过小");
+assert(!/\/Users\/[^ ]*/.test(appBundle), "工作台前端包包含本机绝对路径");
+const editorPkg = JSON.parse(read("package.json"));
+assert(editorPkg.scripts && editorPkg.scripts["build:editor"], "package.json缺少build:editor命令");
+assert(editorPkg.scripts && editorPkg.scripts["build:app"], "package.json缺少build:app命令");
+assert(editorPkg.devDependencies && editorPkg.devDependencies.esbuild, "缺少esbuild开发依赖");
+assert(editorPkg.devDependencies && editorPkg.devDependencies["prosemirror-model"], "缺少prosemirror-model依赖");
+assert(read(".gitignore").includes("node_modules/"), ".gitignore缺少node_modules条目");
 
 if (failures.length) {
   console.error(`源码检查失败（${failures.length}项）：`);

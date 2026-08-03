@@ -9,7 +9,7 @@
 
 > 平台发行版：**v0.1.0**
 >
-> 组件版本：site v0.4.1 · comments v0.4.0 · studio v0.1.1
+> 组件版本：site v0.4.2 · comments v0.4.0 · studio v0.1.1
 
 ## 适合谁
 
@@ -92,6 +92,50 @@ npm run comments:create-admin  # 创建本地评论管理员
 npm run dev                    # 启动本地网站与评论服务
 npm run check                  # 执行完整检查
 ```
+
+## macOS 作者工作台
+
+在 Mac 上，可以把 Studio 变成类似普通应用的体验：登录后后台自动运行，不需要保留终端窗口。
+整套方案只使用 macOS 自带的 `launchd` 与 `osacompile`，不依赖 Electron、Tauri 或 PM2。
+
+首次安装（在平台项目目录执行一次）：
+
+```bash
+npm run studio:install
+```
+
+安装脚本会：
+
+- 在本机生成 LaunchAgent（`~/Library/LaunchAgents/cn.lidaiji.studio.plist`）与运行配置
+  （`~/Library/Application Support/LidaijiStudio/install.json`），这些文件都在仓库之外；
+- 生成“历代纪作者工作台.app”到 `~/Applications/`；
+- 立即启动后台服务，只监听 `127.0.0.1:4173`，不开放公网或局域网访问；
+- 登录后自动运行；仅在异常退出时自动重启，正常停止后不会被立刻拉起。
+
+平时打开：
+
+```text
+双击“历代纪作者工作台.app”（可拖入 Dock），浏览器会自动打开 http://127.0.0.1:4173/
+```
+
+常用命令：
+
+```bash
+npm run studio:status     # 查看运行状态
+npm run studio:restart    # 重新启动
+npm run studio:stop       # 停止（不卸载自动启动）
+npm run studio:uninstall  # 卸载自动启动（不删除文章、仓库、数据库）
+```
+
+注意事项：
+
+- `.app` 只是一个安全启动器：唤醒本机 Studio 并打开浏览器，它不是另一套网站；
+- Studio 只监听本机回环地址，LaunchAgent 不上传任何数据；
+- 日志位于 `~/Library/Logs/LidaijiStudio/`（单文件超过 10MB 自动轮转，保留最近 3 份）；
+- 项目目录移动、Node/Python 路径变化、Mac 系统更新或升级 Node 后，重新执行一次
+  `npm run studio:install` 即可刷新配置；
+- 本机生成的文件（plist、install.json、日志、应用）全部位于仓库之外，不会进入公开仓库；
+- 这些脚本只面向 macOS；Windows 和 Linux 不使用 LaunchAgent 与 `osacompile`。
 
 ## 内容与隐私边界
 

@@ -57,14 +57,48 @@
       <span id="editDraftBadge" class="badge hidden">草稿</span>
       <span id="editWordCount" class="meta-text"></span>
       <span class="spacer"></span>
+      <span id="editSaveStatus" class="save-status"></span>
+      <button id="editSaveRetry" class="danger small hidden" type="button">重试保存</button>
       <button id="editSave" class="primary" type="button">保存</button>
-      <span id="editSaveStatus" class="preview-status"></span>
       <button id="editHugoPreview" class="secondary small" type="button">Hugo 真实预览</button>
       <button id="editOpenFolder" class="secondary small" type="button">打开目录</button>
     </div>
     <div id="editError" class="error-box hidden"></div>
+    <div id="draftBar" class="dirty-bar hidden" role="alert">
+      <span id="draftBarText">检测到上次未保存的本地草稿。</span>
+      <button id="draftRestore" class="primary small" type="button">恢复草稿</button>
+      <button id="draftDiscard" class="secondary small" type="button">丢弃</button>
+    </div>
+    <div class="editor-toolbar" role="toolbar" aria-label="正文格式">
+      <button id="tbUndo" type="button" class="tool" title="撤销（⌘Z / Ctrl+Z）" aria-label="撤销" disabled>撤销</button>
+      <button id="tbRedo" type="button" class="tool" title="重做（⇧⌘Z / Ctrl+Y）" aria-label="重做" disabled>重做</button>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <button id="tbBold" type="button" class="tool" title="加粗（⌘B / Ctrl+B）" aria-label="加粗" aria-pressed="false">加粗</button>
+      <button id="tbItalic" type="button" class="tool" title="斜体（⌘I / Ctrl+I）" aria-label="斜体" aria-pressed="false">斜体</button>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <button id="tbAlignLeft" type="button" class="tool" title="左对齐（正文默认）" aria-label="左对齐" aria-pressed="false">左对齐</button>
+      <button id="tbAlignCenter" type="button" class="tool" title="居中（题记、章节间隔）" aria-label="居中" aria-pressed="false">居中</button>
+      <button id="tbAlignRight" type="button" class="tool" title="右对齐（落款、日期）" aria-label="右对齐" aria-pressed="false">右对齐</button>
+      <span class="toolbar-sep" aria-hidden="true"></span>
+      <button id="tbPoetry" type="button" class="tool" title="诗歌块（整体居中、诗句内部左对齐）" aria-label="诗歌块" aria-pressed="false">诗歌</button>
+      <button id="tbEndnote" type="button" class="tool" title="尾注块（右对齐、小字号落款）" aria-label="尾注块" aria-pressed="false">尾注</button>
+      <span class="spacer"></span>
+      <button id="tbPreview" type="button" class="secondary small" title="把正文渲染为阅读效果（含作者评入口）" aria-label="预览正文">预览</button>
+      <button id="tbSource" type="button" class="secondary small" title="查看保存到文件的 Markdown 源码" aria-label="查看 Markdown 源码">Markdown 源码</button>
+    </div>
+    <div class="editor-area">
+      <div id="editorHost" class="editor-host" aria-label="正文编辑器"></div>
+      <div id="editorPreviewWrap" class="editor-preview-wrap hidden">
+        <p class="preview-banner">转换预览；点击正文段落旁的“写作者评”即可直接添加批注。<button id="editorPreviewBack" class="secondary small" type="button">返回编辑</button></p>
+        <div id="editorPreview" class="rendered editor-preview"></div>
+      </div>
+      <div id="editorSourceWrap" class="editor-source-wrap hidden">
+        <p class="preview-banner">保存到文件的就是这段 Markdown，其中 `<!-- paragraph-id:... -->` 是段评锚点。<button id="editorSourceBack" class="secondary small" type="button">返回编辑</button></p>
+        <pre id="editorSource" class="markdown-source"></pre>
+      </div>
+    </div>
     <details id="fmPanel" class="fm-panel">
-      <summary>Front Matter（点击展开）</summary>
+      <summary>元数据（标题、日期、分类等，点击展开）</summary>
       <form id="fmForm" class="meta-form">
         <div class="fm-grid">
           <label>标题 <input name="title"></label>
@@ -115,14 +149,6 @@
         </div>
       </div>
     </details>
-    <div class="editor-split">
-      <textarea id="editorBody" class="editor-body" spellcheck="false" placeholder="在这里写作……"></textarea>
-      <div class="editor-preview-wrap">
-        <p class="preview-banner">转换预览；点击正文段落旁的“写作者评”即可直接添加批注。</p>
-        <div id="editorPreview" class="rendered editor-preview"></div>
-      </div>
-    </div>
-    <p class="editor-hint">保存时会为新段落自动补充段评锚点，已有锚点不会改动。</p>
   </section>
 
   <!-- 新建文章 -->
@@ -458,6 +484,7 @@
   </section>
 </main>
 
-<script src="/app.js"></script>
+<script src="/vendor/prosemirror-bundle.js"></script>
+<script src="/app-bundle.js"></script>
 </body>
 </html>

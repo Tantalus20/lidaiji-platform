@@ -990,6 +990,55 @@ main {
   margin-bottom: 0;
 }
 
+/* 加粗与斜体必须显式渲染：正文可能被其他规则设置过 font-weight/font-style。
+   斜体在中文环境多用合成倾斜（浏览器对 CJK 字体自动 fake-oblique），
+   语义以 <em>/<strong> 为准，禁止用内联样式替代。 */
+.article-content strong {
+  font-weight: 700;
+}
+
+.article-content em {
+  font-style: italic;
+}
+
+/* 段落级排版：左/中/右对齐与诗歌/尾注块。
+   全部是受控类名（来自 shortcode），正文里不保存任何内联 style。 */
+.article-content .text-align-left {
+  text-align: left;
+}
+
+.article-content .text-align-center {
+  text-align: center;
+}
+
+.article-content .text-align-right {
+  text-align: right;
+}
+
+.article-content .poetry-block {
+  width: fit-content;
+  max-width: 100%;
+  margin: 1.5em auto;
+  text-align: left;
+}
+
+.article-content .poetry-block p {
+  margin: 0.2em 0;
+  line-height: 1.7;
+}
+
+.article-content .end-note {
+  margin-top: 2em;
+  text-align: right;
+  font-size: 0.92em;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.article-content .end-note p {
+  margin: 0.25em 0;
+}
+
 .article-content > p:not(.text-center):not(.text-mark) {
   text-indent: 2em;
 }

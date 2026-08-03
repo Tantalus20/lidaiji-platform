@@ -598,7 +598,30 @@ def render_paragraph(paragraph: Paragraph, images: ImageCollector) -> str:
         return f"- {content}"
     if kind == "list-number":
         return f"1. {content}"
+    # 普通段落的 Word 对齐映射为段落排版短代码（左对齐/未设置不产生冗余标记）
+    align = paragraph_alignment(paragraph)
+    if align:
+        return f"{{{{< align {align} >}}}}\n\n{content}\n\n{{{{< /align >}}}}"
     return content
+
+
+def paragraph_alignment(paragraph: Paragraph) -> str:
+    """把 Word 段落对齐映射为受控排版值（center/right/''）。
+
+    LEFT、JUSTIFY 与未设置一律返回空（正文默认左对齐，不产生冗余标记）；
+    无法识别的对齐安全降级为空。列表/标题/引用的对齐不在此映射（保持简单）。
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    alignment = getattr(paragraph, "alignment", None)
+    try:
+        if alignment == WD_ALIGN_PARAGRAPH.CENTER:
+            return "center"
+        if alignment == WD_ALIGN_PARAGRAPH.RIGHT:
+            return "right"
+    except Exception:
+        return ""
+    return ""
 
 
 def render_table(table: Table, warnings: list[ImportWarning]) -> str:

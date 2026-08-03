@@ -1,148 +1,195 @@
-"""极简 Markdown → HTML 近似渲染，仅供作者台预览使用。
+"""Studio 正文近似渲染：markdown-it-py（语法接近 Hugo/goldmark）。
 
-只支持本站导入产物实际用到的语法：h1-h3、段落、引用、有序/无序列表、
-表格、粗体/斜体、图片。渲染前对文本整体转义，绝不输出原始 HTML；
-段落锚点注释 ``<!-- paragraph-id:... -->`` 不渲染。
+保留预览契约：
+- 每个顶层块带 ``class="block"`` 与 ``data-block="N"``（从 1 开始），
+  供前端按导入警告“第N段”近似定位高亮；
+- 段评锚点注释 ``<!-- paragraph-id:... -->`` 不渲染，转为紧随其后的
+  段落上的 ``data-paragraph-id`` 属性（作者评入口依赖它）；
+- 图片走 asset_map 替换成本次会话 URL；缺失时输出 missing-image 占位；
+- 原始 HTML 一律不输出（注释剥离、其他标签不渲染），文本由
+  markdown-it 统一转义，绝不输出未经转义的用户 HTML；
+- 段落排版短代码渲染为受控类名：
+  ``{{< align center|right >}}`` → ``<div class="text-align-...">``、
+  ``{{< poetry >}}`` → ``<div class="poetry-block">``、
+  ``{{< endnote >}}`` → ``<div class="end-note">``；容器内段落不占
+  data-block 序号。
 
-每个块级元素带 ``data-block="N"``（从 1 开始的近似序号），供前端按
-警告 location（“第N段”）做近似定位高亮——只是近似，不保证与 Word
-段落严格一一对应。
+渲染器按“容器深度”只给顶层块编号：列表项/表格单元格/引用/排版容器内的
+段落不占 data-block 序号，与旧渲染器（及导入报告的“第N段”）口径一致。
 """
 
 from __future__ import annotations
 
-import html
+import html as html_module
 import re
 
-_HEADING = re.compile(r"^(#{1,3})\s+(.*)$")
-_BULLET = re.compile(r"^[-*]\s+(.*)$")
-_NUMBERED = re.compile(r"^\d+\.\s+(.*)$")
-_TABLE_SEP = re.compile(r"^\|?[\s:\-|]+\|?$")
+from markdown_it import MarkdownIt
+from markdown_it.renderer import RendererHTML as HTMLRenderer
+
 _ANCHOR = re.compile(r"^<!--\s*paragraph-id:([\w-]+)\s*-->$")
-_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)\)")
-_BOLD = re.compile(r"\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*")
-_ITALIC = re.compile(r"\*(.+?)\*")
+_SHORTCODE_OPEN = re.compile(r"^\{\{< (align) (?:\"?)(left|center|right)(\"?)? >\}\}$|^\{\{< (poetry|endnote) >\}\}$")
+_SHORTCODE_CLOSE = re.compile(r"^\{\{< /(align|poetry|endnote) >\}\}$")
+_CONTAINER_CLASS = {
+    ("align", "center"): "text-align-center",
+    ("align", "right"): "text-align-right",
+    ("align", "left"): "text-align-left",
+    ("poetry", ""): "poetry-block",
+    ("endnote", ""): "end-note",
+}
 
 
-def _inline(text: str, asset_map: dict[str, str]) -> str:
-    """转义后处理粗体/斜体/图片；asset_map 把 bundle 相对路径换成本次会话的图片 URL。"""
-    escaped = html.escape(text, quote=False)
+def shortcode_block_rule(state, start_line: int, end_line: int, silent: bool) -> bool:
+    """把 `{{< align|poetry|endnote >}} ... {{< /... >}}` 块解析为容器 token。"""
+    opening = _SHORTCODE_OPEN.match(state.src.split("\n")[start_line].strip())
+    if not opening:
+        return False
+    name = "align" if opening.group(1) == "align" else opening.group(4)
+    align = opening.group(2) if name == "align" else ""
+    close_pattern = re.compile(r"^\{\{< /" + name + r" >\}\}$")
+    close_line = -1
+    for cursor in range(start_line + 1, end_line):
+        if close_pattern.match(state.src.split("\n")[cursor].strip()):
+            close_line = cursor
+            break
+    if close_line < 0:
+        return False
+    if silent:
+        return True
+    cls = _CONTAINER_CLASS.get((name, align), "")
+    open_token = state.push("lidaiji_container_open", "div", 1)
+    open_token.attrs = {"class": cls} if cls else {}
+    open_token.block = True
+    state.md.block.tokenize(state, start_line + 1, close_line)
+    close_token = state.push("lidaiji_container_close", "div", -1)
+    close_token.block = True
+    state.line = close_line + 1
+    return True
 
-    def image(match: re.Match) -> str:
-        alt, src = match.group(1), match.group(2)
-        url = asset_map.get(src)
+
+class PreviewRenderer(HTMLRenderer):
+    def __init__(self, asset_map: dict[str, str] | None = None):
+        super().__init__()
+        self.asset_map = asset_map or {}
+        self.block_index = 0
+        self.pending_pid = ""
+        self.container_depth = 0
+
+    def render(self, tokens, options, env):
+        self.block_index = 0
+        self.pending_pid = ""
+        self.container_depth = 0
+        return super().render(tokens, options, env)
+
+    def lidaiji_container_open(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        cls = tokens[idx].attrGet("class") or ""
+        if self.container_depth == 0:
+            self.block_index += 1
+            classes = "block" + (f" {cls}" if cls else "")
+            attrs = f' class="{classes}" data-block="{self.block_index}"'
+        else:
+            attrs = f' class="{cls}"' if cls else ""
+        self.container_depth += 1
+        return f"<div{attrs}>"
+
+    def lidaiji_container_close(self, tokens, idx, options, env):
+        self.container_depth = max(0, self.container_depth - 1)
+        return "</div>"
+
+    def _enter_container(self, tag: str) -> str:
+        attrs = ""
+        if self.container_depth == 0:
+            self.block_index += 1
+            attrs = f' class="block" data-block="{self.block_index}"'
+        self.container_depth += 1
+        return f"<{tag}{attrs}>"
+
+    def _leave_container(self, tag: str) -> str:
+        self.container_depth = max(0, self.container_depth - 1)
+        return f"</{tag}>"
+
+    def paragraph_open(self, tokens, idx, options, env):
+        if self.container_depth > 0:
+            return "<p>"
+        self.block_index += 1
+        attrs = f' class="block" data-block="{self.block_index}"'
+        if self.pending_pid:
+            attrs += f' data-paragraph-id="{html_module.escape(self.pending_pid, quote=True)}"'
+            self.pending_pid = ""
+        return f"<p{attrs}>"
+
+    def heading_open(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        return self._enter_container(tokens[idx].tag)
+
+    def heading_close(self, tokens, idx, options, env):
+        return f"</{tokens[idx].tag}>"
+
+    def blockquote_open(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        return self._enter_container("blockquote")
+
+    def blockquote_close(self, tokens, idx, options, env):
+        return self._leave_container("blockquote")
+
+    def bullet_list_open(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        return self._enter_container("ul")
+
+    def bullet_list_close(self, tokens, idx, options, env):
+        return self._leave_container("ul")
+
+    def ordered_list_open(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        return self._enter_container("ol")
+
+    def ordered_list_close(self, tokens, idx, options, env):
+        return self._leave_container("ol")
+
+    def table_open(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        return self._enter_container("table")
+
+    def table_close(self, tokens, idx, options, env):
+        return self._leave_container("table")
+
+    def code_block(self, tokens, idx, options, env):
+        self.pending_pid = ""
+        attrs = ""
+        if self.container_depth == 0:
+            self.block_index += 1
+            attrs = f' class="block" data-block="{self.block_index}"'
+        token = tokens[idx]
+        content = html_module.escape(token.content or "", quote=False)
+        info = (token.info or "").strip()
+        language = f' class="language-{html_module.escape(info, quote=True)}"' if info else ""
+        return f"<pre{attrs}><code{language}>{content}</code></pre>\n"
+
+    def html_block(self, tokens, idx, options, env):
+        match = _ANCHOR.match((tokens[idx].content or "").strip())
+        if match:
+            self.pending_pid = match.group(1)
+        return ""
+
+    def html_inline(self, tokens, idx, options, env):
+        return ""
+
+    def image(self, tokens, idx, options, env):
+        token = tokens[idx]
+        src = token.attrGet("src") or ""
+        alt = token.content or ""
+        url = self.asset_map.get(src)
         if not url:
-            return f'<span class="missing-image">[图片 {html.escape(src, quote=True)}]</span>'
-        return f'<img src="{html.escape(url, quote=True)}" alt="{alt}" loading="lazy">'
-
-    escaped = _IMAGE.sub(image, escaped)
-    escaped = _BOLD.sub(lambda m: f"<strong>{m.group(1) or m.group(2)}</strong>", escaped)
-    escaped = _ITALIC.sub(r"<em>\1</em>", escaped)
-    return escaped
-
-
-def _table(lines: list[str], asset_map: dict[str, str]) -> str:
-    rows = []
-    for line in lines:
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        rows.append(cells)
-    output = ["<table>"]
-    for index, cells in enumerate(rows):
-        if index == 1:  # 分隔行
-            continue
-        tag = "th" if index == 0 else "td"
-        output.append("<tr>" + "".join(f"<{tag}>{_inline(cell, asset_map)}</{tag}>" for cell in cells) + "</tr>")
-    output.append("</table>")
-    return "".join(output)
+            return f'<span class="missing-image">[图片 {html_module.escape(src, quote=True)}]</span>'
+        return (
+            f'<img src="{html_module.escape(url, quote=True)}" '
+            f'alt="{html_module.escape(alt, quote=True)}" loading="lazy">'
+        )
 
 
 def render_markdown(markdown: str, asset_map: dict[str, str] | None = None) -> str:
     """把 Markdown 渲染为 HTML 片段；asset_map 缺省时图片显示为占位文字。"""
-    asset_map = asset_map or {}
-    lines = markdown.splitlines()
-    output: list[str] = []
-    block_index = 0
-    index = 0
-    pending_paragraph_id = ""
-
-    def emit(fragment: str) -> None:
-        nonlocal block_index
-        block_index += 1
-        output.append(fragment.replace('class="block"', f'class="block" data-block="{block_index}"', 1))
-
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-        if not stripped:
-            index += 1
-            continue
-        anchor = _ANCHOR.match(stripped)
-        if anchor:
-            pending_paragraph_id = anchor.group(1)
-            index += 1
-            continue
-        heading = _HEADING.match(line)
-        if heading:
-            pending_paragraph_id = ""
-            level = len(heading.group(1))
-            emit(f'<h{level} class="block">{_inline(heading.group(2).strip(), asset_map)}</h{level}>')
-            index += 1
-            continue
-        if line.startswith(">"):
-            pending_paragraph_id = ""
-            quote_lines = []
-            while index < len(lines) and lines[index].startswith(">"):
-                quote_lines.append(lines[index].lstrip(">").strip())
-                index += 1
-            emit(f'<blockquote class="block">{_inline(" ".join(quote_lines), asset_map)}</blockquote>')
-            continue
-        bullet = _BULLET.match(line)
-        if bullet:
-            pending_paragraph_id = ""
-            items = []
-            while index < len(lines):
-                matched = _BULLET.match(lines[index])
-                if not matched:
-                    break
-                items.append(f"<li>{_inline(matched.group(1), asset_map)}</li>")
-                index += 1
-            emit(f'<ul class="block">{"".join(items)}</ul>')
-            continue
-        numbered = _NUMBERED.match(line)
-        if numbered:
-            pending_paragraph_id = ""
-            items = []
-            while index < len(lines):
-                matched = _NUMBERED.match(lines[index])
-                if not matched:
-                    break
-                items.append(f"<li>{_inline(matched.group(1), asset_map)}</li>")
-                index += 1
-            emit(f'<ol class="block">{"".join(items)}</ol>')
-            continue
-        if stripped.startswith("|") and index + 1 < len(lines) and _TABLE_SEP.match(lines[index + 1].strip()):
-            pending_paragraph_id = ""
-            table_lines = [line, lines[index + 1]]
-            index += 2
-            while index < len(lines) and lines[index].strip().startswith("|"):
-                table_lines.append(lines[index])
-                index += 1
-            emit(f'<div class="block">{_table(table_lines, asset_map)}</div>')
-            continue
-        paragraph_lines = [line]
-        index += 1
-        while index < len(lines) and lines[index].strip() and not _ANCHOR.match(lines[index].strip()):
-            if _HEADING.match(lines[index]) or _BULLET.match(lines[index]) or _NUMBERED.match(lines[index]):
-                break
-            if lines[index].startswith(">"):
-                break
-            paragraph_lines.append(lines[index])
-            index += 1
-        paragraph_attr = (
-            f' data-paragraph-id="{html.escape(pending_paragraph_id, quote=True)}"'
-            if pending_paragraph_id
-            else ""
-        )
-        emit(f'<p class="block"{paragraph_attr}>{_inline(" ".join(paragraph_lines), asset_map)}</p>')
-        pending_paragraph_id = ""
-    return "\n".join(output)
+    parser = MarkdownIt("commonmark", {"html": True}).enable("table")
+    parser.block.ruler.before("paragraph", "lidaiji_shortcode", shortcode_block_rule)
+    parser.renderer = PreviewRenderer(asset_map or {})
+    return parser.render(str(markdown or ""))

@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 from PIL import Image
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +99,33 @@ class DocxImportTests(unittest.TestCase):
         self.assertIn("**粗体**", markdown)
         self.assertIn("*斜体*", markdown)
         self.assertIn("> 史家记录的不只是结果。", markdown)
+
+    def test_04_1Word居中和右对齐段落导入(self):
+        doc = Document()
+        doc.add_paragraph("山有木兮木有枝")
+        centered = doc.add_paragraph("心悦君兮君不知")
+        centered.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        signed = doc.add_paragraph("君纪鉴")
+        signed.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        plain = doc.add_paragraph("普通左对齐正文")
+        justified = doc.add_paragraph("两端对齐正文")
+        justified.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        doc.save(self.source)
+        result = self.run_import()
+        markdown = Path(result["markdown"]).read_text(encoding="utf-8")
+        self.assertIn(
+            "{{< align center >}}\n\n心悦君兮君不知\n\n{{< /align >}}",
+            markdown,
+            "Word 居中段落应映射为 align center 短代码",
+        )
+        self.assertIn(
+            "{{< align right >}}\n\n君纪鉴\n\n{{< /align >}}",
+            markdown,
+            "Word 右对齐段落应映射为 align right 短代码",
+        )
+        self.assertIn("普通左对齐正文", markdown)
+        self.assertNotIn("{{< align left >}}", markdown, "左对齐不应产生冗余标记")
+        self.assertNotIn("{{< align", markdown.split("两端对齐正文")[0][-30:], "JUSTIFY 应降级为左对齐")
 
     def test_04图片提取原图备份并转WebP(self):
         image = self.root / "source.png"

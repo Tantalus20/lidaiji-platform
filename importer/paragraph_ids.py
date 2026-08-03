@@ -69,7 +69,22 @@ def records_from_markdown(markdown_body: str) -> list[ParagraphRecord]:
     records: list[ParagraphRecord] = []
     heading = ""
     pending_id = ""
+    in_container = ""  # 当前所在的排版短代码容器（align/poetry/endnote）
     for block in blocks:
+        container_open = re.match(r"^\{\{< (align|poetry|endnote)( |\"?)", block)
+        container_close = re.match(r"^\{\{< /(align|poetry|endnote) >\}\}$", block)
+        if container_open:
+            in_container = container_open.group(1)
+            pending_id = ""
+            continue
+        if container_close:
+            in_container = ""
+            pending_id = ""
+            continue
+        if in_container:
+            # 诗歌/尾注/对齐容器内的段落不参与段评身份（避免每次保存生成新锚点）
+            pending_id = ""
+            continue
         heading_match = HEADING.match(block)
         if heading_match:
             heading = normalize_markdown(heading_match.group(1))
@@ -127,8 +142,26 @@ def assign_ids(markdown_body: str, previous_body: str = "") -> tuple[str, MatchR
     ambiguous: list[str] = []
     existing_marker = ""
     position = 0
+    in_container = ""  # 当前所在的排版短代码容器（align/poetry/endnote）
 
     for block in blocks:
+        container_open = re.match(r"^\{\{< (align|poetry|endnote)( |\"?)", block)
+        container_close = re.match(r"^\{\{< /(align|poetry|endnote) >\}\}$", block)
+        if container_open:
+            in_container = container_open.group(1)
+            output.append(block)
+            existing_marker = ""
+            continue
+        if container_close:
+            in_container = ""
+            output.append(block)
+            existing_marker = ""
+            continue
+        if in_container:
+            # 诗歌/尾注/对齐容器内的段落不参与段评身份
+            output.append(block)
+            existing_marker = ""
+            continue
         marker_match = MARKER.fullmatch(block)
         if marker_match:
             existing_marker = marker_match.group(1)

@@ -1,0 +1,3 @@
+{{ $align := .Get 0 | default "center" }}
+{{ if and (ne $align "left") (ne $align "center") (ne $align "right") }}{{ $align = "left" }}{{ end }}
+<div class="text-align-{{ $align }}">{{ .Inner | markdownify }}</div>

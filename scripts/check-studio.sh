@@ -25,4 +25,5 @@ fi
 "$PYTHON" "$ROOT/tests/test_studio_media.py"
 "$PYTHON" "$ROOT/tests/test_studio_feedback.py"
 "$PYTHON" "$ROOT/tests/test_studio_notes.py"
+"$PYTHON" "$ROOT/tests/test_preview_render.py"
 printf '作者工作台自动测试通过。\n'
