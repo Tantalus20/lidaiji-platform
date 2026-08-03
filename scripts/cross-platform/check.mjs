@@ -45,9 +45,12 @@ export function runCrossPlatformCheck() {
 
   log("评论服务测试……");
   if (IS_WIN) {
-    // Windows 上 npm 是 .cmd 包装，需经 cmd /c 执行；路径加引号以支持空格/中文
-    const prefix = path.join(ROOT, "comments-service");
-    run("cmd", ["/d", "/s", "/c", `npm --prefix "${prefix}" run check`]);
+    // 等价于 comments-service 的 npm run check（server/app 语法 + node --test），
+    // 直接用 node 执行，避免 Windows 上 npm.cmd 的引号/路径问题
+    const service = path.join(ROOT, "comments-service");
+    run("node", ["--check", path.join(service, "src", "server.js")]);
+    run("node", ["--check", path.join(service, "src", "app.js")]);
+    run("node", ["--test", path.join(service, "test")]);
   } else {
     run("npm", ["--prefix", path.join(ROOT, "comments-service"), "run", "check"]);
   }
