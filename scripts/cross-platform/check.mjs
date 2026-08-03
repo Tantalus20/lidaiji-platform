@@ -50,7 +50,8 @@ export function runCrossPlatformCheck() {
     const service = path.join(ROOT, "comments-service");
     run("node", ["--check", path.join(service, "src", "server.js")]);
     run("node", ["--check", path.join(service, "src", "app.js")]);
-    run("node", ["--test", path.join(service, "test")]);
+    // 与 comments-service 的 npm test 相同：node --test test/*.test.js（glob）
+    run("node", ["--test", path.join(service, "test", "*.test.js")]);
   } else {
     run("npm", ["--prefix", path.join(ROOT, "comments-service"), "run", "check"]);
   }
