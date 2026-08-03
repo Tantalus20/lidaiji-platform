@@ -1,6 +1,14 @@
 import fs from "node:fs";
 
 const failures = [];
+const IS_WIN = process.platform === "win32";
+function assertExecutable(target) {
+  // Windows 的 Git 检出不设置 Unix 可执行位，此检查仅适用于 Unix 平台
+  if (IS_WIN) return;
+  const mode = fs.statSync(target).mode;
+  assert((mode & 0o111) !== 0, `${target}没有执行权限`);
+}
+
 const assert = (value, message) => { if (!value) failures.push(message); };
 const read = (file) => fs.readFileSync(file, "utf8");
 const backup = read("scripts/backup.sh");
@@ -13,7 +21,7 @@ for (const name of [
 ]) {
   const file = `${name}.command`;
   assert(fs.existsSync(file), `缺少Mac命令文件：${file}`);
-  if (fs.existsSync(file)) assert((fs.statSync(file).mode & 0o111) !== 0, `${file}没有执行权限`);
+  if (fs.existsSync(file)) assertExecutable(file);
 }
 for (const old of ["新建文章.command", "预览网站.command", "发布网站.command", "备份网站.command"]) {
   assert(!fs.existsSync(old), `仍存在可能乱码的中文命令文件：${old}`);
@@ -109,7 +117,7 @@ for (const file of [
   "scripts/install-desktop-shortcuts.sh",
   "scripts/publish-summary.py",
 ]) {
-  if (fs.existsSync(file)) assert((fs.statSync(file).mode & 0o111) !== 0, `${file}没有执行权限`);
+  if (fs.existsSync(file)) assertExecutable(file);
 }
 const requirements = read("importer/requirements.txt");
 for (const dependency of ["python-docx", "Pillow", "PyYAML", "pypinyin", "markdown-it-py"]) {
@@ -142,7 +150,7 @@ for (const file of [
   assert(fs.existsSync(file), `缺少作者工作台文件：${file}`);
 }
 for (const file of ["scripts/start-studio.sh", "scripts/check-studio.sh"]) {
-  if (fs.existsSync(file)) assert((fs.statSync(file).mode & 0o111) !== 0, `${file}没有执行权限`);
+  if (fs.existsSync(file)) assertExecutable(file);
 }
 const studioServer = read("studio/server.py");
 assert(studioServer.includes('"127.0.0.1"'), "作者工作台必须只绑定127.0.0.1");
@@ -211,7 +219,7 @@ const macosScripts = [
 for (const file of macosScripts) {
   const path = `scripts/macos/${file}`;
   assert(fs.existsSync(path), `缺少macOS工作台脚本：${path}`);
-  assert((fs.statSync(path).mode & 0o111) !== 0, `${path}没有执行权限`);
+  assertExecutable(path);
   const content = read(path);
   assert(!/\/Users\/|\/mnt\/data\//.test(content), `${path}包含本机绝对路径`);
 }
@@ -227,7 +235,7 @@ for (const file of [
 }
 // check-macos-studio.sh 自身包含“/Users/”扫描模式，只断言存在与执行权限
 assert(fs.existsSync("scripts/check-macos-studio.sh"), "缺少check-macos-studio.sh");
-assert((fs.statSync("scripts/check-macos-studio.sh").mode & 0o111) !== 0, "check-macos-studio.sh没有执行权限");
+assertExecutable("scripts/check-macos-studio.sh");
 const plistTemplate = read("packaging/macos/cn.lidaiji.studio.plist.template");
 assert(
   plistTemplate.includes("__PROJECT_ROOT__") && plistTemplate.includes("__LOG_DIR__") && plistTemplate.includes("__PATH_VALUE__"),

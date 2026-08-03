@@ -386,6 +386,7 @@ class StudioArticlesTestCase(unittest.TestCase):
 
         with mock.patch.object(studio_server.subprocess, "Popen", side_effect=fake_popen), \
             mock.patch.object(studio_server.subprocess, "run", side_effect=fake_run), \
+            mock.patch.object(studio_server.sys, "platform", "darwin"), \
             mock.patch.object(studio_server, "port_ready", return_value=False), \
             mock.patch.object(studio_server, "wait_for_port", return_value=True):
             status, payload = self.post_json("/api/article/open-page", {"path": self.works_rel})
@@ -426,12 +427,14 @@ class StudioArticlesTestCase(unittest.TestCase):
 
             return Result()
 
-        with mock.patch.object(studio_server.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(studio_server.subprocess, "run", side_effect=fake_run), \
+            mock.patch.object(studio_server.sys, "platform", "darwin"):
             status, payload = self.post_json("/api/system/open-folder", {"path": self.essays_rel})
         self.assertEqual(status, 200, payload)
         self.assertEqual(run_calls, [["open", str(self.essays_path.parent.resolve())]])
         # 坏路径仍然被拒
-        with mock.patch.object(studio_server.subprocess, "run", side_effect=fake_run):
+        with mock.patch.object(studio_server.subprocess, "run", side_effect=fake_run), \
+            mock.patch.object(studio_server.sys, "platform", "darwin"):
             status, _ = self.post_json("/api/system/open-folder", {"path": "../../etc"})
         self.assertEqual(status, 400)
 
