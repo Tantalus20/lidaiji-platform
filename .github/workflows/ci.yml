@@ -82,6 +82,7 @@ jobs:
             node tests/check-editor-markdown.mjs
             $files = Get-ChildItem scripts\windows -Filter *.ps1
             foreach ($f in $files) {
+              $errs = $null
               $null = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs)
               if ($errs.Count -gt 0) { throw "PowerShell 语法错误：$($f.Name)" }
             }
