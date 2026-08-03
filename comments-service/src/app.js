@@ -111,6 +111,19 @@ function originAllowed(request, config) {
   return origin === config.publicOrigin || (!origin && referer.startsWith(`${config.publicOrigin}/`));
 }
 
+function adminOriginAllowed(request, config) {
+  // 管理端点：带来源头时必须是公开来源（正式站 admin 页面）；不带来源头的
+  // 回环管理请求（SSH 隧道、CLI、curl）放行——评论服务只监听服务器回环。
+  const origin = String(request.headers.origin || "");
+  const referer = String(request.headers.referer || "");
+  return origin === config.publicOrigin || (!origin && !referer);
+}
+
+function overHttps(request) {
+  return String(request.headers["x-forwarded-proto"] || "").startsWith("https")
+    || String(request.headers.origin || "").startsWith("https://");
+}
+
 function publicComment(row) {
   return {
     id: row.id,
@@ -223,7 +236,7 @@ async function submitComment(request, response, db, config) {
 }
 
 async function adminLogin(request, response, db, config) {
-  if (!originAllowed(request, config)) throw Object.assign(new Error("请求来源不被接受。"), { statusCode: 403 });
+  if (!adminOriginAllowed(request, config)) throw Object.assign(new Error("请求来源不被接受。"), { statusCode: 403 });
   const payload = await readJson(request, config.maxBodyBytes);
   const username = String(payload.username || "").trim();
   const source = sourceFingerprint(request, config);
@@ -248,9 +261,10 @@ async function adminLogin(request, response, db, config) {
       .run(sha256(token), admin.id, csrf, expires.toISOString(), now.toISOString());
     db.prepare("UPDATE admins SET last_login_at=? WHERE id=?").run(now.toISOString(), admin.id);
   });
+  const cookieSecure = overHttps(request) ? "Secure; " : "";
   json(response, 200, { ok: true, username: admin.username, csrfToken: csrf }, {
     "Cache-Control": "no-store",
-    "Set-Cookie": `lidaiji_admin=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${config.sessionHours * 3600}`,
+    "Set-Cookie": `lidaiji_admin=${token}; Path=/; HttpOnly; ${cookieSecure}SameSite=Strict; Max-Age=${config.sessionHours * 3600}`,
   });
 }
 
@@ -361,9 +375,10 @@ function createApp({ db, config }) {
       if (method === "POST" && url.pathname === "/api/comments/v1/admin/logout") {
         const session = requireAdmin(request, db, true);
         db.prepare("DELETE FROM sessions WHERE token_hash=?").run(session.token_hash);
+        const cookieSecure = overHttps(request) ? "Secure; " : "";
         return json(response, 200, { ok: true }, {
           "Cache-Control": "no-store",
-          "Set-Cookie": "lidaiji_admin=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+          "Set-Cookie": `lidaiji_admin=; Path=/; HttpOnly; ${cookieSecure}SameSite=Strict; Max-Age=0`,
         });
       }
       if (method === "GET" && url.pathname === "/api/comments/v1/admin/comments") {

@@ -4,7 +4,8 @@
 - 只用标准库 urllib 发请求，不引入第三方依赖；
 - 管理会话（cookie + csrfToken + 用户名）只保存在 StudioState 内存里，
   不落盘、不写日志，工作台退出即失效；
-- 登录请求按评论服务要求带 ``Origin: http://127.0.0.1:4317`` 头；
+- 登录请求不带来源头：评论服务对管理端点放行无来源头的回环请求
+  （SSH 隧道/CLI），正式站 admin 页面则带 https Origin 通过校验；
   写操作（审核动作）带 Cookie + ``X-CSRF-Token`` 头；
 - 生产评论保存在服务器（评论服务只监听服务器回环地址）。作者工作台
   审核生产评论的推荐方式是本机 SSH 隧道：
@@ -125,7 +126,8 @@ def _expired(state) -> FeedbackFailure:
 
 
 def login(state, username: str, password: str) -> dict:
-    """POST admin/login（带 Origin 头）；成功把 cookie/csrf/username 存进内存会话。"""
+    """POST admin/login（不带来源头，走评论服务的回环管理放行路径）；
+    成功把 cookie/csrf/username 存进内存会话。"""
     username = str(username or "").strip()
     if not username or not password:
         raise FeedbackFailure("validation-failed", "用户名和密码不能为空。")
@@ -133,7 +135,7 @@ def login(state, username: str, password: str) -> dict:
         "POST",
         "/api/comments/v1/admin/login",
         {"username": username, "password": str(password)},
-        headers={"Origin": COMMENTS_BASE},
+        headers={},
     )
     if status == 401:
         raise FeedbackFailure("login-failed", _remote_message(body, "用户名或密码不正确。"))

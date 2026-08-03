@@ -322,8 +322,15 @@ test("管理员Session Cookie具备安全属性且退出后失效", async (t) =>
   });
   const header = rawLogin.response.headers.get("set-cookie");
   assert.match(header, /HttpOnly/i);
-  assert.match(header, /Secure/i);
   assert.match(header, /SameSite=Strict/i);
+  // http 回环登录（SSH 隧道）不得下发 Secure cookie；经 https 反代则必须带
+  assert.doesNotMatch(header, /Secure/i);
+  const httpsLogin = await fetch(`${ctx.base}/api/comments/v1/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+    body: JSON.stringify({ username: "owner", password: "very-long-test-password" }),
+  });
+  assert.match(httpsLogin.headers.get("set-cookie") || "", /Secure/i);
   const loggedOut = await request(ctx, "/api/comments/v1/admin/logout", {
     method: "POST", headers: { Cookie: setCookie, "X-CSRF-Token": session.csrfToken }, body: "{}",
   });
@@ -441,4 +448,31 @@ test("只有approved计入数量映射", async (t) => {
   }
   const counts = await request(ctx, "/api/comments/v1/articles/article-1234567890abcdef/counts");
   assert.equal(counts.body.counts["p-111111111111"], 1);
+});
+
+test("管理员登录：无来源头的回环请求放行，错误Origin被拒", async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.close());
+  // 无 Origin 且无 Referer（SSH 隧道 / CLI 场景）→ 放行
+  const raw = await fetch(`${ctx.base}/api/comments/v1/admin/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "owner", password: "very-long-test-password" }),
+  });
+  assert.equal(raw.status, 200);
+  // 错误 Origin → 403
+  const evil = await fetch(`${ctx.base}/api/comments/v1/admin/login`, {
+    method: "POST", headers: { Origin: "https://evil.test", "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "owner", password: "very-long-test-password" }),
+  });
+  assert.equal(evil.status, 403);
+});
+
+test("管理员登录：http 回环不设置 Secure cookie", async (t) => {
+  const ctx = await fixture(); t.after(() => ctx.close());
+  const raw = await fetch(`${ctx.base}/api/comments/v1/admin/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "owner", password: "very-long-test-password" }),
+  });
+  const setCookie = raw.headers.get("set-cookie") || "";
+  assert.ok(setCookie.includes("SameSite=Strict"), setCookie);
+  assert.ok(!setCookie.includes("Secure"), "http 回环登录不得下发 Secure cookie");
 });

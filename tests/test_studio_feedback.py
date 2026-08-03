@@ -2,12 +2,13 @@
 """阅读反馈代理（studio/feedback.py + server.py 反馈路由）测试。
 
 用标准库 http.server 起本地桩服务模拟 comments-service 的 admin API：
-- login 校验 Origin 头、发 cookie + csrfToken；
+- login：带来源头时必须等于公开来源，不带来源头的回环管理请求放行；
+  成功发 cookie + csrfToken；
 - comments 列表要求 Cookie；
 - moderate 要求 Cookie + X-CSRF-Token。
-断言：login 带 Origin；moderate 带 Cookie+CSRF；错误 id/action 拒绝；
-delete 无 confirm → 400；未登录访问 → 401 not-logged-in；服务不可达 →
-友好错误；POST 无 X-Studio-Request → 403。
+断言：login 不带来源头放行、错误 Origin 被拒；moderate 带 Cookie+CSRF；
+错误 id/action 拒绝；delete 无 confirm → 400；未登录访问 → 401
+not-logged-in；服务不可达 → 友好错误；POST 无 X-Studio-Request → 403。
 """
 
 from __future__ import annotations
@@ -39,6 +40,9 @@ import studio.feedback as feedback  # noqa: E402
 import studio.server as studio_server  # noqa: E402
 
 studio_server.StudioHandler.log_message = lambda *args: None  # 测试中静默访问日志
+
+PUBLIC_ORIGIN = "http://comments-public.test"
+
 
 COMMENT_ROW = {
     "id": "comment_abc123",
@@ -105,7 +109,9 @@ class StubHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/comments/v1/admin/login":
             StubState.logins.append(dict(self.headers))
-            if self.headers.get("Origin") != feedback.COMMENTS_BASE:
+            origin = self.headers.get("Origin") or ""
+            referer = self.headers.get("Referer") or ""
+            if (origin and origin != PUBLIC_ORIGIN) or (not origin and referer):
                 return self._json(403, {"ok": False, "error": {"message": "请求来源不被接受。"}})
             payload = json.loads(body or b"{}")
             if payload.get("username") == "owner" and payload.get("password") == "secret":
@@ -181,11 +187,11 @@ class FeedbackTestCase(unittest.TestCase):
 
     # -- 测试 ---------------------------------------------------------------
 
-    def test_01登录带Origin头并保存内存会话(self):
+    def test_01登录不带来源头并保存内存会话(self):
         payload = self.login()
         self.assertEqual(payload["username"], "owner")
         self.assertEqual(len(StubState.logins), 1)
-        self.assertEqual(StubState.logins[0].get("Origin"), feedback.COMMENTS_BASE)
+        self.assertFalse(StubState.logins[0].get("Origin"))
         session = self.server.state.feedback_session
         self.assertEqual(session["cookie"], "test-token")
         self.assertEqual(session["csrf"], "csrf-abc")
