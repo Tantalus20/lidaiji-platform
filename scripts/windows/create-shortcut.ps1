@@ -1,4 +1,4 @@
-# 创建“历代纪作者工作台”桌面快捷方式（可选开始菜单）。
+﻿# 创建“历代纪作者工作台”桌面快捷方式（可选开始菜单）。
 # 用法：
 #   .\scripts\windows\create-shortcut.ps1              # 桌面
 #   .\scripts\windows\create-shortcut.ps1 -StartMenu   # 开始菜单

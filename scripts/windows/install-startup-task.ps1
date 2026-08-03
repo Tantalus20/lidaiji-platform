@@ -1,4 +1,4 @@
-# 安装《历代纪》Windows 登录自动启动（任务计划程序，当前用户，无需管理员）。
+﻿# 安装《历代纪》Windows 登录自动启动（任务计划程序，当前用户，无需管理员）。
 # 任务名称：LidaijiStudio；登录时后台启动工作台。重复安装幂等。
 
 $ErrorActionPreference = "Stop"

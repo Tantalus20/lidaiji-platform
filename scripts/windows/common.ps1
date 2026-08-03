@@ -1,4 +1,4 @@
-# 《历代纪》作者工作台 Windows 启动器公共函数。
+﻿# 《历代纪》作者工作台 Windows 启动器公共函数。
 # 只监听 127.0.0.1；日志与运行状态放在 %LOCALAPPDATA%\LidaijiStudio。
 
 $ErrorActionPreference = "Stop"

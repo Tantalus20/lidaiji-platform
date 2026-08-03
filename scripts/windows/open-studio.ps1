@@ -1,4 +1,4 @@
-# 打开《历代纪》作者工作台：未运行则后台启动，就绪后用默认浏览器打开。
+﻿# 打开《历代纪》作者工作台：未运行则后台启动，就绪后用默认浏览器打开。
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\common.ps1"

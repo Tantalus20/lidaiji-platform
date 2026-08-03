@@ -1,4 +1,4 @@
-# 后台启动《历代纪》作者工作台（只监听 127.0.0.1:4173）。
+﻿# 后台启动《历代纪》作者工作台（只监听 127.0.0.1:4173）。
 # 已运行时不重复启动；PID 与日志写入 %LOCALAPPDATA%\LidaijiStudio。
 
 $ErrorActionPreference = "Stop"

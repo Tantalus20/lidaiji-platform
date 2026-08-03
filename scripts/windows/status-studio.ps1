@@ -1,4 +1,4 @@
-# 查看《历代纪》作者工作台状态（只读）。
+﻿# 查看《历代纪》作者工作台状态（只读）。
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\common.ps1"

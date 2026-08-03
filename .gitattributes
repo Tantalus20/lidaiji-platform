@@ -30,3 +30,4 @@
 **/*.sqlite-wal export-ignore
 **/*.sqlite-shm export-ignore
 **/*.log export-ignore
+*.ps1 text eol=crlf

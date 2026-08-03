@@ -1,4 +1,4 @@
-# 卸载《历代纪》Windows 登录自动启动（任务计划程序）。
+﻿# 卸载《历代纪》Windows 登录自动启动（任务计划程序）。
 # 只移除本项目的 LidaijiStudio 任务；不删除文章、仓库、数据库、日志或快捷方式。
 
 $ErrorActionPreference = "Stop"

@@ -1,4 +1,4 @@
-# 《历代纪》Windows 环境检查与安装。
+﻿# 《历代纪》Windows 环境检查与安装。
 # 用法：
 #   powershell.exe -ExecutionPolicy Bypass -File .\scripts\windows\setup.ps1
 #   powershell.exe -ExecutionPolicy Bypass -File .\scripts\windows\setup.ps1 -CheckOnly   # 只读预检
