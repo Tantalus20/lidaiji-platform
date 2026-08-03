@@ -25,11 +25,8 @@ $pyArgs = @()
 if ($parts.Length -gt 1) { $pyArgs += $parts[1..($parts.Length - 1)] }
 $pyArgs += @("-m", "studio", "--project-root", $ProjectRoot, "--no-browser")
 
-$stdout = [System.IO.File]::Open($StdoutLog, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
-$stderr = [System.IO.File]::Open($StderrLog, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
-
 $proc = Start-Process -FilePath $pyExe -ArgumentList $pyArgs -WorkingDirectory $ProjectRoot `
-    -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr `
+    -WindowStyle Hidden -RedirectStandardOutput $StdoutLog -RedirectStandardError $StderrLog `
     -PassThru
 
 Write-LidaijiLog "start: 已启动 PID $($proc.Id)（$pyExe）"
