@@ -14,6 +14,12 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+# Windows 控制台默认 GBK/cp936 无法编码中文输出；统一强制 UTF-8，
+# 保证 DOCX 导入在 Windows、macOS、Linux 行为一致。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))

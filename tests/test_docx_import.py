@@ -61,7 +61,7 @@ class DocxImportTests(unittest.TestCase):
             "--json",
             *extra,
         ]
-        completed = subprocess.run(command, text=True, capture_output=True, timeout=45)
+        completed = subprocess.run(command, text=True, encoding="utf-8", capture_output=True, timeout=45)
         self.assertEqual(completed.returncode, expected, completed.stderr)
         return json.loads(completed.stdout) if expected == 0 else completed
 

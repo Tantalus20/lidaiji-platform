@@ -2,7 +2,12 @@
 """根据 Word 文件名与现有内容推断导入信息。"""
 
 from __future__ import annotations
+import sys
 
+# Windows 控制台默认 GBK/cp936 无法编码中文输出；统一强制 UTF-8（跨平台一致）。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 import argparse
 import json
 import re
