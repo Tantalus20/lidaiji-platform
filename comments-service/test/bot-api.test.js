@@ -272,3 +272,25 @@ test("B12 事务失败无残留：坏articleId的网站章评不产生通知任�
     assert.equal(tasks, 0);
   } finally { await ctx.close(); }
 });
+
+test("B13 工作台组合筛选：scope×source", async () => {
+  const ctx = await fixture();
+  try {
+    await botRequest(ctx, { ...BASE, sourceMessageId: "f1" });
+    const admin = { username: "owner", password: "very-long-test-password" };
+    const login = await fetch(`${ctx.base}/api/comments/v1/admin/login`, {
+      method: "POST", headers: { Origin: "http://example.test", "Content-Type": "application/json" }, body: JSON.stringify(admin),
+    });
+    const cookie = login.headers.get("set-cookie").split(";")[0];
+    const auth = { Origin: "http://example.test", Cookie: cookie };
+    const combo = await fetch(`${ctx.base}/api/comments/v1/admin/comments?scope=article&source=qq&status=pending`, { headers: auth });
+    const data = await combo.json();
+    assert.equal(data.total, 1, "章评+QQ来源应命中1条");
+    assert.equal(data.comments[0].source_type, "qq");
+    const para = await fetch(`${ctx.base}/api/comments/v1/admin/comments?scope=paragraph&source=website&status=pending`, { headers: auth });
+    const pdata = await para.json();
+    assert.ok(Array.isArray(pdata.comments), "段评+网站来源应可查询");
+    const bad = await fetch(`${ctx.base}/api/comments/v1/admin/comments?source=hacker`, { headers: auth });
+    assert.equal(bad.status, 400);
+  } finally { await ctx.close(); }
+});

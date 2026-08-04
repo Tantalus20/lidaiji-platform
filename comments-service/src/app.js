@@ -286,6 +286,8 @@ function adminComments(url, response, db) {
   if (!COMMENT_STATUSES.has(status)) throw Object.assign(new Error("筛选状态无效。"), { statusCode: 400 });
   const scope = url.searchParams.get("scope") || "all";
   if (!["all", "paragraph", "article"].includes(scope)) throw Object.assign(new Error("筛选类型无效。"), { statusCode: 400 });
+  const sourceParam = url.searchParams.get("source") || "all";
+  if (!["all", "qq", "website"].includes(sourceParam)) throw Object.assign(new Error("来源筛选无效。"), { statusCode: 400 });
   const page = Math.max(1, Math.min(100000, Number(url.searchParams.get("page")) || 1));
   const limit = 25;
   const articleId = String(url.searchParams.get("articleId") || "");
@@ -295,6 +297,8 @@ function adminComments(url, response, db) {
   const conditions = ["c.status=?"];
   const values = [status];
   if (scope !== "all") { conditions.push("c.scope=?"); values.push(scope); }
+  if (sourceParam === "qq") { conditions.push("c.source_type='qq'"); }
+  if (sourceParam === "website") { conditions.push("(c.source_type='website' OR c.source_type='')"); }
   if (articleId) { conditions.push("c.article_id=?"); values.push(articleId); }
   if (query) { conditions.push("(c.display_name LIKE ? OR c.body LIKE ?)"); values.push(`%${query}%`, `%${query}%`); }
   if (containsLink) conditions.push("c.contains_link=1");
@@ -302,8 +306,8 @@ function adminComments(url, response, db) {
   const where = conditions.join(" AND ");
   const total = Number(db.prepare(`SELECT COUNT(*) count FROM comments c WHERE ${where}`).get(...values).count);
   const rows = db.prepare(`
-    SELECT c.id,c.article_id,c.article_revision,c.paragraph_id,c.paragraph_excerpt,c.display_name,c.body,c.status,c.scope,
-      c.contains_link,c.created_at,c.approved_at,a.title,a.canonical_path,a.current_revision,
+    SELECT c.id,c.article_id,c.article_revision,c.paragraph_id,c.paragraph_excerpt,c.display_name,c.body,c.status,c.scope,c.source_type,
+      c.public_review_id,c.contains_link,c.created_at,c.approved_at,a.title,a.canonical_path,a.current_revision,
       COALESCE(p.text_excerpt,'') current_excerpt
     FROM comments c JOIN articles a ON a.article_id=c.article_id
     LEFT JOIN paragraphs p ON p.article_id=c.article_id AND p.revision=a.current_revision AND p.paragraph_id=c.paragraph_id
