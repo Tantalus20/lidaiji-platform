@@ -6,7 +6,7 @@ const path = require("node:path");
 const { loadConfig } = require("./config");
 const { openDatabase } = require("./db");
 const { createApp } = require("./app");
-const { syncManifest } = require("./manifest");
+const { validateManifest, syncManifest } = require("./manifest");
 const { startNotificationWorker } = require("./notify");
 
 const config = loadConfig();
@@ -18,7 +18,8 @@ let manifest = { schemaVersion: 1, articles: [] };
 const manifestFile = process.env.COMMENTS_MANIFEST || path.join(config.dataDir, "comment-manifest.json");
 if (fs.existsSync(manifestFile)) {
   try {
-    manifest = syncManifest(db, manifestFile);
+    manifest = validateManifest(JSON.parse(fs.readFileSync(manifestFile, "utf8")));
+    syncManifest(db, manifestFile);
   } catch (error) {
     process.stderr.write(`manifest同步失败：${error.message}\n`);
   }
