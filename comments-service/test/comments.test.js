@@ -297,7 +297,7 @@ test("大请求体拒绝且不写数据库", async (t) => {
 test("健康检查执行SQLite完整性检查", async (t) => {
   const ctx = await fixture(); t.after(() => ctx.close());
   const result = await request(ctx, "/healthz");
-  assert.deepEqual(result.body, { ok: true, version: "0.4.1" });
+  assert.deepEqual(result.body, { ok: true, version: "0.5.0" });
 });
 
 test("修改标题和永久链接后评论仍由articleId关联", async (t) => {

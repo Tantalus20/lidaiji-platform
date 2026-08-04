@@ -20,6 +20,10 @@ function loadConfig(overrides = {}) {
     sessionHours: integer(overrides.sessionHours ?? process.env.COMMENTS_SESSION_HOURS, 12, 1, 168),
     trustLoopbackProxy: String(overrides.trustLoopbackProxy ?? process.env.COMMENTS_TRUST_LOOPBACK_PROXY ?? "true") === "true",
     maxBodyBytes: integer(overrides.maxBodyBytes ?? process.env.COMMENTS_MAX_BODY_BYTES, 32_768, 1_024, 262_144),
+    qqCommentPepper: String(overrides.qqCommentPepper ?? process.env.LIDAIJI_QQ_COMMENT_PEPPER ?? ""),
+    qqBotToken: String(overrides.qqBotToken ?? process.env.LIDAIJI_CHAPTER_REVIEW_BOT_TOKEN ?? ""),
+    operatorNotifyUrl: String(overrides.operatorNotifyUrl ?? process.env.LIDAIJI_OPERATOR_NOTIFY_URL ?? "").replace(/\/$/, ""),
+    operatorNotifyToken: String(overrides.operatorNotifyToken ?? process.env.LIDAIJI_OPERATOR_NOTIFY_TOKEN ?? ""),
     rate: Object.freeze({
       minute: integer(overrides.rateMinute ?? process.env.COMMENTS_RATE_MINUTE, 3, 1, 100),
       hour: integer(overrides.rateHour ?? process.env.COMMENTS_RATE_HOUR, 15, 1, 1000),

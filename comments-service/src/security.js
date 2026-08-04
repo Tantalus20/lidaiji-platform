@@ -55,4 +55,13 @@ function safeText(value, min, max, label) {
   return text;
 }
 
-module.exports = { hashPassword, verifyPassword, randomToken, sha256, fingerprint, parseCookies, safeText };
+function constantTimeEqual(a, b) {
+  const ca = String(a || "");
+  const cb = String(b || "");
+  if (ca.length !== cb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ca.length; i++) diff |= ca.charCodeAt(i) ^ cb.charCodeAt(i);
+  return diff === 0;
+}
+
+module.exports = { hashPassword, verifyPassword, randomToken, sha256, fingerprint, parseCookies, safeText, constantTimeEqual };

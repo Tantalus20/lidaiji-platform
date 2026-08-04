@@ -5,6 +5,8 @@ const http = require("node:http");
 const path = require("node:path");
 const { URL } = require("node:url");
 const { transaction } = require("./db");
+const { submitBotChapterReview } = require("./bot-api");
+const { createNotificationTask } = require("./notify");
 const {
   fingerprint, parseCookies, randomToken, safeText, sha256, verifyPassword,
 } = require("./security");
@@ -240,6 +242,7 @@ async function submitComment(request, response, db, config) {
       INSERT INTO rate_limit_events(source_fingerprint,browser_fingerprint,article_id,paragraph_id,kind,created_at)
       VALUES(?,?,?,?,?,?)
     `).run(source, browser, articleId, paragraphId, "comment", now);
+    createNotificationTask(db, { commentId: id, publicReviewId: "", now: Date.now() });
   });
   const message = scope === "article" ? "章评已提交，等待审核。" : "段评已经提交，审核通过后将公开显示。";
   json(response, 202, { ok: true, message }, { "Cache-Control": "no-store" });
@@ -329,7 +332,7 @@ function moderate(request, response, db, session, commentId, action, reason = ""
   json(response, 200, { ok: true, id: commentId, status }, { "Cache-Control": "no-store" });
 }
 
-function createApp({ db, config }) {
+function createApp({ db, config, manifest }) {
   cleanup(db);
   return http.createServer(async (request, response) => {
     try {
@@ -337,7 +340,7 @@ function createApp({ db, config }) {
       const method = request.method || "GET";
       if (method === "GET" && url.pathname === "/healthz") {
         const integrity = db.prepare("PRAGMA quick_check").get();
-        return json(response, 200, { ok: integrity.quick_check === "ok", version: "0.4.1" }, { "Cache-Control": "no-store" });
+        return json(response, 200, { ok: integrity.quick_check === "ok", version: "0.5.0" }, { "Cache-Control": "no-store" });
       }
       if (method === "GET" && url.pathname === "/admin/comments/") {
         return html(response, 200, fs.readFileSync(path.join(ADMIN_DIR, "index.html"), "utf8"));
@@ -375,6 +378,9 @@ function createApp({ db, config }) {
           WHERE c.article_id=? AND c.paragraph_id=? AND c.status='approved' AND c.scope='paragraph' ORDER BY c.public_at ASC
         `).all(match[1], match[2]);
         return json(response, 200, { articleId: match[1], paragraphId: match[2], comments: rows.map(publicComment) }, { "Cache-Control": "public, max-age=60" });
+      }
+      if (method === "POST" && url.pathname === "/api/bot/chapter-reviews") {
+        return await submitBotChapterReview({ request, response, db, config, manifest });
       }
       if (method === "POST" && url.pathname === "/api/comments/v1/comments") return await submitComment(request, response, db, config);
       if (method === "POST" && url.pathname === "/api/comments/v1/admin/login") return await adminLogin(request, response, db, config);
