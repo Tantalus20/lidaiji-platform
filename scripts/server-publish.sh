@@ -13,6 +13,7 @@ COMMENTS_ARCHIVE=""
 COMMENTS_SHA=""
 EXPECTED_COMMIT=""
 VERIFY_COS_BACKUP=0
+ALLOW_LARGE_RETIRE=0
 
 while [[ $# -gt 0 ]]; do
   ARGS_BEFORE=$#
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
     --comments-sha) COMMENTS_SHA="$2"; shift 2 ;;
     --expected-commit) EXPECTED_COMMIT="$2"; shift 2 ;;
     --verify-cos-backup) VERIFY_COS_BACKUP=1; shift ;;
+    --allow-large-retire) ALLOW_LARGE_RETIRE=1; shift ;;
     *) printf '未知参数：%s\n' "$1" >&2; exit 2 ;;
   esac
   # 防御：任何分支若未消耗参数（漏写 shift），立即报错而非空转。
@@ -234,6 +236,9 @@ runuser -u lidaiji-comments --preserve-environment -- node --experimental-sqlite
 chmod 0600 "$COMMENTS_DB_BACKUP"
 COMMENTS_DB_TOUCHED=1
 runuser -u lidaiji-comments --preserve-environment -- node --experimental-sqlite "$COMMENTS_RELEASE/src/cli.js" migrate
+if [[ "$ALLOW_LARGE_RETIRE" == "1" ]]; then
+  export COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE=1
+fi
 runuser -u lidaiji-comments --preserve-environment -- node --experimental-sqlite "$COMMENTS_RELEASE/src/cli.js" sync-manifest "$RELEASE/comment-manifest.json"
 # v0.5.1：把本次release的完整manifest同步为服务启动时读取的权威清单，
 # 避免服务重启后读到旧清单导致段落状态回退。

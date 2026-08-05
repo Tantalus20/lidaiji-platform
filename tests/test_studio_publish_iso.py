@@ -568,3 +568,35 @@ class LargeRetireGateTests(unittest.TestCase):
             time.sleep(0.1)
         result2 = pa.article_publish_status(self.state, target["path"])["result"]
         self.assertTrue(result2 and result2["ok"], result2)
+
+class PublishScriptForwardingTests(unittest.TestCase):
+    """发布确认标志必须完整传递到服务器端 sync-manifest。"""
+
+    def test_publish_sh_forwards_allow_large_retire(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "publish.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("--allow-large-retire", text)
+        self.assertIn('${COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE:+--allow-large-retire}', text)
+
+    def test_server_publish_script_exports_flag_before_sync_manifest(self):
+        script = Path(__file__).resolve().parents[1] / "scripts" / "server-publish.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("--allow-large-retire) ALLOW_LARGE_RETIRE=1", text)
+        sync = text.index("sync-manifest")
+        self.assertIn("export COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE=1", text[:sync])
+        self.assertLess(text.index("export COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE=1"), sync)
+
+    def test_iso_publish_thread_sets_env_when_confirmed(self):
+        source = Path(__file__).resolve().parents[1] / "studio" / "publish_article.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn('iso_env["COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE"] = "1"', text)
+        self.assertIn("if allow_large_retire:", text)
+
+    def test_center_propagates_workspace_environment_to_publish(self):
+        source = Path(__file__).resolve().parents[1] / "studio" / "publish_center.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn("env.update(workspace_environment or {})", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

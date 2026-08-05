@@ -71,7 +71,8 @@ ssh "$WRITING_SSH_TARGET" sudo bash /tmp/server-publish.sh \
   --comments "/tmp/$(basename "$COMMENTS_ARCHIVE")" \
   --comments-sha "$COMMENTS_SHA" \
   --expected-commit "$(git rev-parse HEAD)" \
-  ${WRITING_VERIFY_COS_BACKUP:+--verify-cos-backup}
+  ${WRITING_VERIFY_COS_BACKUP:+--verify-cos-backup} \
+  ${COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE:+--allow-large-retire}
 
 if ! python3 "$ROOT/scripts/publish-summary.py" --project-root "$CONTENT_REPO_ROOT" --content-root "$CONTENT_ROOT" --write; then
   printf '警告：网站已经发布，但本地发布摘要基线记录失败；下次会再次列出相关文章。\n' >&2
