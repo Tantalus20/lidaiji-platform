@@ -15,6 +15,7 @@ EXPECTED_COMMIT=""
 VERIFY_COS_BACKUP=0
 
 while [[ $# -gt 0 ]]; do
+  ARGS_BEFORE=$#
   case "$1" in
     --domain) DOMAIN="$2"; shift 2 ;;
     --release) RELEASE_ARCHIVE="$2"; shift 2 ;;
@@ -24,9 +25,14 @@ while [[ $# -gt 0 ]]; do
     --comments) COMMENTS_ARCHIVE="$2"; shift 2 ;;
     --comments-sha) COMMENTS_SHA="$2"; shift 2 ;;
     --expected-commit) EXPECTED_COMMIT="$2"; shift 2 ;;
-    --verify-cos-backup) VERIFY_COS_BACKUP=1 ;;
+    --verify-cos-backup) VERIFY_COS_BACKUP=1; shift ;;
     *) printf '未知参数：%s\n' "$1" >&2; exit 2 ;;
   esac
+  # 防御：任何分支若未消耗参数（漏写 shift），立即报错而非空转。
+  if [[ $# -ge $ARGS_BEFORE ]]; then
+    printf '参数解析异常：%s 未消耗参数，脚本中止。\n' "$1" >&2
+    exit 2
+  fi
 done
 
 [[ "$DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] || { printf '域名格式不正确。\n' >&2; exit 2; }

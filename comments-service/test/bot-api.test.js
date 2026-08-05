@@ -388,3 +388,16 @@ test("C09 健康状态：token配置与否影响 chapterReviewBot 状态，不�
     assert.equal(data.chapterReviewBot.state, "DISABLED");
   } finally { await disabled.close(); }
 });
+
+test("D01 章评提交不影响段落状态（paragraphsMode/门禁/恢复不被打扰）", async () => {
+  const ctx = await fixture();
+  try {
+    const before = ctx.db.prepare("SELECT status,COUNT(*) c FROM paragraphs GROUP BY status").all();
+    const res = await botRequest(ctx, BASE);
+    assert.equal(res.status, 202);
+    const after = ctx.db.prepare("SELECT status,COUNT(*) c FROM paragraphs GROUP BY status").all();
+    assert.deepEqual(after, before, "QQ章评请求不得改变段落current/historical状态");
+    const current = ctx.db.prepare("SELECT COUNT(*) c FROM paragraphs WHERE status='current'").get().c;
+    assert.equal(current, 4, "权威清单同步的段落保持不变");
+  } finally { await ctx.close(); }
+});

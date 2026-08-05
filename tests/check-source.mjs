@@ -116,6 +116,12 @@ assert(nginxTemplate.includes("location ^~ /source/"), "Nginx模板缺少/source
 const cosBackup = read("deploy/backup/backup-to-cos.sh");
 assert(cosBackup.includes("cp -aL") === false, "备份脚本仍在使用cp -aL跟随符号链接");
 assert(cosBackup.includes("backup-failure.marker"), "备份脚本缺少失败标记");
+assert(cosBackup.includes("VERIFY_START") && cosBackup.includes("VERIFY_DONE"), "备份脚本缺少COS校验阶段日志");
+assert(cosBackup.includes("COS_HEAD_TIMEOUT"), "备份脚本缺少COS命令超时");
+assert(cosBackup.includes('COSCLI="${COSCLI:-'), "备份脚本COSCLI不可被测试覆盖");
+const publishArgGuard = read("scripts/server-publish.sh");
+assert(publishArgGuard.includes("--verify-cos-backup) VERIFY_COS_BACKUP=1; shift"), "部署脚本--verify-cos-backup缺少shift");
+assert(publishArgGuard.includes("参数解析异常"), "部署脚本缺少参数循环防御");
 const commentsAdminHtml = read("comments-service/admin/index.html");
 assert(
   /admin\.js\?v=\d+/.test(commentsAdminHtml) && /admin\.css\?v=\d+/.test(commentsAdminHtml),

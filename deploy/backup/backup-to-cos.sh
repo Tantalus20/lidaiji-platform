@@ -13,8 +13,8 @@ set -Eeuo pipefail
 
 umask 077
 
-COSCLI="/usr/local/bin/coscli"
-COS_CONFIG="/root/.cos.yaml"
+COSCLI="${COSCLI:-/usr/local/bin/coscli}"
+COS_CONFIG="${COS_CONFIG:-/root/.cos.yaml}"
 LOCK_FILE="/run/lock/lidaiji-cos-backup.lock"
 STATE_DIR="/var/lib/lidaiji-monitor/backup-state"
 FAILURE_MARKER="${STATE_DIR}/backup-failure.marker"
@@ -250,26 +250,54 @@ fi
 
 DAILY_DEST="cos://backup/server-backups/daily/${YEAR_MONTH}"
 
-echo "[$(date -Is)] 上传日备份"
-"$COSCLI" cp "$ARCHIVE" "${DAILY_DEST}/$(basename "$ARCHIVE")" || fail_with_marker "cos-upload" $?
-"$COSCLI" cp "$CHECKSUM" "${DAILY_DEST}/$(basename "$CHECKSUM")" || fail_with_marker "cos-upload-checksum" $?
+# 外部命令统一超时（v0.5.2）：任何 COS 命令都不得无限期挂起。
+# 上传/下载按对象大小给合理上限，总验证不超过 5 分钟。
+COS_HEAD_TIMEOUT=30
+COS_UPLOAD_TIMEOUT=60
+COS_DOWNLOAD_TIMEOUT="$(python3 -c "
+import sys
+mb = ${ARCHIVE_SIZE:-0} / (1024*1024)
+print(min(240, 30 + int(mb) * 10))
+" 2>/dev/null || echo 240)"
+COS_VERIFY_DEADLINE="$(( $(date +%s) + 300 ))"
 
-# 6) 远端校验：对象存在、大小一致、下载比对 SHA-256。
-echo "[$(date -Is)] 远端校验开始"
-REMOTE_LISTING="$("$COSCLI" ls "${DAILY_DEST}/$(basename "$ARCHIVE")" 2>/dev/null || true)"
+echo "[$(date -Is)] VERIFY_START deadline=${COS_VERIFY_DEADLINE}"
+
+echo "[$(date -Is)] 上传日备份"
+timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$ARCHIVE" "${DAILY_DEST}/$(basename "$ARCHIVE")" >/dev/null 2>&1 \
+    || fail_with_marker "cos-upload" $?
+timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$CHECKSUM" "${DAILY_DEST}/$(basename "$CHECKSUM")" >/dev/null 2>&1 \
+    || fail_with_marker "cos-upload-checksum" $?
+
+# 6) 远端校验：对象存在、大小一致、下载比对 SHA-256（分阶段日志 + 超时）。
+echo "[$(date -Is)] REMOTE_HEAD_START"
+REMOTE_LISTING="$(timeout "$COS_HEAD_TIMEOUT" "$COSCLI" ls "${DAILY_DEST}/$(basename "$ARCHIVE")" 2>/dev/null || true)"
 if [ -z "$REMOTE_LISTING" ]; then
     echo "远端对象不存在：${DAILY_DEST}/$(basename "$ARCHIVE")" >&2
     fail_with_marker "cos-object-missing" 3
 fi
-REMOTE_CHECK="$("$COSCLI" cp "${DAILY_DEST}/$(basename "$CHECKSUM")" "${WORKDIR}/remote.sha256" >/dev/null 2>&1 && cut -d' ' -f1 "${WORKDIR}/remote.sha256")"
+echo "[$(date -Is)] REMOTE_HEAD_DONE"
+
+echo "[$(date -Is)] REMOTE_CHECKSUM_START"
+REMOTE_CHECK="$(timeout "$COS_DOWNLOAD_TIMEOUT" "$COSCLI" cp "${DAILY_DEST}/$(basename "$CHECKSUM")" "${WORKDIR}/remote.sha256" >/dev/null 2>&1 \
+    && cut -d' ' -f1 "${WORKDIR}/remote.sha256")"
 if [ "$REMOTE_CHECK" != "$LOCAL_SHA" ]; then
     echo "远端校验值不一致：$REMOTE_CHECK vs $LOCAL_SHA" >&2
     fail_with_marker "cos-checksum-mismatch" 3
 fi
+echo "[$(date -Is)] REMOTE_CHECKSUM_DONE"
+
+echo "[$(date -Is)] DOWNLOAD_START"
 REMOTE_ARCHIVE="${WORKDIR}/remote.tar.gz"
-"$COSCLI" cp "${DAILY_DEST}/$(basename "$ARCHIVE")" "$REMOTE_ARCHIVE" || fail_with_marker "cos-download" $?
+timeout "$COS_DOWNLOAD_TIMEOUT" "$COSCLI" cp "${DAILY_DEST}/$(basename "$ARCHIVE")" "$REMOTE_ARCHIVE" >/dev/null 2>&1 \
+    || fail_with_marker "cos-download" $?
+echo "[$(date -Is)] DOWNLOAD_DONE"
+
+echo "[$(date -Is)] HASH_START"
 REMOTE_SHA="$(sha256sum "$REMOTE_ARCHIVE" | cut -d' ' -f1)"
 REMOTE_SIZE="$(stat -c '%s' "$REMOTE_ARCHIVE")"
+echo "[$(date -Is)] HASH_DONE"
+
 if [ "$REMOTE_SHA" != "$LOCAL_SHA" ]; then
     echo "远端下载内容不一致：$REMOTE_SHA vs $LOCAL_SHA" >&2
     fail_with_marker "cos-content-mismatch" 3
@@ -278,7 +306,12 @@ if [ "$REMOTE_SIZE" != "$ARCHIVE_SIZE" ]; then
     echo "远端大小不一致：$REMOTE_SIZE vs $ARCHIVE_SIZE" >&2
     fail_with_marker "cos-size-mismatch" 3
 fi
-echo "[$(date -Is)] 远端校验成功：大小=${ARCHIVE_SIZE} sha256=${LOCAL_SHA}"
+NOW_TS="$(date +%s)"
+if [ "$NOW_TS" -gt "$COS_VERIFY_DEADLINE" ]; then
+    echo "远端校验总时长超过 5 分钟限制" >&2
+    fail_with_marker "cos-verify-timeout" 3
+fi
+echo "[$(date -Is)] VERIFY_DONE 大小=${ARCHIVE_SIZE} sha256=${LOCAL_SHA}"
 
 # 每月1日额外保留一份月备份。
 if [ "$DAY_OF_MONTH" = "01" ]; then
