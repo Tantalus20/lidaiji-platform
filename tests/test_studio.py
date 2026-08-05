@@ -68,6 +68,7 @@ class StudioTestCase(unittest.TestCase):
         (self.root / "content" / "works").mkdir(parents=True)
         (self.root / "content" / "essays").mkdir(parents=True)
         self.server = studio_server.create_server(self.root, port=0)
+        self.server.state.auth_mode = "password"
         self.host, self.port = self.server.server_address[:2]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -109,7 +110,11 @@ class StudioTestCase(unittest.TestCase):
         return response.status, payload
 
     def post_json(self, path: str, payload: dict, headers: dict | None = None):
-        merged = {"Content-Type": "application/json", "X-Studio-Request": "1"}
+        merged = {
+            "Content-Type": "application/json",
+            "X-Studio-Request": "1",
+            "X-Studio-CSRF": self.server.state.studio_csrf_token,
+        }
         merged.update(headers or {})
         status, payload = self.request("POST", path, json.dumps(payload).encode("utf-8"), merged)
         return status, json.loads(payload)
@@ -118,7 +123,14 @@ class StudioTestCase(unittest.TestCase):
         source = path or self.docx
         body, content_type = multipart_body(filename or source.name, data if data is not None else source.read_bytes())
         status, payload = self.request(
-            "POST", "/api/import/inspect", body, {"Content-Type": content_type, "X-Studio-Request": "1"}
+            "POST",
+            "/api/import/inspect",
+            body,
+            {
+                "Content-Type": content_type,
+                "X-Studio-Request": "1",
+                "X-Studio-CSRF": self.server.state.studio_csrf_token,
+            },
         )
         return status, json.loads(payload)
 
@@ -161,7 +173,7 @@ class StudioTestCase(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "forbidden")
         # 回环 Origin 放行（继续走到业务校验而不是 403）
         status, _ = self.post_json(
-            "/api/import/abort", {"token": "0" * 32}, {"Origin": "http://127.0.0.1:4173"}
+            "/api/import/abort", {"token": "0" * 32}, {"Origin": f"http://127.0.0.1:{self.port}"}
         )
         self.assertEqual(status, 404)  # token 不存在，说明已通过 CSRF 闸
 

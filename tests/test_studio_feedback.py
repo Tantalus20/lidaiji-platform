@@ -148,6 +148,7 @@ class FeedbackTestCase(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "content" / "essays").mkdir(parents=True)
         self.server = studio_server.create_server(self.root, port=0)
+        self.server.state.auth_mode = "password"
         self.host, self.port = self.server.server_address[:2]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -175,7 +176,7 @@ class FeedbackTestCase(unittest.TestCase):
         return response.status, payload
 
     def post_json(self, path: str, payload: dict, headers: dict | None = None):
-        merged = {"Content-Type": "application/json", "X-Studio-Request": "1"}
+        merged = {"Content-Type": "application/json", "X-Studio-Request": "1", "X-Studio-CSRF": self.server.state.studio_csrf_token}
         merged.update(headers or {})
         status, payload = self.request("POST", path, json.dumps(payload).encode("utf-8"), merged)
         return status, json.loads(payload)

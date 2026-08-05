@@ -62,6 +62,15 @@ assert(/^\d+\.\d+\.\d+$/.test(studioVersion), "package.json.studioVersion 格式
 assert(read("studio/static/index.html").includes(`工作台 v${studioVersion}`), "Studio页面版本与 studioVersion 不一致");
 assert(read("README.md").includes(`studio v${studioVersion}`), "README组件版本与 studioVersion 不一致");
 assert(read("scripts/macos/common.sh").includes(`STUDIO_APP_VERSION="${studioVersion}"`), "macOS应用版本与 studioVersion 不一致");
+// 本地免登录（v0.2.1）：认证模式、凭据存储、CSRF令牌与设置命令必须存在。
+const studioAuthServer = read("studio/server.py");
+assert(studioAuthServer.includes('AUTH_MODES = ("local-bootstrap", "password")'), "Studio缺少认证模式定义");
+assert(studioAuthServer.includes("X-Studio-CSRF"), "Studio缺少CSRF令牌检查");
+assert(studioAuthServer.includes("SESSION_MAX_AGE_SECONDS"), "Studio缺少本地会话有效期");
+assert(studioAuthServer.includes("handle_lock"), "Studio缺少锁定接口");
+assert(read("studio/credentials.py").includes("macOS Keychain"), "Studio缺少本机凭据存储");
+assert(fs.existsSync("scripts/studio-credentials-setup.py"), "缺少 studio:setup 脚本");
+assert(fs.existsSync("tests/test_studio_auth.py"), "缺少本地认证测试");
 // 评论服务版本单一来源：package.json 是唯一权威；healthz 必须从 package.json 读取。
 const commentsVersion = JSON.parse(read("comments-service/package.json")).version;
 assert(/^\d+\.\d+\.\d+$/.test(commentsVersion), "评论服务版本格式不正确");

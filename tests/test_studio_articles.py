@@ -117,6 +117,7 @@ class StudioArticlesTestCase(unittest.TestCase):
         self.works_rel = "content/works/ce-shi-wen-ji/ce-shi-yi/index.md"
         self.essays_rel = "content/essays/ce-shi-er/index.md"
         self.server = studio_server.create_server(self.root, port=0)
+        self.server.state.auth_mode = "password"
         self.host, self.port = self.server.server_address[:2]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -145,7 +146,7 @@ class StudioArticlesTestCase(unittest.TestCase):
         return status, json.loads(payload)
 
     def post_json(self, path: str, payload: dict, headers: dict | None = None):
-        merged = {"Content-Type": "application/json", "X-Studio-Request": "1"}
+        merged = {"Content-Type": "application/json", "X-Studio-Request": "1", "X-Studio-CSRF": self.server.state.studio_csrf_token}
         merged.update(headers or {})
         status, payload = self.request("POST", path, json.dumps(payload).encode("utf-8"), merged)
         return status, json.loads(payload)
