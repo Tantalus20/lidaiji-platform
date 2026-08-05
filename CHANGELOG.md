@@ -1,5 +1,17 @@
 # 更新日志
 
+## Studio v0.2.1（2026-08-05，本地免登录）
+
+- 新增 local-bootstrap 认证模式（默认）：启动即授权，无账号密码登录框；
+  `npm run studio:setup` 一次性写入凭据（macOS Keychain / 600 文件），
+  凭据不进浏览器、不进日志；
+- 本地网关服务端自动登录上游评论服务；上游会话过期自动重建（仅认证失败路径重试）；
+- 新增进程绑定 X-Studio-CSRF 令牌与同源端口 Origin 校验；本地会话 HttpOnly /
+  SameSite=Strict / Max-Age 8 小时 / 进程退出失效；
+- 新增“锁定工作台”（撤销本地+上游会话）与重新授权；
+- 修复 SSH 隧道生命周期：ssh 不再 -f 后台化，隧道随工作台停止/退出可靠关闭；
+- password 模式保留原登录流程；新增 37 项认证测试（LOOP/AUTH/CSRF/UP/ADMIN）。
+
 ## Platform v0.2.1（2026-08-05，生产修复 v0.5.1）
 
 - 评论服务 v0.5.1：段落同步引入 `paragraphsMode`（omitted/authoritative）语义，
