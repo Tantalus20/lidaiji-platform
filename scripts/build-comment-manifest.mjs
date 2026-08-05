@@ -23,6 +23,7 @@ function parseFrontMatter(source) {
     revision: scalar("articleRevision"),
     title: scalar("title"),
     slug: scalar("slug"),
+    draft: scalar("draft"),
     comments: paragraph,
   };
 }
@@ -125,6 +126,9 @@ const ids = new Set();
 for (const file of articleFiles.sort()) {
   const parsed = parseFrontMatter(fs.readFileSync(file, "utf8"));
   if (!parsed.articleId) continue;
+  // 草稿不进入正式站点：跳过（否则构建因页面不存在而失败，
+  // 作者也无法在发布前安全保存草稿）。
+  if (parsed.draft === "true") continue;
   if (ids.has(parsed.articleId)) throw new Error(`重复articleId：${parsed.articleId}`);
   ids.add(parsed.articleId);
   const relative = path.relative(path.join(root, "content"), file).split(path.sep);
