@@ -191,26 +191,36 @@ def unrelated_dirty_summary(state) -> dict:
 def _resolve_target(state, rel_path: str) -> dict:
     project_root = Path(state.project_root).resolve()
     parts = [p for p in str(rel_path or "").split("/") if p]
-    if len(parts) != 4 or parts[0] != "content" or parts[1] not in ALLOWED_SECTIONS or parts[3] != "index.md":
+    # content/<section>/<slug>/index.md（随笔/档案）
+    # 或 content/works/<文集>/<slug>/index.md（作品含文集层级）
+    if (
+        len(parts) not in (4, 5)
+        or parts[0] != "content"
+        or parts[1] not in ALLOWED_SECTIONS
+        or parts[-1] != "index.md"
+    ):
         raise IsolationError("validation-failed", "文章路径不在允许的内容目录内。")
-    section, slug = parts[1], parts[2]
+    section = parts[1]
+    slug = parts[-2]
     if not re.fullmatch(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", slug):
         raise IsolationError("validation-failed", "slug 格式非法。")
-    bundle = project_root / "content" / section / slug
-    if not (bundle / "index.md").is_file():
-        raise IsolationError("not-found", "找不到这篇文章。")
-    article = articles.read_article(project_root, rel_path)
+    index_file = project_root / Path(*parts)
+    bundle = index_file.parent
     if bundle.is_symlink() or not bundle.is_dir():
         raise IsolationError("validation-failed", "文章目录无效（符号链接或缺失）。")
     for candidate in [bundle, *(bundle.rglob("*") if bundle.is_dir() else [])]:
         if candidate.is_symlink():
             raise IsolationError("validation-failed", "文章目录含符号链接，拒绝快照。")
+    if not index_file.is_file():
+        raise IsolationError("not-found", "找不到这篇文章。")
+    article = articles.read_article(project_root, rel_path)
     return {
         "article": article,
         "section": section,
         "slug": slug,
+        "relBundlePath": str(bundle.relative_to(project_root)),
         "bundle": bundle,
-        "indexFile": bundle / "index.md",
+        "indexFile": index_file,
     }
 
 
@@ -360,7 +370,7 @@ def build_merged_content(state, target: dict, snapshot: dict) -> dict:
         raise IsolationError("baseline-unavailable", "基线内容解包失败。")
     # 目标文章覆盖：index.md + 引用资源（未引用资源不纳入）。
     # 所有覆盖文件必须与快照记录哈希一致（快照不可变，拒绝静默替换）。
-    target_content = repo / "content" / target["section"] / target["slug"]
+    target_content = repo / target["relBundlePath"]
     target_content.mkdir(parents=True, exist_ok=True)
     if hashlib.sha256(target["indexFile"].read_bytes()).hexdigest() != snapshot["sourceFileSha256"]:
         raise IsolationError("conflict", "目标文章文件在快照后发生变化，请重新生成发布预览。")

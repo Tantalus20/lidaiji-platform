@@ -130,6 +130,9 @@ class IsoWorkspace:
         _git(self.root, "commit", "-qm", "scripts")
     def write_candidate_manifest(self, target_article: dict):
         """模拟隔离构建产物 manifest（基线 + 目标文章）。"""
+        self.write_candidate_manifest_for(None, target_article)
+
+    def write_candidate_manifest_for(self, _baseline, target_article: dict):
         out = self.root / "dist" / "site"
         out.mkdir(parents=True, exist_ok=True)
         entries = [dict(a) for a in self.baseline_manifest["articles"]]
@@ -438,3 +441,62 @@ def sha256_of(path: Path) -> str:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorksPathTests(unittest.TestCase):
+    """works 文章（含文集层级）路径回归：content/works/<文集>/<slug>/index.md。"""
+
+    def setUp(self):
+        self.ws = IsoWorkspace()
+        self.state = FakeState(self.ws)
+
+    def tearDown(self):
+        self.ws.cleanup()
+
+    def _make_works_article(self, slug="kao-shi-ji-qi", body="作品正文第一段。\n\n作品正文第二段。"):
+        target_dir = self.ws.root / "content" / "works" / "lidai-ji" / slug
+        target_dir.mkdir(parents=True, exist_ok=True)
+        article_id = f"article-{__import__('hashlib').sha256(slug.encode()).hexdigest()[:16]}"
+        front = {
+            "title": f"作品{slug}", "subtitle": "", "date": "2026-08-05", "lastmod": "2026-08-05",
+            "slug": slug, "description": "", "draft": False, "featured": False, "weight": 10,
+            "collections": ["历代纪"], "categories": [], "tags": [], "series": ["历代纪"],
+            "period": [], "people": [], "places": [], "aliases": [], "articleId": article_id,
+            "comments": {"paragraph": True},
+        }
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "importer"))
+        from paragraph_ids import assign_ids, revision_for  # type: ignore
+        stabilized, _ = assign_ids(body, body)
+        front["articleRevision"] = revision_for(article_id, stabilized)
+        index = target_dir / "index.md"
+        index.write_text("---\n" + json.dumps(front, ensure_ascii=False, indent=2) + "\n---\n\n" + stabilized, encoding="utf-8")
+        return {"path": f"content/works/lidai-ji/{slug}/index.md", "frontMatter": front,
+                "body": stabilized, "file": index}
+
+    def test_ISO_WORKS_01_works文章可快照与隔离预览(self):
+        target = self._make_works_article()
+        snapshot = iso.create_target_snapshot(self.state, target["path"], target["frontMatter"]["articleRevision"])
+        self.assertTrue(snapshot["snapshotId"])
+        resolved = iso._resolve_target(self.state, target["path"])
+        self.assertEqual(resolved["relBundlePath"], "content/works/lidai-ji/kao-shi-ji-qi")
+        self.ws.write_candidate_manifest_for(self.ws.baseline_article, target)
+        result = pa.article_publish_preview(self.state, target["path"])
+        self.assertTrue(result["ok"], [c for c in result["checks"] if c["status"] == "FAIL"])
+        self.assertEqual(result["canonicalUrl"], "/works/lidai-ji/kao-shi-ji-qi/")
+
+    def test_ISO_WORKS_02_隔离合并保留文集层级(self):
+        target = self._make_works_article()
+        snapshot = iso.create_target_snapshot(self.state, target["path"], target["frontMatter"]["articleRevision"])
+        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot)
+        try:
+            overlaid = merged["contentRoot"] / "works" / "lidai-ji" / "kao-shi-ji-qi" / "index.md"
+            self.assertTrue(overlaid.is_file(), "works文章必须覆盖到文集层级路径")
+            self.assertEqual(hashlib256(overlaid), snapshot["sourceFileSha256"])
+        finally:
+            iso.cleanup_merged_content(merged)
+
+
+def hashlib256(path):
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()

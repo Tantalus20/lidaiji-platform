@@ -150,13 +150,11 @@ def publish_lock_status(state) -> dict | None:
 
 def _canonical_url(article: dict) -> str:
     parts = [p for p in str(article.get("path") or "").split("/") if p]
-    # content/<section>/<slug>/index.md
-    section = ""
-    slug = ""
-    if len(parts) >= 3 and parts[0] == "content" and parts[-1] == "index.md":
-        section = parts[1]
-        slug = parts[-2]
-    return f"/{section}/{slug}/"
+    # content/<section>/<slug>/index.md 或 content/works/<文集>/<slug>/index.md
+    # → /<section>/.../<slug>/
+    if len(parts) >= 4 and parts[0] == "content" and parts[-1] == "index.md":
+        return "/" + "/".join(parts[1:-1]) + "/"
+    return "/"
 
 
 def _section_slug(article: dict) -> tuple[str, str]:
