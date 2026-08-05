@@ -135,8 +135,79 @@ def _flat_yaml(path: Path) -> dict[str, str]:
     return result
 
 
-def _toml_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
+def _toml_scalar(value) -> str:
+    """把 TOML 标量值序列化为字面量（字符串一律用 JSON 引号保证 UTF-8 安全）。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list) and all(not isinstance(item, (dict, list)) for item in value):
+        return "[" + ", ".join(_toml_scalar(item) for item in value) + "]"
+    raise ValueError(f"不支持的TOML值类型：{type(value).__name__}")
+
+
+def is_table(value) -> bool:
+    return isinstance(value, dict) or (
+        isinstance(value, list) and bool(value) and all(isinstance(item, dict) for item in value)
+    )
+
+
+def _write_toml(data: dict) -> str:
+    """把 tomllib 解析结果写回为规范 TOML（标量、表、表数组；不写注释）。
+
+    Hugo 只要求合法 TOML，不依赖注释或原格式；覆盖后的配置以本函数输出为准。
+    """
+    lines: list[str] = []
+
+    def emit(prefix: str, obj: dict) -> None:
+        for key, value in obj.items():
+            if not prefix and not is_table(value):
+                continue  # 根级标量已在前面写出，避免重复键
+            full = f"{prefix}{key}"
+            if isinstance(value, dict):
+                lines.append(f"[{full}]")
+                emit(f"{full}.", value)
+            elif isinstance(value, list) and bool(value) and all(isinstance(item, dict) for item in value):
+                for item in value:
+                    lines.append(f"[[{full}]]")
+                    emit(f"{full}.", item)
+            else:
+                lines.append(f"{key} = {_toml_scalar(value)}")
+
+    for key, value in data.items():
+        if not is_table(value):
+            lines.append(f"{key} = {_toml_scalar(value)}")
+    if any(not is_table(value) for value in data.values()):
+        lines.append("")
+    emit("", data)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _merge_config_toml(path: Path, overrides: dict) -> None:
+    """把私有仓库的平面覆盖合并进 Hugo 真实读取的配置文件。
+
+    关键点（v0.5.1 修复）：Hugo 只加载 config/_default/ 下的特殊文件名
+    （config/menus/params/…）。此前生成的 zz-workspace.toml 被 Hugo 静默忽略，
+    导致私有品牌（title/baseURL/params）从未生效。这里改为直接合并进
+    hugo.toml / params.toml，使覆盖真正进入构建。
+    """
+    import tomllib
+
+    with path.open("rb") as handle:
+        data = tomllib.load(handle)
+    for key, value in overrides.items():
+        if key in data and is_table(data[key]):
+            raise ValueError(f"覆盖键{key}与配置表冲突。")
+        if key == "languageCode":
+            # Hugo 0.158+ 弃用 languageCode，统一映射到 locale，避免构建警告。
+            data["locale"] = value
+            continue
+        data[key] = value
+    path.write_text(_write_toml(data), encoding="utf-8")
 
 
 def materialize(workspace: Workspace, destination: Path) -> Path:
@@ -159,14 +230,10 @@ def materialize(workspace: Workspace, destination: Path) -> Path:
     shutil.copytree(platform / "config", destination / "config")
     site = _flat_yaml(Path(workspace.siteOverridesRoot) / "site.yaml")
     branding = _flat_yaml(Path(workspace.siteOverridesRoot) / "branding.yaml")
-    lines = [f"{key} = {_toml_string(value)}" for key, value in site.items()]
+    if site:
+        _merge_config_toml(destination / "config" / "_default" / "hugo.toml", site)
     if branding:
-        lines.extend(["", "[params]"])
-        lines.extend(f"{key} = {_toml_string(value)}" for key, value in branding.items())
-    if lines:
-        (destination / "config" / "_default" / "zz-workspace.toml").write_text(
-            "\n".join(lines) + "\n", encoding="utf-8"
-        )
+        _merge_config_toml(destination / "config" / "_default" / "params.toml", branding)
     (destination / "workspace.json").write_text(
         json.dumps(asdict(workspace), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

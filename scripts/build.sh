@@ -50,6 +50,22 @@ if [[ -d "$DIST/site" ]]; then
   mv "$DIST/site" "$DIST/site.previous"
 fi
 mv "$STAGING" "$DIST/site"
+# 品牌断言（v0.5.1）：构建产物必须使用工作区真实站点名，禁止演示品牌残留。
+WORKSPACE_MODE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["mode"])' "$WORKSPACE/workspace.json")"
+SITE_TITLE="$(python3 -c '
+import tomllib
+with open("'"$WORKSPACE"'/config/_default/hugo.toml","rb") as h:
+    print(tomllib.load(h).get("title",""))
+' 2>/dev/null || true)"
+node "$ROOT/tests/check-brand.mjs" "$DIST/site" "$SITE_TITLE"
+# BUILD_INFO（v0.5.1）：站点发布包记录版本与sourceCommit（不含路径/凭据）。
+{
+  printf 'version: %s\n' "$(cat "$ROOT/VERSION")"
+  printf 'sourceCommit: %s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  printf 'buildTimestamp: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'hugoVersion: %s\n' "$("$HUGO" version 2>/dev/null | awk '{print $2}' || echo unknown)"
+  printf 'entrypoint: index.html\n'
+} > "$DIST/site/BUILD_INFO"
 SITE_DIR="$DIST/site" node "$ROOT/tests/check-reading-ui.mjs" "$ROOT"
 SITE_DIR="$DIST/site" node "$ROOT/tests/check-reader-tools.mjs" "$ROOT"
 SITE_DIR="$DIST/site" node "$ROOT/tests/check-article-comments.mjs" "$ROOT"
