@@ -294,3 +294,97 @@ test("B13 工作台组合筛选：scope×source", async () => {
     assert.equal(bad.status, 400);
   } finally { await ctx.close(); }
 });
+
+// ---- v0.5.1 fail-closed 鉴权测试 ----
+
+test("C01 环境变量不存在（空token）：端点503 DISABLED，不进入业务逻辑", async () => {
+  const ctx = await fixture({ qqBotToken: "" });
+  try {
+    const res = await botRequest(ctx, BASE, "");
+    assert.equal(res.status, 503);
+    assert.equal(res.data.error, "CHAPTER_REVIEW_BOT_DISABLED");
+    assert.equal(ctx.db.prepare("SELECT COUNT(*) count FROM comments").get().count, 0, "不得写入任何评论");
+  } finally { await ctx.close(); }
+});
+
+test("C02 token为空白字符：503 DISABLED", async () => {
+  const ctx = await fixture({ qqBotToken: "   " });
+  try {
+    const res = await botRequest(ctx, BASE, "   ");
+    assert.equal(res.status, 503);
+  } finally { await ctx.close(); }
+});
+
+test("C03 配置有效Token但无Authorization头：401", async () => {
+  const ctx = await fixture();
+  try {
+    const res = await fetch(`${ctx.base}/api/bot/chapter-reviews`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(BASE),
+    });
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, "UNAUTHORIZED");
+  } finally { await ctx.close(); }
+});
+
+test("C04 Authorization: Bearer（空值）：401", async () => {
+  const ctx = await fixture();
+  try {
+    const res = await botRequest(ctx, BASE, "");
+    assert.equal(res.status, 401);
+    assert.equal(res.data.error, "UNAUTHORIZED");
+  } finally { await ctx.close(); }
+});
+
+test("C05 Bearer后带空格：401", async () => {
+  const ctx = await fixture();
+  try {
+    const res = await fetch(`${ctx.base}/api/bot/chapter-reviews`, {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer   " }, body: JSON.stringify(BASE),
+    });
+    assert.equal(res.status, 401);
+  } finally { await ctx.close(); }
+});
+
+test("C06 错误Token：401", async () => {
+  const ctx = await fixture();
+  try {
+    const res = await botRequest(ctx, BASE, "wrong-token");
+    assert.equal(res.status, 401);
+  } finally { await ctx.close(); }
+});
+
+test("C07 正确Token：202 正常处理", async () => {
+  const ctx = await fixture();
+  try {
+    const res = await botRequest(ctx, BASE);
+    assert.equal(res.status, 202);
+    assert.ok(res.data.publicReviewId);
+  } finally { await ctx.close(); }
+});
+
+test("C08 超长Token不触发异常且不匹配：401", async () => {
+  const ctx = await fixture();
+  try {
+    const res = await botRequest(ctx, BASE, "x".repeat(4096));
+    assert.equal(res.status, 401);
+  } finally { await ctx.close(); }
+});
+
+test("C09 健康状态：token配置与否影响 chapterReviewBot 状态，不泄露token", async () => {
+  const enabled = await fixture();
+  try {
+    const res = await fetch(`${enabled.base}/healthz`);
+    const data = await res.json();
+    assert.equal(data.chapterReviewBot.configured, true);
+    assert.equal(data.chapterReviewBot.state, "ENABLED");
+    const raw = JSON.stringify(data);
+    assert.ok(!raw.includes("bot-token-abc"), "健康接口不得包含Token");
+  } finally { await enabled.close(); }
+  const disabled = await fixture({ qqBotToken: "" });
+  try {
+    const res = await fetch(`${disabled.base}/healthz`);
+    const data = await res.json();
+    assert.equal(data.chapterReviewBot.configured, false);
+    assert.equal(data.chapterReviewBot.state, "DISABLED");
+  } finally { await disabled.close(); }
+});

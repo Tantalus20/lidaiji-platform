@@ -19,6 +19,7 @@ const ERRORS = Object.freeze({
   DUPLICATE: "DUPLICATE",
   SERVICE_DEGRADED: "SERVICE_DEGRADED",
   UNAUTHORIZED: "UNAUTHORIZED",
+  CHAPTER_REVIEW_BOT_DISABLED: "CHAPTER_REVIEW_BOT_DISABLED",
   INTERNAL_ERROR: "INTERNAL_ERROR",
 });
 
@@ -97,7 +98,16 @@ function rejectIfRateLimited(db, actorHash, groupHash, now) {
 }
 
 async function submitBotChapterReview({ request, response, db, config, manifest }) {
-  if (!constantTimeEqual(config.qqBotToken, String(request.headers.authorization || "").replace(/^Bearer\s+/i, ""))) {
+  // 鉴权 fail-closed（v0.5.1）：
+  //   1) token 未配置/为空/全空白 → 端点整体 DISABLED，一律 503；
+  //   2) 配置了 token 但请求未携带 Bearer 或 Bearer 为空/错误 → 401；
+  //   3) 只有正确且非空的 token 才允许进入业务逻辑。
+  const configuredToken = String(config.qqBotToken || "").trim();
+  if (!configuredToken) {
+    throw Object.assign(new Error(ERRORS.CHAPTER_REVIEW_BOT_DISABLED), { statusCode: 503 });
+  }
+  const supplied = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!supplied || !constantTimeEqual(configuredToken, supplied)) {
     throw Object.assign(new Error(ERRORS.UNAUTHORIZED), { statusCode: 401 });
   }
   const payload = JSON.parse(Buffer.concat(await new Promise((resolve, reject) => {

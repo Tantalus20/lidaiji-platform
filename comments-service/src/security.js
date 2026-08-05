@@ -56,9 +56,10 @@ function safeText(value, min, max, label) {
 }
 
 function constantTimeEqual(a, b) {
+  // 空值不参与比较：两个空值绝不视为“相等且已认证”。
   const ca = String(a || "");
   const cb = String(b || "");
-  if (ca.length !== cb.length) return false;
+  if (!ca || !cb || ca.length !== cb.length) return false;
   let diff = 0;
   for (let i = 0; i < ca.length; i++) diff |= ca.charCodeAt(i) ^ cb.charCodeAt(i);
   return diff === 0;
