@@ -71,6 +71,17 @@ assert(studioAuthServer.includes("handle_lock"), "Studio缺少锁定接口");
 assert(read("studio/credentials.py").includes("macOS Keychain"), "Studio缺少本机凭据存储");
 assert(fs.existsSync("scripts/studio-credentials-setup.py"), "缺少 studio:setup 脚本");
 assert(fs.existsSync("tests/test_studio_auth.py"), "缺少本地认证测试");
+// 文章发布闭环（v0.2.2）：编辑器 → 保存草稿 → 预览发布版本 → 确认发布。
+assert(fs.existsSync("studio/publish_article.py"), "缺少文章发布闭环模块");
+assert(fs.existsSync("tests/test_studio_publish.py"), "缺少文章发布闭环测试");
+const publishArticle = read("studio/publish_article.py");
+assert(publishArticle.includes("acquire_publish_lock"), "缺少全局发布锁");
+assert(publishArticle.includes("idempotencyKey"), "缺少发布幂等");
+assert(publishArticle.includes("article_publish_preview"), "缺少发布预览");
+assert(read("studio/static/index.html").includes('id="publishDialog"'), "缺少发布确认对话框");
+assert(read("studio/app/editor-page.mjs").includes("editPublishPreview"), "前端缺少预览发布版本入口");
+assert(read("studio/app/editor-page.mjs").includes("publishDialogYes"), "前端缺少确认发布按钮");
+assert(!read("studio/app/editor-page.mjs").includes("window.confirm("), "发布确认不得使用浏览器原生confirm");
 // 评论服务版本单一来源：package.json 是唯一权威；healthz 必须从 package.json 读取。
 const commentsVersion = JSON.parse(read("comments-service/package.json")).version;
 assert(/^\d+\.\d+\.\d+$/.test(commentsVersion), "评论服务版本格式不正确");

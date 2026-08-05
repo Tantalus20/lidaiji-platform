@@ -1,6 +1,6 @@
 /*! Lidaiji Studio 工作台前端包（自动生成，请勿手改）。
  * 源码：studio/app/*.mjs；重新生成：npm run build:app。
- * 平台 0.2.1 · Studio 0.2.1。 */
+ * 平台 0.2.1 · Studio 0.2.2。 */
 (() => {
   // studio/app/util.mjs
   var SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -533,6 +533,7 @@
         `\u5DF2\u4FDD\u5B58\uFF08\u65B0\u589E\u951A\u70B9 ${payload.anchors.created} \u4E2A\uFF0C\u4FDD\u7559 ${payload.anchors.retained} \u4E2A\uFF09`,
         "saved"
       );
+      refreshPublishStatus();
     } catch (error) {
       setSaveStatus("\u4FDD\u5B58\u5931\u8D25", "failed");
       showError($("#editError"), error.message);
@@ -623,6 +624,7 @@
       updateWordCount();
       updateToolbarState({ canUndo: false, canRedo: false, bold: false, em: false });
       loadNotes();
+      refreshPublishStatus();
       maybeOfferDraft(article.body);
       editor.focus();
     } catch (error) {
@@ -742,6 +744,227 @@
       await api("/api/system/open-folder", { path: editState.path });
     } catch (error) {
       showError($("#editError"), error.message);
+    }
+  });
+  var publishState = {
+    status: null,
+    preview: null,
+    pollTimer: 0,
+    dialogData: null
+  };
+  var PUBLISH_STAGE_LABELS = {
+    validating: "\u6B63\u5728\u6821\u9A8C",
+    building: "\u6B63\u5728\u6784\u5EFA",
+    "backing-up": "\u6B63\u5728\u5907\u4EFD",
+    uploading: "\u6B63\u5728\u4E0A\u4F20",
+    switching: "\u6B63\u5728\u5207\u6362\u7248\u672C",
+    verifying: "\u6B63\u5728\u9A8C\u8BC1"
+  };
+  function fmtTime(seconds) {
+    if (!seconds) return "\u2014";
+    const date = new Date(seconds * 1e3);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+  function renderPublishBar() {
+    const bar = $("#publishBar");
+    if (!publishState.status) {
+      bar.classList.add("hidden");
+      return;
+    }
+    bar.classList.remove("hidden");
+    const status = publishState.status;
+    const live = status.publishedRevision;
+    $("#pubDraftState").textContent = status.draft ? "\u8349\u7A3F" : "\u5DF2\u53D1\u5E03";
+    $("#pubSavedAt").textContent = `\u6700\u540E\u4FDD\u5B58\uFF1A${fmtTime(status.lastSavedAt)}`;
+    $("#pubPreviewState").textContent = status.previewFresh ? "\u9884\u89C8\uFF1A\u5DF2\u751F\u6210\uFF08\u6700\u65B0\uFF09" : "\u9884\u89C8\uFF1A\u672A\u751F\u6210\u6216\u5DF2\u8FC7\u671F";
+    $("#pubLiveVersion").textContent = live ? `\u7EBF\u4E0A\u7248\u672C\uFF1A${live.slice(-8)}\uFF08${fmtTime(new Date(status.publishedAt || 0).getTime() / 1e3)}\uFF09` : "\u7EBF\u4E0A\u7248\u672C\uFF1A\u5C1A\u672A\u53D1\u5E03";
+    const unsaved = $("#pubUnsaved");
+    unsaved.classList.toggle("hidden", !editState.dirty);
+    const history = $("#publishHistory");
+    const list = $("#publishHistoryList");
+    list.textContent = "";
+    if (status.history && status.history.length) {
+      history.classList.remove("hidden");
+      status.history.slice().reverse().forEach((entry) => {
+        const item = document.createElement("li");
+        const revision = document.createElement("strong");
+        revision.textContent = String(entry.revision || "").slice(-8);
+        item.appendChild(revision);
+        const meta = document.createElement("span");
+        meta.className = "meta-text";
+        const statusText = entry.status === "ok" ? "\u6210\u529F" : entry.status === "running" ? "\u8FDB\u884C\u4E2D" : `\u5931\u8D25(${entry.status})`;
+        meta.textContent = ` ${statusText} \xB7 ${entry.completedAt || entry.createdAt || ""} ${entry.releaseId ? "\xB7 " + entry.releaseId : ""}`;
+        item.appendChild(meta);
+        list.appendChild(item);
+      });
+    } else {
+      history.classList.add("hidden");
+    }
+  }
+  function renderPublishStage() {
+    const stage = $("#publishStage");
+    const lock = publishState.status && publishState.status.lock;
+    if (lock && lock.inFlight) {
+      stage.classList.remove("hidden");
+      $("#publishStageText").textContent = `${PUBLISH_STAGE_LABELS[lock.stage] || "\u6B63\u5728\u53D1\u5E03"}\u2026\uFF08\u540C\u4E00\u65F6\u95F4\u53EA\u5141\u8BB8\u4E00\u4E2A\u53D1\u5E03\u4EFB\u52A1\uFF09`;
+    } else if (lock && lock.status === "failed_recovery") {
+      stage.classList.remove("hidden");
+      $("#publishStageText").textContent = "\u68C0\u6D4B\u5230\u4E0A\u6B21\u53D1\u5E03\u8FDB\u7A0B\u5F02\u5E38\u9000\u51FA\uFF1A\u72B6\u6001\u672A\u77E5\uFF0C\u8BF7\u4EBA\u5DE5\u6838\u9A8C\u540E\u518D\u64CD\u4F5C\u3002";
+    } else {
+      stage.classList.add("hidden");
+    }
+  }
+  function renderPublishResult() {
+    const box = $("#publishResult");
+    const result = publishState.status && publishState.status.result;
+    if (!result || result.articleId !== (publishState.status && publishState.status.articleId)) {
+      box.classList.add("hidden");
+      return;
+    }
+    box.classList.remove("hidden");
+    if (result.ok) {
+      $("#publishResultTitle").textContent = `\u53D1\u5E03\u6210\u529F\uFF1A${publishState.status.slug || ""}`;
+      $("#publishResultMeta").textContent = `\u6B63\u5F0F\u7F51\u5740 ${result.canonicalUrl || ""} \xB7 \u53D1\u5E03\u65F6\u95F4 ${result.completedAt || ""} \xB7 release ${result.releaseId || "\u2014"} \xB7 \u6587\u7AE0\u7248\u672C ${String(result.revision || "").slice(-8)}`;
+      $("#publishResultOpen").href = result.canonicalUrl || "#";
+      $("#publishResultLog").textContent = result.output || "\uFF08\u65E0\u65E5\u5FD7\uFF09";
+    } else {
+      $("#publishResultTitle").textContent = `\u53D1\u5E03\u5931\u8D25\uFF1A${result.error || "\u672A\u77E5\u539F\u56E0"}`;
+      $("#publishResultMeta").textContent = "\u8BF7\u67E5\u770B\u65E5\u5FD7\uFF1B\u670D\u52A1\u5668\u4ECD\u505C\u7559\u5728\u65E7\u7248\u672C\u3002";
+      $("#publishResultLog").textContent = result.output || "";
+      $("#publishResultOpen").classList.add("hidden");
+    }
+  }
+  async function refreshPublishStatus() {
+    if (!editState.path) return;
+    try {
+      const payload = await apiGet(`/api/article/publish-status?path=${encodeURIComponent(editState.path)}`);
+      publishState.status = payload.status;
+      renderPublishBar();
+      renderPublishStage();
+      renderPublishResult();
+      const lock = payload.status.lock;
+      if (lock && lock.inFlight) {
+        publishState.pollTimer = setTimeout(refreshPublishStatus, 2e3);
+      }
+    } catch (e) {
+    }
+  }
+  async function ensureSavedBeforePublish(action) {
+    if (editState.dirty) {
+      showError($("#editError"), "\u5B58\u5728\u672A\u4FDD\u5B58\u4FEE\u6539\uFF1A\u8BF7\u5148\u4FDD\u5B58\u8349\u7A3F\uFF0C\u518D" + action + "\u3002");
+      return false;
+    }
+    if (!editState.path) {
+      showError($("#editError"), "\u8BF7\u5148\u6253\u5F00\u4E00\u7BC7\u6587\u7AE0\u3002");
+      return false;
+    }
+    return true;
+  }
+  $("#editPublishPreview").addEventListener("click", async () => {
+    hideError($("#editError"));
+    if (!await ensureSavedBeforePublish("\u751F\u6210\u53D1\u5E03\u9884\u89C8")) return;
+    const button = $("#editPublishPreview");
+    const stage = $("#publishStage");
+    button.disabled = true;
+    stage.classList.remove("hidden");
+    $("#publishStageText").textContent = "\u6B63\u5728\u6821\u9A8C\u5E76\u6784\u5EFA\uFF08\u53EF\u80FD\u9700\u8981\u4E00\u4E24\u5206\u949F\uFF09\u2026";
+    try {
+      const payload = await api("/api/article/publish-preview", { path: editState.path });
+      stage.classList.add("hidden");
+      if (!payload.ok) {
+        const failed = payload.checks.filter((c) => c.status === "FAIL").map((c) => c.name).join("\u3001");
+        showError($("#editError"), `\u53D1\u5E03\u9884\u89C8\u672A\u901A\u8FC7\uFF1A${failed || "\u68C0\u67E5\u5931\u8D25"}\uFF08\u8BE6\u89C1\u65E5\u5FD7\u5C3E\u90E8\uFF09\u3002`);
+        $("#publishResultLog").textContent = payload.buildOutput || "";
+        return;
+      }
+      publishState.preview = payload;
+      const anchor = payload.anchor || {};
+      const affected = payload.affectedComments === null ? "\u672A\u77E5\uFF08\u8BC4\u8BBA\u670D\u52A1\u4E0D\u53EF\u8FBE\uFF09" : `${payload.affectedComments} \u6761`;
+      showError($("#editError"), "");
+      $("#editError").classList.add("hidden");
+      $("#pubPreviewState").textContent = "\u9884\u89C8\uFF1A\u5DF2\u751F\u6210\uFF08\u6700\u65B0\uFF09";
+      const pass = payload.checks.filter((c) => c.status === "PASS").length;
+      const warn = payload.checks.filter((c) => c.status === "WARNING").length;
+      const lines = [
+        `\u53D1\u5E03\u9884\u89C8\u5DF2\u751F\u6210\uFF1A${payload.canonicalUrl}`,
+        `\u6BB5\u843D\u53D8\u5316\uFF1A\u4FDD\u6301 ${anchor.retained} \xB7 \u65B0\u589E ${anchor.created} \xB7 \u8F6C\u5386\u53F2 ${anchor.deleted}`,
+        `\u53D7\u5F71\u54CD\u6BB5\u8BC4\uFF1A${affected}`,
+        `\u68C0\u67E5 ${pass} \u9879\u901A\u8FC7 / ${warn} \u9879\u8B66\u544A`
+      ];
+      $("#publishStageText").textContent = lines.join(" | ");
+      stage.classList.remove("hidden");
+      window.open(payload.previewUrl, "_blank", "noopener");
+    } catch (error) {
+      stage.classList.add("hidden");
+      showError($("#editError"), error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("#editPublish").addEventListener("click", async () => {
+    hideError($("#editError"));
+    if (!await ensureSavedBeforePublish("\u786E\u8BA4\u53D1\u5E03")) return;
+    await refreshPublishStatus();
+    if (publishState.status && publishState.status.lock && publishState.status.lock.inFlight) {
+      showError($("#editError"), "\u5DF2\u6709\u53D1\u5E03\u4EFB\u52A1\u6B63\u5728\u8FDB\u884C\uFF0C\u8BF7\u7B49\u5F85\u5B8C\u6210\u3002");
+      return;
+    }
+    const status = publishState.status;
+    if (!status || !status.previewFresh) {
+      showError($("#editError"), "\u8BF7\u5148\u751F\u6210\u53D1\u5E03\u9884\u89C8\uFF08\u8349\u7A3F\u4FDD\u5B58\u540E\u9884\u89C8\u624D\u6709\u6548\uFF09\u3002");
+      return;
+    }
+    if (status.draft) {
+      showError($("#editError"), "\u6587\u7AE0\u4ECD\u4E3A\u8349\u7A3F\u72B6\u6001\uFF1A\u8BF7\u5148\u5728\u5143\u6570\u636E\u4E2D\u53D6\u6D88\u52FE\u9009\u300C\u8349\u7A3F\u300D\u5E76\u4FDD\u5B58\uFF0C\u518D\u751F\u6210\u9884\u89C8\u4E0E\u53D1\u5E03\u3002");
+      return;
+    }
+    publishState.dialogData = status;
+    $("#pdTitle").textContent = status.slug || "\u2014";
+    $("#pdUrl").textContent = status.canonicalUrl || "\u2014";
+    $("#pdLiveAt").textContent = status.publishedAt ? fmtTime(new Date(status.publishedAt).getTime() / 1e3) : "\u5C1A\u672A\u53D1\u5E03";
+    $("#pdDraftAt").textContent = fmtTime(status.lastSavedAt);
+    $("#pdAnchor").textContent = "\u53D1\u5E03\u65F6\u5C06\u6309\u4FDD\u5B58\u8349\u7A3F\u7684\u6BB5\u843D\u7ED3\u6784\u540C\u6B65\uFF08\u4FDD\u6301/\u65B0\u589E/\u8F6C\u5386\u53F2\u4EE5\u9884\u89C8\u7ED3\u679C\u4E3A\u51C6\uFF09\u3002";
+    $("#pdChecks").textContent = "\u53D1\u5E03\u524D\u5C06\u518D\u6B21\u6267\u884C\u5B8C\u6574\u6784\u5EFA\u68C0\u67E5\u4E0E\u670D\u52A1\u5668\u6821\u9A8C\u3002";
+    $("#publishDialog").classList.remove("hidden");
+  });
+  $("#publishDialogNo").addEventListener("click", () => {
+    $("#publishDialog").classList.add("hidden");
+    publishState.dialogData = null;
+  });
+  $("#publishDialogYes").addEventListener("click", async () => {
+    const status = publishState.dialogData;
+    $("#publishDialog").classList.add("hidden");
+    if (!status) return;
+    publishState.dialogData = null;
+    const idempotencyKey = `pub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      const payload = await api("/api/article/publish", {
+        path: editState.path,
+        draftRevision: status.revision,
+        previewBuildId: publishState.preview ? publishState.preview.previewBuildId : "",
+        idempotencyKey
+      });
+      $("#publishStage").classList.remove("hidden");
+      $("#publishStageText").textContent = "\u6B63\u5728\u53D1\u5E03\u2026";
+      await refreshPublishStatus();
+      if (payload.task && payload.task.inFlight) {
+        $("#publishStageText").textContent = `${PUBLISH_STAGE_LABELS[payload.task.stage] || "\u6B63\u5728\u53D1\u5E03"}\u2026`;
+      }
+    } catch (error) {
+      showError($("#editError"), error.message);
+    }
+  });
+  $("#publishResultCopy").addEventListener("click", async () => {
+    const result = publishState.status && publishState.status.result;
+    const url = result && result.canonicalUrl || "";
+    try {
+      await navigator.clipboard.writeText(url);
+      $("#publishResultCopy").textContent = "\u5DF2\u590D\u5236";
+      setTimeout(() => {
+        $("#publishResultCopy").textContent = "\u590D\u5236\u6587\u7AE0\u7F51\u5740";
+      }, 1500);
+    } catch (e) {
     }
   });
 

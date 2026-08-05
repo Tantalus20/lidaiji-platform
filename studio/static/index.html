@@ -10,7 +10,7 @@
 <header class="topbar">
   <div class="topbar-main">
     <h1>《历代纪》作者工作台</h1>
-    <p class="subtitle">本地作者工作台 v0.2.1 · 仅在本机运行，不会上传任何文件</p>
+    <p class="subtitle">本地作者工作台 v0.2.2 · 仅在本机运行，不会上传任何文件</p>
     <p id="workspaceTarget" class="workspace-target">正在确认内容仓库……</p>
   </div>
   <nav class="topnav" aria-label="主导航">
@@ -59,11 +59,57 @@
       <span class="spacer"></span>
       <span id="editSaveStatus" class="save-status"></span>
       <button id="editSaveRetry" class="danger small hidden" type="button">重试保存</button>
-      <button id="editSave" class="primary" type="button">保存</button>
+      <button id="editSave" class="primary" type="button">保存草稿</button>
+      <button id="editPublishPreview" class="secondary small" type="button">预览发布版本</button>
+      <button id="editPublish" class="primary small" type="button">确认发布</button>
       <button id="editHugoPreview" class="secondary small" type="button">Hugo 真实预览</button>
       <button id="editOpenFolder" class="secondary small" type="button">打开目录</button>
     </div>
     <div id="editError" class="error-box hidden"></div>
+    <div id="publishBar" class="publish-bar hidden">
+      <span id="pubDraftState" class="meta-text"></span>
+      <span id="pubSavedAt" class="meta-text"></span>
+      <span id="pubPreviewState" class="meta-text"></span>
+      <span id="pubLiveVersion" class="meta-text"></span>
+      <span id="pubUnsaved" class="warning-text hidden">存在未保存修改</span>
+    </div>
+    <div id="publishStage" class="dirty-bar hidden" role="status">
+      <span id="publishStageText">正在校验…</span>
+    </div>
+    <div id="publishResult" class="publish-result hidden">
+      <p class="success-text" id="publishResultTitle"></p>
+      <p class="meta-text" id="publishResultMeta"></p>
+      <div class="actions">
+        <a id="publishResultOpen" class="button primary small" target="_blank" rel="noopener">打开正式文章</a>
+        <button id="publishResultCopy" class="secondary small" type="button">复制文章网址</button>
+      </div>
+      <details class="fm-panel">
+        <summary>发布日志（尾部）</summary>
+        <pre id="publishResultLog" class="markdown-source"></pre>
+      </details>
+    </div>
+    <div id="publishHistory" class="publish-history hidden">
+      <h3>发布历史</h3>
+      <ul id="publishHistoryList" class="commit-list"></ul>
+    </div>
+    <div id="publishDialog" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="publishDialogTitle">
+      <div class="modal-box">
+        <h3 id="publishDialogTitle">确认发布</h3>
+        <dl class="publish-dialog-dl">
+          <dt>文章标题</dt><dd id="pdTitle">—</dd>
+          <dt>正式网址</dt><dd id="pdUrl">—</dd>
+          <dt>当前线上更新时间</dt><dd id="pdLiveAt">—</dd>
+          <dt>本次草稿更新时间</dt><dd id="pdDraftAt">—</dd>
+          <dt>段落变化</dt><dd id="pdAnchor">—</dd>
+          <dt>发布前检查</dt><dd id="pdChecks">—</dd>
+        </dl>
+        <p class="meta-text">确认将此版本发布到正式网站？发布后正式网址立即更新。</p>
+        <div class="actions">
+          <button id="publishDialogYes" class="danger" type="button">发布到正式网站</button>
+          <button id="publishDialogNo" class="secondary" type="button">返回检查</button>
+        </div>
+      </div>
+    </div>
     <div id="draftBar" class="dirty-bar hidden" role="alert">
       <span id="draftBarText">检测到上次未保存的本地草稿。</span>
       <button id="draftRestore" class="primary small" type="button">恢复草稿</button>

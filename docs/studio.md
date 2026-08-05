@@ -26,3 +26,15 @@ Word 导入保持 parse（零写入）→ plan（零写入）→ commit（冲突
   重新授权 = 重新打开页面（复用本机凭据，无需再输入密码）。
 - **password 模式**：`STUDIO_AUTH_MODE=password` 保留原账号密码登录流程
   （故障排查/特殊部署）。
+
+## v0.2.2 文章发布闭环
+
+编辑页底部新增固定操作区：
+
+- **保存草稿**：只写入私人内容工作区（Markdown + front matter + articleRevision），不构建、不提交 Git、不影响线上。
+- **预览发布版本**：校验 front matter/slug/正文唯一性 → 锚点迁移预演（以上次发布记录为基准，保持/新增/转历史）→ 经本地网关只读查询受影响段评 → Hugo 构建验证 → 生成预览构建标识（30 分钟有效）。
+- **确认发布**：自定义对话框确认（非浏览器 confirm）→ 异步执行既有 preflight(构建) + publish.sh 规范发布链 → 阶段轮询 → 成功显示正式网址/release/文章版本；失败按阶段报错。
+- 发布锁：同一时间只允许一个正式发布任务（与发布中心共享）；陈旧锁（超过 16 分钟）自动标记"需人工核验"。
+- 幂等：相同 idempotencyKey 不重复部署；草稿 revision 或预览标识变化时拒绝发布。
+- 发布历史：`.cache/studio/publish-history.json`（Git 忽略），记录 releaseId/revision/状态/时间。
+- 草稿保存不自动提交 Git；发布以工作树内容为源（沿用现有发布链策略）。
