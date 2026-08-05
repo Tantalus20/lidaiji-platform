@@ -100,6 +100,20 @@
     }
     return payload;
   }
+  async function apiRaw(path, body) {
+    const csrf = await ensureCsrfToken();
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Studio-Request": "1",
+        "X-Studio-CSRF": csrf
+      },
+      body: JSON.stringify(body || {})
+    });
+    const payload = await response.json().catch(() => ({ ok: false, error: { code: "internal-error", message: "\u670D\u52A1\u8FD4\u56DE\u4E86\u65E0\u6CD5\u7406\u89E3\u7684\u54CD\u5E94\u3002" } }));
+    return { ok: Boolean(payload.ok), payload, status: response.status };
+  }
   async function apiGet(path) {
     const response = await fetch(path);
     const payload = await response.json().catch(() => ({ ok: false, error: { code: "internal-error", message: "\u670D\u52A1\u8FD4\u56DE\u4E86\u65E0\u6CD5\u7406\u89E3\u7684\u54CD\u5E94\u3002" } }));
@@ -872,8 +886,9 @@
     stage.classList.remove("hidden");
     $("#publishStageText").textContent = "\u6B63\u5728\u6821\u9A8C\u5E76\u6784\u5EFA\uFF08\u53EF\u80FD\u9700\u8981\u4E00\u4E24\u5206\u949F\uFF09\u2026";
     try {
-      const payload = await api("/api/article/publish-preview", { path: editState.path });
+      const result = await apiRaw("/api/article/publish-preview", { path: editState.path });
       stage.classList.add("hidden");
+      const payload = result.payload;
       if (!payload.ok && !payload.gateOnly) {
         const failed = payload.checks.filter((c) => c.status === "FAIL").map((c) => c.name).join("\u3001");
         showError($("#editError"), `\u53D1\u5E03\u9884\u89C8\u672A\u901A\u8FC7\uFF1A${failed || "\u68C0\u67E5\u5931\u8D25"}\uFF08\u8BE6\u89C1\u65E5\u5FD7\u5C3E\u90E8\uFF09\u3002`);

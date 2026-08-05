@@ -1,5 +1,5 @@
 /* 编辑页：所见即所得编辑器、自动保存、本地草稿恢复、预览/源码切换。 */
-import { api, apiGet } from "./api.mjs";
+import { api, apiGet, apiRaw } from "./api.mjs";
 import { $, debounce, hideError, showError, LIST_FIELDS } from "./util.mjs";
 import { editState } from "./state.mjs";
 import { decoratePreviewNotes, loadNotes } from "./notes.mjs";
@@ -528,8 +528,9 @@ $("#editPublishPreview").addEventListener("click", async () => {
   stage.classList.remove("hidden");
   $("#publishStageText").textContent = "正在校验并构建（可能需要一两分钟）…";
   try {
-    const payload = await api("/api/article/publish-preview", { path: editState.path });
+    const result = await apiRaw("/api/article/publish-preview", { path: editState.path });
     stage.classList.add("hidden");
+    const payload = result.payload;
     if (!payload.ok && !payload.gateOnly) {
       const failed = payload.checks.filter((c) => c.status === "FAIL").map((c) => c.name).join("、");
       showError($("#editError"), `发布预览未通过：${failed || "检查失败"}（详见日志尾部）。`);

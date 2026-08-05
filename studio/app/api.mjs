@@ -36,6 +36,23 @@ async function api(path, body) {
   return payload;
 }
 
+async function apiRaw(path, body) {
+  // 与 api 相同（会话+CSRF），但 ok:false 不抛错——调用方自行处理
+  // 业务性失败（如 gateOnly 预览需要继续到确认对话框）。
+  const csrf = await ensureCsrfToken();
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Studio-Request": "1",
+      "X-Studio-CSRF": csrf,
+    },
+    body: JSON.stringify(body || {}),
+  });
+  const payload = await response.json().catch(() => ({ ok: false, error: { code: "internal-error", message: "服务返回了无法理解的响应。" } }));
+  return { ok: Boolean(payload.ok), payload, status: response.status };
+}
+
 async function apiGet(path) {
   const response = await fetch(path);
   const payload = await response.json().catch(() => ({ ok: false, error: { code: "internal-error", message: "服务返回了无法理解的响应。" } }));
@@ -47,4 +64,4 @@ async function apiGet(path) {
   return payload;
 }
 
-export { api, apiGet, ensureCsrfToken };
+export { api, apiRaw, apiGet, ensureCsrfToken };
