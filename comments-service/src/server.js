@@ -15,16 +15,19 @@ if (process.env.NODE_ENV === "production" && config.hmacSecret.length < 32) {
 }
 const db = openDatabase(config);
 let manifest = { schemaVersion: 1, articles: [] };
+const health = { manifest: null };
 const manifestFile = process.env.COMMENTS_MANIFEST || path.join(config.dataDir, "comment-manifest.json");
 if (fs.existsSync(manifestFile)) {
   try {
     manifest = validateManifest(JSON.parse(fs.readFileSync(manifestFile, "utf8")));
-    syncManifest(db, manifestFile);
+    const synced = syncManifest(db, manifestFile);
+    health.manifest = { ok: true, articles: synced.articles, revisions: synced.revisions, paragraphs: synced.paragraphs, omitted: synced.omitted, retiring: synced.retiring };
   } catch (error) {
+    health.manifest = { ok: false, error: String(error.message || error).slice(0, 300) };
     process.stderr.write(`manifest同步失败：${error.message}\n`);
   }
 }
-const server = createApp({ db, config, manifest });
+const server = createApp({ db, config, manifest, health });
 const worker = config.operatorNotifyUrl ? startNotificationWorker({ db, config }) : null;
 server.listen(config.port, config.host, () => {
   process.stdout.write(`历代纪评论服务已监听 http://${config.host}:${config.port}\n`);

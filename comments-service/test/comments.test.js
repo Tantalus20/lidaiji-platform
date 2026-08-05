@@ -37,6 +37,14 @@ function fixture() {
       paragraphs: [
         { paragraphId: "p-111111111111", position: 0, headingContext: "", excerpt: "第一段摘录", checksum: "b".repeat(64) },
         { paragraphId: "p-222222222222", position: 1, headingContext: "", excerpt: "第二段摘录", checksum: "c".repeat(64) },
+        { paragraphId: "p-333333333333", position: 2, headingContext: "", excerpt: "第三段摘录", checksum: "d".repeat(64) },
+        { paragraphId: "p-444444444444", position: 3, headingContext: "", excerpt: "第四段摘录", checksum: "e".repeat(64) },
+        { paragraphId: "p-555555555555", position: 4, headingContext: "", excerpt: "第五段摘录", checksum: "f".repeat(64) },
+        { paragraphId: "p-666666666666", position: 5, headingContext: "", excerpt: "第六段摘录", checksum: "g".repeat(64) },
+        { paragraphId: "p-777777777777", position: 6, headingContext: "", excerpt: "第七段摘录", checksum: "h".repeat(64) },
+        { paragraphId: "p-888888888888", position: 7, headingContext: "", excerpt: "第八段摘录", checksum: "i".repeat(64) },
+        { paragraphId: "p-999999999999", position: 8, headingContext: "", excerpt: "第九段摘录", checksum: "j".repeat(64) },
+        { paragraphId: "p-aaaaaaaaaaaa", position: 9, headingContext: "", excerpt: "第十段摘录", checksum: "k".repeat(64) },
       ],
     }],
   };
@@ -266,7 +274,7 @@ test("删除段落后历史评论标记orphaned但不会物理删除", async (t)
   await request(ctx, "/api/comments/v1/comments", { method: "POST", body: JSON.stringify(payload()) });
   const next = structuredClone(ctx.manifest);
   next.articles[0].revision = "article-1234567890abcdef@rev2";
-  next.articles[0].paragraphs = [next.articles[0].paragraphs[1]];
+  next.articles[0].paragraphs = next.articles[0].paragraphs.filter((p) => p.paragraphId !== "p-111111111111");
   syncManifest(ctx.db, next);
   const row = ctx.db.prepare("SELECT status,paragraph_excerpt FROM comments").get();
   assert.equal(row.status, "orphaned");
@@ -294,10 +302,14 @@ test("大请求体拒绝且不写数据库", async (t) => {
   assert.equal(ctx.db.prepare("SELECT COUNT(*) count FROM comments").get().count, 0);
 });
 
-test("健康检查执行SQLite完整性检查", async (t) => {
+test("健康检查执行SQLite完整性检查并报告真实版本与Bot状态", async (t) => {
   const ctx = await fixture(); t.after(() => ctx.close());
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
   const result = await request(ctx, "/healthz");
-  assert.deepEqual(result.body, { ok: true, version: "0.5.0" });
+  assert.equal(result.body.ok, true);
+  assert.equal(result.body.version, pkg.version);
+  assert.equal(result.body.chapterReviewBot.configured, false);
+  assert.equal(result.body.chapterReviewBot.state, "DISABLED");
 });
 
 test("修改标题和永久链接后评论仍由articleId关联", async (t) => {

@@ -147,6 +147,9 @@ for (const file of articleFiles.sort()) {
     title: parsed.title,
     canonicalPath,
     paragraphComments: mode,
+    // v0.5.1：构建生成的清单携带完整权威段落列表，明确声明权威性，
+    // 服务端据此同步段落状态；精简/手工清单必须省略该字段以免误清空。
+    paragraphsMode: "authoritative",
     sourceChecksum: crypto.createHash("sha256").update(parsed.body).digest("hex"),
     paragraphs: paragraphs.map(({ normalized, ...item }) => item),
   });
