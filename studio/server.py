@@ -4,8 +4,14 @@
 - 绑定地址强制回环，``--host`` 传入任何非回环地址都会被拒绝；
 - 所有请求在路由前精确校验当前端口的回环 Host，API 另要求首页初始化的
   仅内存会话 Cookie，阻断 DNS rebinding 与跨站读取；
-- 所有 POST /api/* 要求自定义头 ``X-Studio-Request: 1``，且若带 Origin 头
-  必须指向 127.0.0.1/localhost（CSRF 防线）；不发送任何 CORS 头；
+- 所有 POST /api/* 要求自定义头 ``X-Studio-Request: 1`` 与 ``X-Studio-CSRF``
+  （与进程绑定的不可预测令牌），且若带 Origin 头必须指向
+  127.0.0.1/localhost（CSRF 防线）；不发送任何 CORS 头；
+- 认证模式（STUDIO_AUTH_MODE）：
+  * local-bootstrap（默认）：启动即授权——本机会话在首次回环导航时签发，
+    评论服务管理员登录由网关服务端从本机凭据源自动完成，浏览器不显示
+    登录表单，也不接触任何上游凭据/会话；
+  * password：保留原有账号密码登录流程（故障排查/特殊部署用）。
 - 上传只认 .docx：魔数、必备部件、100MB 大小上限、500MB 解压总量上限，
   全部内存校验，不解压落盘（无 Zip Slip 面）；文件名仅用于显示；
 - 前端只能传 token 与元数据字段，任何「路径」字段一律拒绝；
@@ -48,10 +54,12 @@ import import_stages  # noqa: E402
 from import_api import document_info  # noqa: E402
 
 from studio import articles  # noqa: E402
-from studio import feedback, media, notes, publish_center, versions  # noqa: E402
+from studio import credentials, feedback, media, notes, publish_center, versions  # noqa: E402
 from studio.preview_render import render_markdown  # noqa: E402
 
 DEFAULT_PORT = 4173
+AUTH_MODES = ("local-bootstrap", "password")
+SESSION_MAX_AGE_SECONDS = 8 * 3600  # 本地会话最长 8 小时；进程退出即失效优先
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100MB，与 parse_docx 一致
 MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024  # 压缩炸弹防护
 MAX_JSON_BYTES = 1024 * 1024
@@ -68,6 +76,17 @@ CANONICAL_PATH = re.compile(r"^/[a-z0-9/_-]*/$")
 PARAGRAPH_ID = re.compile(r"^p-[0-9a-f]{12}$")
 LOOPBACK_HOSTS = {"localhost"}
 STUDIO_SESSION_COOKIE = "lidaiji_studio_session"
+STUDIO_CSRF_HEADER = "X-Studio-CSRF"
+STATIC_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+}
+CSP_HEADER = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+    "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+)
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -172,7 +191,10 @@ class StudioState:
     preflight_ok_at: float = 0.0  # 本会话最近一次成功发布前检查的时间戳
     feedback_session: dict | None = None  # 评论服务管理会话（仅内存）
     comments_process: subprocess.Popen | None = None  # 本工作台启动的评论服务
+    auth_mode: str = "local-bootstrap"
     studio_session_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    studio_csrf_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
+    locked: bool = False
 
     def session(self, token: str) -> Session:
         if not TOKEN_FORMAT.fullmatch(token or ""):
@@ -186,6 +208,12 @@ class StudioState:
         found = self.sessions.pop(token, None)
         if found is not None:
             shutil.rmtree(found.directory, ignore_errors=True)
+
+    def rotate_local_auth(self) -> None:
+        """锁定/重新授权时轮换本地会话与CSRF令牌：旧Cookie立即失效。"""
+        self.studio_session_token = secrets.token_urlsafe(32)
+        self.studio_csrf_token = secrets.token_urlsafe(24)
+        self.locked = False
 
     def cleanup(self) -> None:
         for token in list(self.sessions):
@@ -476,6 +504,9 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", CSP_HEADER)
+        for name, value in STATIC_SECURITY_HEADERS.items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -524,18 +555,30 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(supplied, self.state.studio_session_token):
             self.send_error_json("forbidden", "Studio会话不存在或已经失效，请重新打开工作台。", 403)
             return False
+        if self.state.locked:
+            self.send_error_json("forbidden", "工作台已锁定，请重新授权。", 403)
+            return False
         return True
 
     def check_csrf(self) -> bool:
-        """所有 POST /api/* 的 CSRF 防线：自定义头 + Origin 回环校验。"""
+        """所有 POST /api/* 的 CSRF 防线：自定义头 + 进程绑定CSRF令牌 + 同源端口Origin。"""
         if self.headers.get("X-Studio-Request") != "1":
             self.send_error_json("forbidden", "缺少 X-Studio-Request 请求头。", 403)
             return False
+        supplied = str(self.headers.get(STUDIO_CSRF_HEADER) or "")
+        if not supplied or not hmac.compare_digest(supplied, self.state.studio_csrf_token):
+            self.send_error_json("forbidden", "缺少或错误的 X-Studio-CSRF 令牌。", 403)
+            return False
         origin = self.headers.get("Origin")
         if origin:
-            host = urllib.parse.urlparse(origin).hostname or ""
-            if not is_loopback(host):
-                self.send_error_json("forbidden", "Origin 不是本机地址。", 403)
+            parsed = urllib.parse.urlparse(origin)
+            host = parsed.hostname or ""
+            if (
+                parsed.scheme != "http"
+                or not is_loopback(host)
+                or parsed.port not in (None, self.server.server_port)
+            ):
+                self.send_error_json("forbidden", "Origin 不是当前工作台同源地址。", 403)
                 return False
         return True
 
@@ -627,6 +670,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             "/api/import/abort": self.handle_abort,
             "/api/system/open-folder": self.handle_open_folder,
             "/api/system/preview": self.handle_preview,
+            "/api/system/lock": self.handle_lock,
             "/api/article/save": self.handle_article_save,
             "/api/article/new": self.handle_article_new,
             "/api/article/open-page": self.handle_article_open_page,
@@ -679,17 +723,17 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         # 工作台页面无内联脚本/样式，可安全收紧 CSP；样式由 CSSOM 设置不受 style-src 限制
-        self.send_header(
-            "Content-Security-Policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
-            "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
-        )
-        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", CSP_HEADER)
+        for name, value in STATIC_SECURITY_HEADERS.items():
+            self.send_header(name, value)
         if path in ("/", "/index.html"):
+            # 顶层同源导航 = 重新授权：发放（可能已轮换的）本地会话Cookie。
+            # 锁定状态在重新授权导航时清除；锁定期间所有API仍被 check_studio_session 拒绝。
+            self.state.locked = False
             self.send_header(
                 "Set-Cookie",
-                f"{STUDIO_SESSION_COOKIE}={self.state.studio_session_token}; Path=/; HttpOnly; SameSite=Strict",
+                f"{STUDIO_SESSION_COOKIE}={self.state.studio_session_token}; "
+                f"Path=/; HttpOnly; SameSite=Strict; Max-Age={SESSION_MAX_AGE_SECONDS}",
             )
         self.end_headers()
         self.wfile.write(body)
@@ -984,6 +1028,7 @@ class StudioHandler(BaseHTTPRequestHandler):
     def handle_feedback_status(self) -> None:
         running = feedback.service_running(self.state)
         session = self.state.feedback_session
+        upstream = feedback.upstream_state(self.state)
         payload = {
             "ok": True,
             "service": {
@@ -992,8 +1037,16 @@ class StudioHandler(BaseHTTPRequestHandler):
                 "source": feedback.service_source(),
                 "sourceLabel": feedback.service_source_label(),
             },
+            "authMode": self.state.auth_mode,
             "loggedIn": False,
+            "upstream": upstream,
         }
+        if self.state.auth_mode == "local-bootstrap" and running:
+            try:
+                feedback.ensure_upstream_session(self.state)
+                session = self.state.feedback_session
+            except feedback.FeedbackFailure as error:
+                payload["upstreamError"] = error.message
         if running and session:
             try:
                 counts = feedback.pending_counts(self.state)
@@ -1006,6 +1059,9 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_json(payload)
 
     def handle_feedback_login(self) -> None:
+        if self.state.auth_mode == "local-bootstrap":
+            # 本地免登录模式下不接受浏览器提交的账号密码。
+            raise StudioError("forbidden", "本地免登录模式不提供账号密码登录。")
         data = self.read_json_body()
         result = feedback.login(self.state, data.get("username"), data.get("password") or "")
         self.send_json({"ok": True, **result})
@@ -1130,6 +1186,27 @@ class StudioHandler(BaseHTTPRequestHandler):
             raise StudioError("bad-request", "action 只能是 start 或 stop。")
         self.handle_status()
 
+    def handle_lock(self) -> None:
+        """退出本次工作台：轮换本地会话与CSRF、尽力登出上游、返回已锁定。"""
+        with self.state.lock:
+            feedback.logout(self.state)  # 尽力撤销上游Session
+            self.state.rotate_local_auth()
+            self.state.locked = True
+        body = b'{"ok":true,"locked":true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy", CSP_HEADER)
+        for name, value in STATIC_SECURITY_HEADERS.items():
+            self.send_header(name, value)
+        self.send_header(
+            "Set-Cookie",
+            f"{STUDIO_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
     def handle_status(self) -> None:
         process = self.state.preview_process
         running = process is not None and process.poll() is None
@@ -1142,6 +1219,11 @@ class StudioHandler(BaseHTTPRequestHandler):
                 "contentRepoRoot": str(self.state.project_root),
                 "platformRoot": str(self.state.platform_root or self.state.project_root),
             },
+            "auth": {
+                "mode": self.state.auth_mode,
+                "locked": self.state.locked,
+            },
+            "csrfToken": self.state.studio_csrf_token,
         })
 
 

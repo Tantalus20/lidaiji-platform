@@ -14,10 +14,18 @@
   由用户自己的 ~/.ssh/config 管理，脚本不读取任何凭据）；
 - 本机演示评论服务（.cache/comments-local）仅供离线演示，不得用它假装
   审核生产评论；连接来源由 status 接口明确标注。
+
+v0.2.1 local-bootstrap：
+- STUDIO_AUTH_MODE=local-bootstrap 时，由网关服务端从本机凭据源
+  （Keychain/600文件/环境变量）读取管理员凭据并自动登录上游；
+  浏览器不接触凭据，也不显示登录表单；
+- 上游会话过期（401）时在网关服务端自动重新登录一次并重试该请求，
+  仅限认证失败路径（不会造成审核动作重复执行）。
 """
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -29,6 +37,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from studio import credentials
+
 COMMENTS_BASE = "http://127.0.0.1:4317"
 COMMENTS_PORT = 4317
 HEALTH_TIMEOUT = 2.0
@@ -36,6 +46,27 @@ REQUEST_TIMEOUT = 10.0
 COMMENT_ID = re.compile(r"^comment_[A-Za-z0-9_-]+$")
 ACTIONS = ("approve", "reject", "spam", "hide", "delete")
 LIST_FILTERS = ("status", "scope", "page", "q", "articleId")
+
+
+def _resolve_comments_base() -> str:
+    """读取 LIDAIJI_COMMENTS_BASE（仅限回环地址），用于测试与隧道调整。"""
+    raw = os.environ.get("LIDAIJI_COMMENTS_BASE", "").strip()
+    if not raw:
+        return COMMENTS_BASE
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise ValueError("LIDAIJI_COMMENTS_BASE 必须是 http://127.0.0.1:端口 形式。")
+    host = parsed.hostname
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback or host in ("localhost",)
+    except ValueError:
+        loopback = host in ("localhost",)
+    if not loopback:
+        raise ValueError("LIDAIJI_COMMENTS_BASE 只允许回环地址。")
+    return raw.rstrip("/")
+
+
+COMMENTS_BASE = _resolve_comments_base()
 
 
 class FeedbackFailure(Exception):
@@ -125,6 +156,39 @@ def _expired(state) -> FeedbackFailure:
     return FeedbackFailure("not-logged-in", "登录已过期，请重新登录。")
 
 
+def ensure_upstream_session(state) -> None:
+    """local-bootstrap：从本机凭据源自动登录上游（服务端完成）。
+
+    - 已有会话：直接返回；
+    - 无会话但凭据可读：登录；失败抛 FeedbackFailure（不降级为匿名）；
+    - 凭据缺失/为空：抛 not-logged-in（前端显示本机授权设置指引）。
+    """
+    if getattr(state, "feedback_session", None):
+        return
+    try:
+        found = credentials.read_comments_credentials()
+    except credentials.CredentialError as error:
+        raise FeedbackFailure("not-logged-in", str(error)) from None
+    try:
+        login(state, found.username, found.password)
+    except FeedbackFailure as error:
+        if error.code in ("login-failed", "rate-limited", "service-error", "service-unavailable"):
+            raise
+        raise FeedbackFailure("login-failed", "本机凭据未能通过上游认证。") from None
+
+
+def upstream_state(state) -> dict:
+    """供 status 接口报告上游认证状态（不含任何秘密）。"""
+    if getattr(state, "feedback_session", None):
+        return {"authenticated": True}
+    try:
+        credentials.read_comments_credentials()
+        configured = True
+    except credentials.CredentialError:
+        configured = False
+    return {"authenticated": False, "credentialsConfigured": configured}
+
+
 def login(state, username: str, password: str) -> dict:
     """POST admin/login（不带来源头，走评论服务的回环管理放行路径）；
     成功把 cookie/csrf/username 存进内存会话。"""
@@ -177,8 +241,18 @@ def logout(state) -> None:
     _clear_session(state)
 
 
+def _ensure_for_request(state) -> None:
+    """local-bootstrap：任何反馈管理操作前确保上游会话（无会话则自动登录）。"""
+    if getattr(state, "auth_mode", "local-bootstrap") == "local-bootstrap":
+        ensure_upstream_session(state)
+
+
 def list_comments(state, filters: dict) -> dict:
-    """GET admin/comments（带 Cookie），白名单透传分页/筛选参数。"""
+    """GET admin/comments（带 Cookie），白名单透传分页/筛选参数。
+
+    local-bootstrap 下会话过期时自动重新登录并重试一次（只读操作）。
+    """
+    _ensure_for_request(state)
     query = {}
     for key in LIST_FILTERS:
         value = str(filters.get(key) or "").strip()
@@ -189,6 +263,9 @@ def list_comments(state, filters: dict) -> dict:
         path += "?" + urllib.parse.urlencode(query)
     status, _headers, body = _request("GET", path, headers=_auth_headers(state))
     if status == 401:
+        _retry_once_after_relogin(state)
+        status, _headers, body = _request("GET", path, headers=_auth_headers(state))
+    if status == 401:
         raise _expired(state)
     if status != 200:
         raise FeedbackFailure("service-error", _remote_message(body, f"评论服务拒绝了列表请求（HTTP {status}）。"))
@@ -196,7 +273,12 @@ def list_comments(state, filters: dict) -> dict:
 
 
 def moderate(state, comment_id: str, action: str, reason: str | None = None) -> dict:
-    """POST admin/comments/{id}/{action}（带 Cookie + X-CSRF-Token）。"""
+    """POST admin/comments/{id}/{action}（带 Cookie + X-CSRF-Token）。
+
+    401 时自动重新登录后重试一次；重试只发生在“认证失败、操作未执行”的
+    路径，网络错误/超时一律不重试，避免审核动作重复执行。
+    """
+    _ensure_for_request(state)
     comment_id = str(comment_id or "")
     action = str(action or "")
     if not COMMENT_ID.fullmatch(comment_id):
@@ -211,12 +293,36 @@ def moderate(state, comment_id: str, action: str, reason: str | None = None) -> 
         headers=_auth_headers(state),
     )
     if status == 401:
+        _retry_once_after_relogin(state)
+        status, _headers, body = _request(
+            "POST",
+            f"/api/comments/v1/admin/comments/{comment_id}/{action}",
+            payload,
+            headers=_auth_headers(state),
+        )
+    if status == 401:
         raise _expired(state)
     if status == 404:
         raise FeedbackFailure("not-found", _remote_message(body, "这条评论不存在。"))
     if status != 200:
         raise FeedbackFailure("service-error", _remote_message(body, f"评论服务拒绝了审核操作（HTTP {status}）。"))
     return _parse_json(body)
+
+
+def _retry_once_after_relogin(state) -> None:
+    """网关服务端自动重新登录（仅 local-bootstrap 且凭据可读时）。
+
+    401 说明当前上游会话已失效：先清除陈旧会话再重新登录，
+    避免 ensure_upstream_session 因“会话存在”而直接返回。
+    """
+    if getattr(state, "auth_mode", "local-bootstrap") != "local-bootstrap":
+        raise _expired(state)
+    _clear_session(state)
+    try:
+        ensure_upstream_session(state)
+    except FeedbackFailure as error:
+        _clear_session(state)
+        raise _expired(state) if error.code == "not-logged-in" else error
 
 
 def pending_counts(state) -> dict:
@@ -317,9 +423,11 @@ def start_service(state) -> None:
                 )
             return
         target = _tunnel_target()
+        # 不使用 -f（后台化会让父进程立即退出、进程组失联，隧道将无法随工作台停止）；
+        # 前台 ssh + start_new_session 使工作台完整管理其生命周期。
         tunnel = [
             "ssh",
-            "-fN",
+            "-N",
             "-L",
             "127.0.0.1:4317:127.0.0.1:4317",
             target,
@@ -363,6 +471,10 @@ def stop_service(state) -> None:
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
+        # 等待端口释放（隧道退出有延迟），避免状态接口误报仍在线
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and port_ready():
+            time.sleep(0.2)
 
 
 def service_source_label() -> str:

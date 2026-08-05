@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
 
-from studio.server import DEFAULT_PORT, create_server
+from studio.server import AUTH_MODES, DEFAULT_PORT, create_server
 from tools.workspace import resolve_workspace
 
 
@@ -23,6 +24,14 @@ def main() -> int:
     parser.add_argument("--site-overrides-root", help="私人站点覆盖配置目录")
     parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     args = parser.parse_args()
+
+    auth_mode = os.environ.get("STUDIO_AUTH_MODE", "local-bootstrap").strip()
+    if auth_mode not in AUTH_MODES:
+        print(f"启动失败：STUDIO_AUTH_MODE 只能是 {'/'.join(AUTH_MODES)}。", file=sys.stderr)
+        return 2
+    if auth_mode == "local-bootstrap" and not is_loopback_host(args.host):
+        print("启动失败：local-bootstrap 模式只允许监听 127.0.0.1/::1。", file=sys.stderr)
+        return 2
 
     try:
         workspace = resolve_workspace(
@@ -44,6 +53,7 @@ def main() -> int:
             workspace_label=workspace.label,
             workspace_environment=workspace.environment(),
         )
+        server.state.auth_mode = auth_mode
     except ValueError as error:
         print(f"启动失败：{error}", file=sys.stderr)
         return 2
@@ -53,6 +63,7 @@ def main() -> int:
 
     url = f"http://127.0.0.1:{server.server_address[1]}"
     print(f"《历代纪》作者工作台已启动 {url}", flush=True)
+    print(f"AUTH_MODE={auth_mode} 监听地址={args.host}:{server.server_address[1]} 上游已配置={upstream_configured_hint()}", flush=True)
     print(workspace.label, flush=True)
     print("按 Control+C 停止；停止时会自动清理临时文件与预览进程。", flush=True)
     if not args.no_browser and sys.platform == "darwin":
@@ -67,6 +78,21 @@ def main() -> int:
         server.server_close()
     print("作者工作台已停止。", flush=True)
     return 0
+
+
+def is_loopback_host(host: str) -> bool:
+    from studio.server import is_loopback
+    return is_loopback(host)
+
+
+def upstream_configured_hint() -> str:
+    """只输出布尔提示，不读取/打印任何凭据。"""
+    try:
+        from studio import credentials
+        credentials.read_comments_credentials()
+        return "yes"
+    except Exception:
+        return "no"
 
 
 _HERE_PARENT = Path(__file__).resolve().parent.parent
