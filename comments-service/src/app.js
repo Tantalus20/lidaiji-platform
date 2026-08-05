@@ -11,6 +11,9 @@ const {
   fingerprint, parseCookies, randomToken, safeText, sha256, verifyPassword,
 } = require("./security");
 
+// 版本单一来源：healthz 报告 package.json 的版本，不硬编码。
+const SERVICE_VERSION = require("../package.json").version;
+
 const ADMIN_DIR = path.resolve(__dirname, "..", "admin");
 const COMMENT_STATUSES = new Set(["pending", "approved", "rejected", "spam", "hidden", "deleted", "orphaned"]);
 const MODERATION = new Map([
@@ -336,7 +339,7 @@ function moderate(request, response, db, session, commentId, action, reason = ""
   json(response, 200, { ok: true, id: commentId, status }, { "Cache-Control": "no-store" });
 }
 
-function createApp({ db, config, manifest }) {
+function createApp({ db, config, manifest, health = {} }) {
   cleanup(db);
   return http.createServer(async (request, response) => {
     try {
@@ -344,7 +347,14 @@ function createApp({ db, config, manifest }) {
       const method = request.method || "GET";
       if (method === "GET" && url.pathname === "/healthz") {
         const integrity = db.prepare("PRAGMA quick_check").get();
-        return json(response, 200, { ok: integrity.quick_check === "ok", version: "0.5.0" }, { "Cache-Control": "no-store" });
+        const botToken = String(config.qqBotToken || "").trim();
+        const botState = botToken ? "ENABLED" : "DISABLED";
+        return json(response, 200, {
+          ok: integrity.quick_check === "ok",
+          version: SERVICE_VERSION,
+          chapterReviewBot: { configured: Boolean(botToken), state: botState },
+          manifest: health.manifest || null,
+        }, { "Cache-Control": "no-store" });
       }
       if (method === "GET" && url.pathname === "/admin/comments/") {
         return html(response, 200, fs.readFileSync(path.join(ADMIN_DIR, "index.html"), "utf8"));
