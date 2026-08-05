@@ -154,8 +154,8 @@ def platform_clean_check(platform_root: Path) -> list[str]:
     blocked = []
     for line in lines:
         path = line[3:].strip()
-        if path in (".author-settings",) or path.startswith("dist/"):
-            continue  # 本机配置与构建产物不阻止
+        if path in (".author-settings",) or path.startswith(("dist/", ".cache/")):
+            continue  # 本机配置与构建产物/候选/账本目录不阻止
         if path.startswith(("content/", "data/", "site-overrides/")):
             continue  # 内容仓库路径（真实架构中不在平台仓库内）
         blocked.append(path[:120])
