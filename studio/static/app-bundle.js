@@ -1,6 +1,6 @@
 /*! Lidaiji Studio 工作台前端包（自动生成，请勿手改）。
  * 源码：studio/app/*.mjs；重新生成：npm run build:app。
- * 平台 0.2.1 · Studio 0.2.0。 */
+ * 平台 0.2.1 · Studio 0.2.1。 */
 (() => {
   // studio/app/util.mjs
   var SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -69,10 +69,26 @@
   };
 
   // studio/app/api.mjs
+  var csrfState = { token: "" };
+  async function ensureCsrfToken() {
+    if (csrfState.token) return csrfState.token;
+    const response = await fetch("/api/system/status");
+    const payload = await response.json().catch(() => ({ ok: false }));
+    if (!payload.ok || !payload.csrfToken) {
+      throw new Error("\u65E0\u6CD5\u53D6\u5F97\u672C\u5730\u4F1A\u8BDD\u4EE4\u724C\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u5DE5\u4F5C\u53F0\u3002");
+    }
+    csrfState.token = payload.csrfToken;
+    return csrfState.token;
+  }
   async function api(path, body) {
+    const csrf = await ensureCsrfToken();
     const response = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Studio-Request": "1" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Studio-Request": "1",
+        "X-Studio-CSRF": csrf
+      },
       body: JSON.stringify(body || {})
     });
     const payload = await response.json().catch(() => ({ ok: false, error: { code: "internal-error", message: "\u670D\u52A1\u8FD4\u56DE\u4E86\u65E0\u6CD5\u7406\u89E3\u7684\u54CD\u5E94\u3002" } }));
@@ -735,6 +751,10 @@
     username: "",
     serviceRunning: false,
     serviceSourceLabel: "",
+    authMode: "local-bootstrap",
+    credentialsConfigured: false,
+    upstreamError: "",
+    lockedNow: false,
     page: 1,
     pages: 1,
     serviceTimer: 0,
@@ -763,9 +783,29 @@
     return params.toString();
   }
   function renderFeedbackPanels() {
-    const { serviceRunning, loggedIn } = feedbackState;
+    const { serviceRunning, loggedIn, authMode, locked } = feedbackState;
+    const setupHint = $("#feedbackSetupHint");
+    const upstreamError = $("#feedbackUpstreamError");
+    const lockedScreen = $("#feedbackLocked");
+    const lockedNow = Boolean(locked || feedbackState.lockedNow);
+    if (lockedScreen) lockedScreen.classList.toggle("hidden", !lockedNow);
+    if (lockedNow) return;
     $("#feedbackServiceOff").classList.toggle("hidden", serviceRunning);
-    $("#feedbackLoginForm").classList.toggle("hidden", !serviceRunning || loggedIn);
+    if (setupHint) {
+      setupHint.classList.toggle(
+        "hidden",
+        !(serviceRunning && !loggedIn && authMode === "local-bootstrap" && !feedbackState.credentialsConfigured && !feedbackState.upstreamError)
+      );
+    }
+    if (upstreamError) {
+      const label = upstreamError.querySelector("[data-upstream-error]");
+      if (label) label.textContent = feedbackState.upstreamError || "";
+      upstreamError.classList.toggle(
+        "hidden",
+        !(serviceRunning && !loggedIn && authMode === "local-bootstrap" && feedbackState.upstreamError)
+      );
+    }
+    $("#feedbackLoginForm").classList.toggle("hidden", !(serviceRunning && !loggedIn && authMode === "password"));
     $("#feedbackLoginPanel").classList.toggle("hidden", serviceRunning && loggedIn);
     $("#feedbackMain").classList.toggle("hidden", !(serviceRunning && loggedIn));
     $("#feedbackUser").textContent = loggedIn ? `\u7AD9\u4E3B\uFF1A${feedbackState.username}` : "";
@@ -780,6 +820,10 @@
       feedbackState.serviceSourceLabel = payload.service && payload.service.sourceLabel || "";
       feedbackState.loggedIn = Boolean(payload.loggedIn);
       feedbackState.username = payload.username || "";
+      feedbackState.authMode = payload.authMode || "local-bootstrap";
+      const upstream = payload.upstream || {};
+      feedbackState.credentialsConfigured = Boolean(upstream.credentialsConfigured);
+      feedbackState.upstreamError = payload.upstreamError || "";
       renderFeedbackPanels();
       return payload;
     } catch (error) {
@@ -855,6 +899,18 @@
     feedbackState.username = "";
     feedbackState.quick = null;
     renderFeedbackPanels();
+  });
+  $("#feedbackLock").addEventListener("click", async () => {
+    hideError($("#feedbackError"));
+    try {
+      await api("/api/system/lock");
+    } catch (error) {
+    }
+    feedbackState.lockedNow = true;
+    renderFeedbackPanels();
+  });
+  $("#feedbackLockedReauth").addEventListener("click", () => {
+    location.reload();
   });
   var feedbackArticlesReady = false;
   async function prepareFeedbackFilters() {
@@ -1251,13 +1307,25 @@
       } else if (!statusPayload.loggedIn) {
         const text = document.createElement("p");
         text.className = "meta-text";
-        text.textContent = "\u8BC4\u8BBA\u670D\u52A1\u8FD0\u884C\u4E2D\uFF0C\u5C1A\u672A\u767B\u5F55\u3002";
-        body.appendChild(text);
-        const link = document.createElement("a");
-        link.className = "button primary small";
-        link.href = "#/feedback";
-        link.textContent = "\u767B\u5F55";
-        body.appendChild(link);
+        if (statusPayload.authMode === "local-bootstrap") {
+          const upstream = statusPayload.upstream || {};
+          if (!upstream.credentialsConfigured) {
+            text.textContent = "\u672C\u673A\u6388\u6743\u5C1A\u672A\u914D\u7F6E\u3002\u8BF7\u5148\u8FD0\u884C npm run studio:setup\u3002";
+          } else if (statusPayload.upstreamError) {
+            text.textContent = `\u4E0A\u6E38\u8BA4\u8BC1\u5931\u8D25\uFF1A${statusPayload.upstreamError}`;
+          } else {
+            text.textContent = "\u8BC4\u8BBA\u670D\u52A1\u8FD0\u884C\u4E2D\uFF0C\u6B63\u5728\u7B49\u5F85\u672C\u673A\u6388\u6743\u2026";
+          }
+          body.appendChild(text);
+        } else {
+          text.textContent = "\u8BC4\u8BBA\u670D\u52A1\u8FD0\u884C\u4E2D\uFF0C\u5C1A\u672A\u767B\u5F55\u3002";
+          body.appendChild(text);
+          const link = document.createElement("a");
+          link.className = "button primary small";
+          link.href = "#/feedback";
+          link.textContent = "\u767B\u5F55";
+          body.appendChild(link);
+        }
       } else {
         const stats = statusPayload.stats || {};
         const text = document.createElement("p");

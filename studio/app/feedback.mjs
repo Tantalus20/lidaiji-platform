@@ -9,6 +9,10 @@ const feedbackState = {
   username: "",
   serviceRunning: false,
   serviceSourceLabel: "",
+  authMode: "local-bootstrap",
+  credentialsConfigured: false,
+  upstreamError: "",
+  lockedNow: false,
   page: 1,
   pages: 1,
   serviceTimer: 0,
@@ -39,9 +43,29 @@ function feedbackQuery() {
 }
 
 function renderFeedbackPanels() {
-  const { serviceRunning, loggedIn } = feedbackState;
+  const { serviceRunning, loggedIn, authMode, locked } = feedbackState;
+  const setupHint = $("#feedbackSetupHint");
+  const upstreamError = $("#feedbackUpstreamError");
+  const lockedScreen = $("#feedbackLocked");
+  const lockedNow = Boolean(locked || feedbackState.lockedNow);
+  if (lockedScreen) lockedScreen.classList.toggle("hidden", !lockedNow);
+  if (lockedNow) return;
   $("#feedbackServiceOff").classList.toggle("hidden", serviceRunning);
-  $("#feedbackLoginForm").classList.toggle("hidden", !serviceRunning || loggedIn);
+  if (setupHint) {
+    setupHint.classList.toggle(
+      "hidden",
+      !(serviceRunning && !loggedIn && authMode === "local-bootstrap" && !feedbackState.credentialsConfigured && !feedbackState.upstreamError),
+    );
+  }
+  if (upstreamError) {
+    const label = upstreamError.querySelector("[data-upstream-error]");
+    if (label) label.textContent = feedbackState.upstreamError || "";
+    upstreamError.classList.toggle(
+      "hidden",
+      !(serviceRunning && !loggedIn && authMode === "local-bootstrap" && feedbackState.upstreamError),
+    );
+  }
+  $("#feedbackLoginForm").classList.toggle("hidden", !(serviceRunning && !loggedIn && authMode === "password"));
   $("#feedbackLoginPanel").classList.toggle("hidden", serviceRunning && loggedIn);
   $("#feedbackMain").classList.toggle("hidden", !(serviceRunning && loggedIn));
   $("#feedbackUser").textContent = loggedIn ? `站主：${feedbackState.username}` : "";
@@ -57,6 +81,10 @@ async function refreshFeedbackStatus() {
     feedbackState.serviceSourceLabel = (payload.service && payload.service.sourceLabel) || "";
     feedbackState.loggedIn = Boolean(payload.loggedIn);
     feedbackState.username = payload.username || "";
+    feedbackState.authMode = payload.authMode || "local-bootstrap";
+    const upstream = payload.upstream || {};
+    feedbackState.credentialsConfigured = Boolean(upstream.credentialsConfigured);
+    feedbackState.upstreamError = payload.upstreamError || "";
     renderFeedbackPanels();
     return payload;
   } catch (error) {
@@ -138,6 +166,21 @@ $("#feedbackLogout").addEventListener("click", async () => {
   feedbackState.username = "";
   feedbackState.quick = null;
   renderFeedbackPanels();
+});
+
+$("#feedbackLock").addEventListener("click", async () => {
+  hideError($("#feedbackError"));
+  try {
+    await api("/api/system/lock");
+  } catch (error) {
+    // 即使本地会话已被轮换，也按已锁定处理
+  }
+  feedbackState.lockedNow = true;
+  renderFeedbackPanels();
+});
+
+$("#feedbackLockedReauth").addEventListener("click", () => {
+  location.reload();
 });
 
 let feedbackArticlesReady = false;
@@ -544,13 +587,25 @@ async function loadFeedbackCard() {
     } else if (!statusPayload.loggedIn) {
       const text = document.createElement("p");
       text.className = "meta-text";
-      text.textContent = "评论服务运行中，尚未登录。";
-      body.appendChild(text);
-      const link = document.createElement("a");
-      link.className = "button primary small";
-      link.href = "#/feedback";
-      link.textContent = "登录";
-      body.appendChild(link);
+      if (statusPayload.authMode === "local-bootstrap") {
+        const upstream = statusPayload.upstream || {};
+        if (!upstream.credentialsConfigured) {
+          text.textContent = "本机授权尚未配置。请先运行 npm run studio:setup。";
+        } else if (statusPayload.upstreamError) {
+          text.textContent = `上游认证失败：${statusPayload.upstreamError}`;
+        } else {
+          text.textContent = "评论服务运行中，正在等待本机授权…";
+        }
+        body.appendChild(text);
+      } else {
+        text.textContent = "评论服务运行中，尚未登录。";
+        body.appendChild(text);
+        const link = document.createElement("a");
+        link.className = "button primary small";
+        link.href = "#/feedback";
+        link.textContent = "登录";
+        body.appendChild(link);
+      }
     } else {
       const stats = statusPayload.stats || {};
       const text = document.createElement("p");

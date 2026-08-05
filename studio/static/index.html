@@ -10,7 +10,7 @@
 <header class="topbar">
   <div class="topbar-main">
     <h1>《历代纪》作者工作台</h1>
-    <p class="subtitle">本地作者工作台 v0.2.0 · 仅在本机运行，不会上传任何文件</p>
+    <p class="subtitle">本地作者工作台 v0.2.1 · 仅在本机运行，不会上传任何文件</p>
     <p id="workspaceTarget" class="workspace-target">正在确认内容仓库……</p>
   </div>
   <nav class="topnav" aria-label="主导航">
@@ -430,6 +430,13 @@
   <!-- 阅读反馈（段评/章评审核） -->
   <section id="view-feedback" class="view hidden">
     <div id="feedbackError" class="error-box hidden"></div>
+    <div id="feedbackLocked" class="panel hidden">
+      <h2>工作台已锁定</h2>
+      <p class="meta-text">本次本地会话已结束，上游评论服务会话已撤销。重新授权将直接复用本机安全凭据，无需再次输入密码。</p>
+      <div class="actions">
+        <button id="feedbackLockedReauth" class="primary" type="button">重新授权</button>
+      </div>
+    </div>
     <div id="feedbackLoginPanel" class="panel">
       <h2>阅读反馈</h2>
       <div id="feedbackServiceOff">
@@ -438,6 +445,15 @@
           <button id="feedbackServiceStart" class="primary" type="button">连接生产评论服务</button>
           <span id="feedbackServiceStatus" class="preview-status"></span>
         </div>
+      </div>
+      <div id="feedbackSetupHint" class="hidden">
+        <p class="meta-text">作者工作台尚未完成本机授权设置。请先在终端运行：</p>
+        <p class="meta-text"><code>npm run studio:setup</code></p>
+        <p class="meta-text">设置一次管理员凭据（写入 macOS Keychain），之后每次启动工作台自动授权，无需输入账号密码。</p>
+      </div>
+      <div id="feedbackUpstreamError" class="hidden">
+        <p class="meta-text" data-upstream-error></p>
+        <p class="meta-text">请检查 SSH 隧道与生产评论服务状态；工作台不会降级为匿名管理。</p>
       </div>
       <form id="feedbackLoginForm" class="meta-form hidden">
         <p class="meta-text">审核段评/章评需要站主账号。会话只保存在本机内存，关闭工作台即失效。</p>
@@ -471,6 +487,7 @@
           <button id="feedbackRefresh" class="secondary small" type="button">刷新</button>
           <button id="feedbackQuickStart" class="primary small" type="button">下一条待审核</button>
           <span class="spacer"></span>
+          <button id="feedbackLock" class="secondary small" type="button">锁定工作台</button>
           <span id="feedbackUser" class="meta-text"></span>
           <button id="feedbackLogout" class="secondary small" type="button">退出登录</button>
           <button id="feedbackServiceStop" class="secondary small" type="button">停止服务</button>
