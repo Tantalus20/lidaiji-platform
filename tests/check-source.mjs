@@ -53,16 +53,20 @@ const serverRollback = read("scripts/server-rollback.sh");
 assert(serverRollback.includes("umask 077"), "服务器回滚未固定私有文件掩码");
 assert(serverRollback.includes('chmod 0600 "$ROLLBACK_BACKUP"'), "回滚前评论数据库备份未固定0600权限");
 assert(read("scripts/comments-backup.sh").includes("umask 077"), "评论备份未固定私有文件掩码");
-assert(read("VERSION").trim() === "0.4.2", "公开网站版本不是0.4.2");
-assert(JSON.parse(read("package.json")).version === "0.2.0", "平台发行版本不是0.2.0");
-assert(read("PLATFORM_VERSION").trim() === "0.2.0", "PLATFORM_VERSION不是0.2.0");
+assert(read("VERSION").trim() === "0.4.3", "公开网站版本不是0.4.3");
+assert(JSON.parse(read("package.json")).version === "0.2.1", "平台发行版本不是0.2.1");
+assert(read("PLATFORM_VERSION").trim() === "0.2.1", "PLATFORM_VERSION不是0.2.1");
 // Studio 版本单一来源：package.json 的 studioVersion；其余展示位置必须一致
 const studioVersion = JSON.parse(read("package.json")).studioVersion;
 assert(/^\d+\.\d+\.\d+$/.test(studioVersion), "package.json.studioVersion 格式不正确");
 assert(read("studio/static/index.html").includes(`工作台 v${studioVersion}`), "Studio页面版本与 studioVersion 不一致");
 assert(read("README.md").includes(`studio v${studioVersion}`), "README组件版本与 studioVersion 不一致");
 assert(read("scripts/macos/common.sh").includes(`STUDIO_APP_VERSION="${studioVersion}"`), "macOS应用版本与 studioVersion 不一致");
-assert(JSON.parse(read("comments-service/package.json")).version === "0.4.1", "评论服务应保持0.4.1");
+// 评论服务版本单一来源：package.json 是唯一权威；healthz 必须从 package.json 读取。
+const commentsVersion = JSON.parse(read("comments-service/package.json")).version;
+assert(/^\d+\.\d+\.\d+$/.test(commentsVersion), "评论服务版本格式不正确");
+assert(read("comments-service/src/app.js").includes('require("../package.json").version'), "评论服务healthz必须从package.json读取版本");
+assert(read("comments-service/src/app.js").includes("chapterReviewBot"), "评论服务healthz必须报告章评Bot配置状态");
 const studioNotes = read("studio/app/notes.mjs");
 assert(studioNotes.includes("decoratePreviewNotes"), "Studio编辑预览缺少段落作者评入口");
 assert(studioNotes.includes('p[data-paragraph-id]'), "Studio没有按稳定段落ID绑定作者评入口");
@@ -73,9 +77,15 @@ assert(
 for (const file of [
   "comments-service/src/server.js",
   "comments-service/src/app.js",
+  "comments-service/src/manifest.js",
+  "comments-service/src/bot-api.js",
+  "comments-service/src/repair-paragraphs.js",
   "comments-service/migrations/001-initial.sql",
   "deploy/systemd/lidaiji-comments.service",
   "deploy/nginx/comments-locations.conf.template",
+  "deploy/nginx/writing-site.conf.template",
+  "deploy/backup/backup-to-cos.sh",
+  "deploy/monitor/lidaiji_monitor.py",
   "scripts/comments-backup.sh",
   "scripts/comments-restore.sh",
   "scripts/comments-export.sh",
@@ -83,9 +93,20 @@ for (const file of [
 ]) assert(fs.existsSync(file), `缺少段评系统文件：${file}`);
 assert(!fs.existsSync("comments-service/.env"), "源码中存在评论服务.env");
 assert(!fs.existsSync("comments-service/data"), "源码中存在评论数据库目录");
+const commentsManifest = read("comments-service/src/manifest.js");
+assert(commentsManifest.includes('"omitted"') && commentsManifest.includes('"authoritative"'), "段落同步缺少omitted/authoritative语义");
+assert(commentsManifest.includes("MAX_RETIRE_ABSOLUTE"), "段落同步缺少大规模失效门禁");
 const commentsApp = read("comments-service/src/app.js");
 assert(commentsApp.includes("status = honeypot ? \"spam\" : \"pending\""), "游客段评不再保证默认待审核");
 assert(!commentsApp.includes("innerHTML"), "评论服务代码不应通过innerHTML渲染用户内容");
+assert(commentsApp.includes("chapterReviewBot"), "healthz缺少章评Bot状态");
+const commentsBotApi = read("comments-service/src/bot-api.js");
+assert(commentsBotApi.includes("CHAPTER_REVIEW_BOT_DISABLED"), "Bot端点缺少DISABLED状态");
+const nginxTemplate = read("deploy/nginx/writing-site.conf.template");
+assert(nginxTemplate.includes("location ^~ /source/"), "Nginx模板缺少/source/拒绝规则");
+const cosBackup = read("deploy/backup/backup-to-cos.sh");
+assert(cosBackup.includes("cp -aL") === false, "备份脚本仍在使用cp -aL跟随符号链接");
+assert(cosBackup.includes("backup-failure.marker"), "备份脚本缺少失败标记");
 const commentsAdminHtml = read("comments-service/admin/index.html");
 assert(
   /admin\.js\?v=\d+/.test(commentsAdminHtml) && /admin\.css\?v=\d+/.test(commentsAdminHtml),
