@@ -1,5 +1,22 @@
 # 更新日志
 
+## Platform v0.2.1（2026-08-05，生产修复 v0.5.1）
+
+- 评论服务 v0.5.1：段落同步引入 `paragraphsMode`（omitted/authoritative）语义，
+  未提供或非权威空数组不再清空段落；新增大规模失效门禁
+  （>100 或 >20% current 段落转 historical 时默认拒绝）；
+  新增受控段落恢复工具 `comments-service/src/repair-paragraphs.js`。
+- 评论服务 v0.5.1：章评 Bot 端点 fail-closed——token 未配置时 503，
+  缺失/空/错误 Bearer 一律 401；`constantTimeEqual` 不再把空值视为认证成功。
+- 站点品牌修复：工作区覆盖合并进 Hugo 真实读取的 `hugo.toml`/`params.toml`
+  （原 `zz-workspace.toml` 被 Hugo 静默忽略）；构建断言防演示品牌残留。
+- 版本单一来源：移除 check-source 硬编码 0.4.1；healthz 报告 package.json 版本。
+- 备份体系：发布快照改为白名单归档+SHA 清单；COS 上传远端校验；
+  备份失败标记 + 监控 `CHECK_BACKUP` 邮件告警。
+- 部署门禁：候选 preflight（符号链接/敏感文件/BUILD_INFO/sourceCommit/
+  端口唯一/无 root 实例）；发布后同步权威 manifest；`/source/` 不再公开。
+- 组件版本：site v0.4.3、comments v0.5.1、studio v0.2.0。
+
 ## Platform v0.2.0
 
 - 新增 Windows 原生作者工作台流程（PowerShell 启动/停止/状态/重启/打开脚本）。
