@@ -543,10 +543,15 @@ $("#editPublishPreview").addEventListener("click", async () => {
     $("#pubPreviewState").textContent = "预览：已生成（最新）";
     const pass = payload.checks.filter((c) => c.status === "PASS").length;
     const warn = payload.checks.filter((c) => c.status === "WARNING").length;
+    const baseline = payload.baseline || {};
+    const dirty = payload.unrelatedDirty || { count: 0 };
     const lines = [
       `发布预览已生成：${payload.canonicalUrl}`,
       `段落变化：保持 ${anchor.retained} · 新增 ${anchor.created} · 转历史 ${anchor.deleted}`,
       `受影响段评：${affected}`,
+      `线上基线：内容提交 ${baseline.privateContentCommit || "—"}（校验 ${baseline.verifiedArticles ?? "?"} 篇）`,
+      `无关文章候选差异：${payload.candidate ? payload.candidate.unrelatedChangedCount : "—"}（必须为 0）`,
+      dirty.count ? `作者工作区另有 ${dirty.count} 个未提交文件，不会进入本次发布候选。` : "作者工作区无无关未提交文件。",
       `检查 ${pass} 项通过 / ${warn} 项警告`,
     ];
     $("#publishStageText").textContent = lines.join(" | ");
@@ -603,6 +608,7 @@ $("#publishDialogYes").addEventListener("click", async () => {
       path: editState.path,
       draftRevision: status.revision,
       previewBuildId: publishState.preview ? publishState.preview.previewBuildId : "",
+      snapshotId: publishState.preview ? publishState.preview.snapshotId : "",
       idempotencyKey,
     });
     $("#publishStage").classList.remove("hidden");

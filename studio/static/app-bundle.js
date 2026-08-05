@@ -1,6 +1,6 @@
 /*! Lidaiji Studio 工作台前端包（自动生成，请勿手改）。
  * 源码：studio/app/*.mjs；重新生成：npm run build:app。
- * 平台 0.2.1 · Studio 0.2.2。 */
+ * 平台 0.2.1 · Studio 0.2.3。 */
 (() => {
   // studio/app/util.mjs
   var SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -862,6 +862,7 @@
     return true;
   }
   $("#editPublishPreview").addEventListener("click", async () => {
+    var _a;
     hideError($("#editError"));
     if (!await ensureSavedBeforePublish("\u751F\u6210\u53D1\u5E03\u9884\u89C8")) return;
     const button = $("#editPublishPreview");
@@ -886,10 +887,15 @@
       $("#pubPreviewState").textContent = "\u9884\u89C8\uFF1A\u5DF2\u751F\u6210\uFF08\u6700\u65B0\uFF09";
       const pass = payload.checks.filter((c) => c.status === "PASS").length;
       const warn = payload.checks.filter((c) => c.status === "WARNING").length;
+      const baseline = payload.baseline || {};
+      const dirty = payload.unrelatedDirty || { count: 0 };
       const lines = [
         `\u53D1\u5E03\u9884\u89C8\u5DF2\u751F\u6210\uFF1A${payload.canonicalUrl}`,
         `\u6BB5\u843D\u53D8\u5316\uFF1A\u4FDD\u6301 ${anchor.retained} \xB7 \u65B0\u589E ${anchor.created} \xB7 \u8F6C\u5386\u53F2 ${anchor.deleted}`,
         `\u53D7\u5F71\u54CD\u6BB5\u8BC4\uFF1A${affected}`,
+        `\u7EBF\u4E0A\u57FA\u7EBF\uFF1A\u5185\u5BB9\u63D0\u4EA4 ${baseline.privateContentCommit || "\u2014"}\uFF08\u6821\u9A8C ${(_a = baseline.verifiedArticles) != null ? _a : "?"} \u7BC7\uFF09`,
+        `\u65E0\u5173\u6587\u7AE0\u5019\u9009\u5DEE\u5F02\uFF1A${payload.candidate ? payload.candidate.unrelatedChangedCount : "\u2014"}\uFF08\u5FC5\u987B\u4E3A 0\uFF09`,
+        dirty.count ? `\u4F5C\u8005\u5DE5\u4F5C\u533A\u53E6\u6709 ${dirty.count} \u4E2A\u672A\u63D0\u4EA4\u6587\u4EF6\uFF0C\u4E0D\u4F1A\u8FDB\u5165\u672C\u6B21\u53D1\u5E03\u5019\u9009\u3002` : "\u4F5C\u8005\u5DE5\u4F5C\u533A\u65E0\u65E0\u5173\u672A\u63D0\u4EA4\u6587\u4EF6\u3002",
         `\u68C0\u67E5 ${pass} \u9879\u901A\u8FC7 / ${warn} \u9879\u8B66\u544A`
       ];
       $("#publishStageText").textContent = lines.join(" | ");
@@ -943,6 +949,7 @@
         path: editState.path,
         draftRevision: status.revision,
         previewBuildId: publishState.preview ? publishState.preview.previewBuildId : "",
+        snapshotId: publishState.preview ? publishState.preview.snapshotId : "",
         idempotencyKey
       });
       $("#publishStage").classList.remove("hidden");

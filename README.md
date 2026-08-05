@@ -14,7 +14,7 @@
 
 > 平台发行版：**v0.2.1**
 >
-> 组件版本：site v0.4.3 · comments v0.5.1 · studio v0.2.2
+> 组件版本：site v0.4.3 · comments v0.5.1 · studio v0.2.3
 
 ## 平台支持
 

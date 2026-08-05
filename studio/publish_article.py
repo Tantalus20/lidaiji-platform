@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 from studio import articles, versions
-from studio import publish_center
+from studio import publish_center, publish_isolated
 
 PUBLISH_LOCK_AGE_SECONDS = 900 + 60  # publish.sh 超时上限 + 恢复余量
 PREVIEW_FRESH_SECONDS = 30 * 60  # 预览构建标识有效期
@@ -269,44 +269,10 @@ def affected_comment_count(state, article_id: str, paragraph_ids: list[str]) -> 
 # ---------------------------------------------------------------------------
 
 
-def _unrelated_uncommitted(project_root: Path, rel_path: str) -> list[str]:
-    """私人仓库中与本文无关的未提交修改（任务十六：不得混入其他未提交修改）。
-
-    目标文章自身（保存草稿不提交 Git）不算冲突；其他文件的变化会随全站
-    发布进入线上，必须在发布前明确列出并拒绝。
-    """
-    try:
-        status = versions.git_status(project_root)
-    except Exception:
-        return []
-    target = str(rel_path or "").rstrip("/")
-    conflicts: list[str] = []
-    for item in status.get("files", []):
-        path = str(item.get("path") or "").rstrip("/")
-        if not path:
-            continue
-        # 目标文章自身的文件/目录（或其祖先目录）不算冲突
-        if path.startswith(target) or target.startswith(path):
-            continue
-        marker = "未跟踪" if item.get("status") == "?" else f"{item.get('status', '')}"
-        conflicts.append(f"{path}（{marker}）")
-    return conflicts[:20]
-
-
-def _check_unrelated_changes(project_root: Path, rel_path: str) -> list[dict]:
-    conflicts = _unrelated_uncommitted(project_root, rel_path)
-    if not conflicts:
-        return []
-    return [{
-        "name": "workspace-clean",
-        "status": "FAIL",
-        "detail": f"存在与本文无关的未提交修改：{'、'.join(conflicts[:8])}"
-                  + ("（更多…）" if len(conflicts) > 8 else "") + "。请先提交或还原后再发布。",
-    }]
-
-
 def article_publish_preview(state, rel_path: str) -> dict:
-    """保存后文章的发布前校验 + 锚点预演 + 受影响段评 + Hugo 构建预检。"""
+    """隔离发布预览：基线解析 → 目标快照 → 隔离构建 → 候选差异校验。"""
+    import time as _time
+
     project_root = Path(state.project_root).resolve()
     platform_root = Path(getattr(state, "platform_root", None) or state.project_root).resolve()
     article = articles.read_article(project_root, rel_path)
@@ -334,7 +300,37 @@ def article_publish_preview(state, rel_path: str) -> dict:
         ]
         check("slug-unique", "FAIL" if conflicts else "PASS", "与其他文章 slug 冲突" if conflicts else "")
 
-    checks.extend(_check_unrelated_changes(project_root, rel_path))
+    # 平台/发布工具工作区门禁（脏 → FAIL）
+    platform_dirty = publish_isolated.platform_clean_check(platform_root)
+    if platform_dirty:
+        check("platform-clean", "FAIL", f"平台代码/发布工具存在未提交修改：{'、'.join(platform_dirty[:5])}")
+    else:
+        check("platform-clean", "PASS", "")
+
+    # 已发布基线解析（fail-closed）
+    domain = ""
+    settings = publish_center.read_settings(platform_root)
+    domain = str(settings.get("WRITING_DOMAIN") or "").strip()
+    baseline = None
+    baseline_error = ""
+    if not domain:
+        check("baseline", "FAIL", "缺少 WRITING_DOMAIN 配置，无法确认线上基线。")
+    else:
+        try:
+            baseline = publish_isolated.resolve_published_baseline(state, domain)
+            check("baseline", "PASS", f"线上基线：私人仓库提交 {str(baseline['privateContentCommit'])[:8]}，"
+                                      f"校验 {baseline['verifiedArticles']} 篇全部一致")
+        except publish_isolated.IsolationError as error:
+            baseline_error = error.message
+            check("baseline", "FAIL", error.message)
+
+    # 无关脏文件摘要（允许存在、不进入候选——仅展示）
+    dirty = publish_isolated.unrelated_dirty_summary(state)
+    if dirty["count"]:
+        check("unrelated-dirty", "WARNING",
+              f"作者工作区另有 {dirty['count']} 个未提交文件（其他文章 {dirty['byKind'].get('otherArticle', 0)}、"
+              f"其他资源 {dirty['byKind'].get('otherAsset', 0)}、笔记 {dirty['byKind'].get('notes', 0)}、"
+              f"其他 {dirty['byKind'].get('other', 0)}）；这些文件不会进入本次发布候选。")
 
     anchor = rehearsal(project_root, article)
     affected, reachable = affected_comment_count(state, article_id, anchor["deleted"])
@@ -350,29 +346,65 @@ def article_publish_preview(state, rel_path: str) -> dict:
     else:
         check("paragraph-large-gate", "PASS", "")
 
+    snapshot = None
+    candidate = None
     build_result = {"success": False, "output": "", "duration": 0.0}
     failed_so_far = [c for c in checks if c["status"] == "FAIL"]
-    if not failed_so_far:
-        build_result = publish_center.run_preflight(
-            platform_root, full=False, content_repo_root=project_root,
-            workspace_environment=state.workspace_environment,
-        )
-        if build_result["success"]:
-            check("hugo-build", "PASS", f"耗时 {build_result['duration']} 秒")
-        else:
-            check("hugo-build", "FAIL", "Hugo 构建失败（见日志尾部）")
+    if not failed_so_far and baseline is not None:
+        try:
+            target = publish_isolated._resolve_target(state, rel_path)
+            snapshot = publish_isolated.create_target_snapshot(state, rel_path, revision)
+            if snapshot["assetManifest"]["unreferenced"]:
+                check("assets", "WARNING",
+                      f"未使用资源（不纳入候选）：{'、'.join(snapshot['assetManifest']['unreferenced'][:5])}")
+            else:
+                check("assets", "PASS", f"引用资源 {len(snapshot['assetManifest']['entries'])} 个")
+            merged = publish_isolated.build_merged_content(state, target, snapshot)
+            try:
+                iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
+                build_result = publish_center.run_preflight(
+                    platform_root, full=False,
+                    content_repo_root=merged["repoRoot"],
+                    workspace_environment=iso_env,
+                )
+                if build_result["success"]:
+                    check("hugo-build", "PASS", f"隔离构建成功，耗时 {build_result['duration']} 秒")
+                    manifest_path = platform_root / "dist" / "site" / "comment-manifest.json"
+                    if manifest_path.is_file():
+                        candidate = publish_isolated.candidate_diff_check(manifest_path, baseline, article_id)
+                        if candidate["unrelatedChangedCount"]:
+                            check("candidate-diff", "FAIL",
+                                  f"候选与线上存在无关差异：{'、'.join(candidate['unrelatedChanges'][:5])}")
+                        elif not candidate["targetPresent"]:
+                            check("candidate-diff", "FAIL", "候选缺少目标文章页面")
+                        else:
+                            check("candidate-diff", "PASS", "无关文章候选差异 0，目标文章已包含")
+                    else:
+                        check("candidate-diff", "FAIL", "构建产物缺少内容清单")
+                else:
+                    check("hugo-build", "FAIL", "隔离构建失败（见日志尾部）")
+            finally:
+                publish_isolated.cleanup_merged_content(merged)
+        except publish_isolated.IsolationError as error:
+            check("target-snapshot", "FAIL", error.message)
+        except Exception as error:
+            check("target-snapshot", "FAIL", f"快照/隔离构建异常：{str(error)[:120]}")
 
     failed = [c for c in checks if c["status"] == "FAIL"]
     preview_build_id = ""
     canonical = _canonical_url(article)
-    if not failed:
-        preview_build_id = hashlib.sha256(f"{article_id}|{revision}|{time.time()}".encode()).hexdigest()[:20]
+    if not failed and snapshot is not None:
+        preview_build_id = hashlib.sha256(f"{article_id}|{revision}|{snapshot['snapshotId']}|{_time.time()}".encode()).hexdigest()[:20]
         state.article_preview = {
             "articleId": article_id,
             "revision": revision,
+            "snapshotId": snapshot["snapshotId"],
+            "snapshot": snapshot,
             "buildId": preview_build_id,
-            "createdAt": time.time(),
+            "createdAt": _time.time(),
             "canonicalUrl": canonical,
+            "baseline": baseline,
+            "domain": domain,
         }
     return {
         "ok": not failed,
@@ -380,6 +412,14 @@ def article_publish_preview(state, rel_path: str) -> dict:
         "anchor": {"retained": len(anchor["retained"]), "created": len(anchor["created"]), "deleted": len(anchor["deleted"])},
         "affectedComments": affected,
         "previewBuildId": preview_build_id,
+        "snapshotId": (snapshot or {}).get("snapshotId", ""),
+        "assetManifest": (snapshot or {}).get("assetManifest", {"entries": [], "unreferenced": []}),
+        "baseline": baseline and {
+            "privateContentCommit": str(baseline.get("privateContentCommit") or "")[:16],
+            "verifiedArticles": baseline.get("verifiedArticles", 0),
+        },
+        "unrelatedDirty": dirty,
+        "candidate": candidate,
         "canonicalUrl": canonical,
         "previewUrl": f"http://127.0.0.1:{DEFAULT_PREVIEW_PORT}{canonical}",
         "buildOutput": (build_result.get("output") or "")[-3000:],
@@ -415,6 +455,10 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 **{k: prior.get(k) for k in (
                     "articleId", "revision", "canonicalUrl", "releaseId", "completedAt")}}
 
+    snapshot_id = str(payload.get("snapshotId") or "")
+    if not snapshot_id:
+        raise ArticlePublishError("validation-failed", "发布参数不完整（缺少snapshotId）。")
+
     article = articles.read_article(project_root, rel_path)
     article_id = str(article["frontMatter"].get("articleId") or "")
     revision = str(article["frontMatter"].get("articleRevision") or "")
@@ -425,15 +469,30 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
     preview = getattr(state, "article_preview", None)
     if not preview or preview.get("articleId") != article_id or preview.get("buildId") != preview_build_id:
         raise ArticlePublishError("preflight-required", "预览构建标识无效或已过期，请重新生成发布预览。")
+    if preview.get("snapshotId") != snapshot_id:
+        raise ArticlePublishError("preflight-required", "snapshotId 与预览不一致，请重新生成发布预览。")
     if time.time() - preview.get("createdAt", 0) > PREVIEW_FRESH_SECONDS:
         raise ArticlePublishError("preflight-required", "预览已过期（超过30分钟），请重新生成发布预览。")
 
-    conflicts = _unrelated_uncommitted(project_root, rel_path)
-    if conflicts:
+    # 同步重验目标文章快照哈希（预览后文件变化 → 立即拒绝，不启动发布任务）
+    snapshot = preview.get("snapshot") or {}
+    if snapshot:
+        try:
+            current = articles.read_article(project_root, rel_path)
+            current_sha = hashlib.sha256(
+                (Path(project_root) / str(rel_path)).read_bytes()).hexdigest()
+            if current_sha != snapshot.get("sourceFileSha256"):
+                raise ArticlePublishError("conflict", "目标文章在预览后发生变化，请重新生成发布预览。")
+        except OSError:
+            raise ArticlePublishError("conflict", "目标文章文件无法读取，请重新生成发布预览。") from None
+
+    # 平台/发布工具工作区门禁（脏 → 阻止；私人内容脏允许且不进入候选）
+    platform_dirty = publish_isolated.platform_clean_check(platform_root)
+    if platform_dirty:
         raise ArticlePublishError(
             "conflict",
-            "存在与本文无关的未提交修改，发布被拒绝："
-            + "、".join(conflicts[:8]) + "。请先提交或还原后再发布。",
+            "平台代码或发布工具存在未提交修改，发布被拒绝："
+            + "、".join(platform_dirty[:5]) + "。请先提交或还原后再发布。",
         )
 
     lock = acquire_publish_lock(state, idempotency_key)
@@ -449,6 +508,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
         "articleId": article_id,
         "slug": _section_slug(article)[1],
         "revision": revision,
+        "snapshotId": snapshot_id,
         "canonicalUrl": _canonical_url(article),
         "anchors": anchors_in(article.get("body") or ""),
         "idempotencyKey": idempotency_key,
@@ -456,25 +516,42 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "completedAt": "",
         "releaseId": "",
+        "previousReleaseId": "",
+        "baselineCommit": (preview.get("baseline") or {}).get("privateContentCommit", ""),
         "error": "",
     }
 
     def work():
+        merged = None
         try:
+            target = publish_isolated._resolve_target(state, rel_path)
+            # 使用预览时创建的快照（内容寻址不可变）；文件或资源变化会在此校验失败
+            merged = publish_isolated.build_merged_content(state, target, preview["snapshot"])
+            iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
             update_publish_stage(state, "building")
             preflight = publish_center.run_preflight(
-                platform_root, full=False, content_repo_root=project_root,
-                workspace_environment=state.workspace_environment,
+                platform_root, full=False, content_repo_root=merged["repoRoot"],
+                workspace_environment=iso_env,
             )
             if not preflight["success"]:
                 entry["status"] = "failed_preflight"
-                entry["error"] = "内容检查或构建失败（见日志）。"
+                entry["error"] = "隔离构建或内容检查失败（见日志）。"
                 record_publish(project_root, entry)
                 state.article_publish_result = {"articleId": article_id, "ok": False,
                                                 "error": "发布前检查失败，请查看日志后重试。"}
                 return
+            manifest_path = platform_root / "dist" / "site" / "comment-manifest.json"
+            if manifest_path.is_file() and preview.get("baseline"):
+                candidate = publish_isolated.candidate_diff_check(manifest_path, preview["baseline"], article_id)
+                if candidate["unrelatedChangedCount"]:
+                    entry["status"] = "failed_diff"
+                    entry["error"] = "候选与线上存在无关差异。"
+                    record_publish(project_root, entry)
+                    state.article_publish_result = {"articleId": article_id, "ok": False,
+                                                    "error": "候选包含无关文章变化，已阻止发布。"}
+                    return
             update_publish_stage(state, "backing-up")
-            result = publish_center.run_publish(platform_root, state.workspace_environment)
+            result = publish_center.run_publish(platform_root, iso_env)
             if not result["success"]:
                 entry["status"] = "failed_publish"
                 entry["error"] = "发布流程失败（构建/备份/上传/切换任一阶段出错）。"
@@ -503,10 +580,13 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
             state.article_publish_result = {"articleId": article_id, "ok": False,
                                             "error": "发布任务异常中止，请查看日志。"}
         finally:
+            if merged is not None:
+                publish_isolated.cleanup_merged_content(merged)
             release_publish_lock(state)
 
     _threading.Thread(target=work, name="article-publish", daemon=True).start()
     return {"ok": True, "task": {"inFlight": True, "stage": "validating", "idempotencyKey": idempotency_key}}
+
 
 
 _RELEASE_RE = re.compile(r"release=(\S+)")
