@@ -487,7 +487,7 @@ class StudioHTTPServer(ThreadingHTTPServer):
 
 
 class StudioHandler(BaseHTTPRequestHandler):
-    server_version = "LidaijiStudio/0.1.1"
+    server_version = "LidaijiStudio/0.2.4"
 
     @property
     def state(self) -> StudioState:
@@ -617,6 +617,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.handle_article_read()
             elif path == "/api/article/publish-status":
                 self.handle_article_publish_status()
+            elif path == "/api/article/publish-log":
+                self.handle_article_publish_log()
             elif path == "/api/git/status":
                 self.handle_git_status()
             elif path == "/api/git/log":
@@ -899,6 +901,29 @@ class StudioHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         rel_path = (query.get("path") or [""])[0]
         self.send_json({"ok": True, "status": publish_article.article_publish_status(self.state, rel_path)})
+
+    def handle_article_publish_log(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        log_id = (query.get("id") or [""])[0]
+        if not publish_article._PUBLISH_LOG_ID_RE.match(log_id):
+            self.send_error_json("validation-failed", "日志标识格式不正确。")
+            return
+        log_path = Path(self.state.project_root) / ".cache" / "studio" / "publish-logs" / f"{log_id}.log"
+        if not log_path.is_file():
+            self.send_error_json("not-found", "日志不存在。", 404)
+            return
+        try:
+            content = log_path.read_bytes()
+        except OSError:
+            self.send_error_json("not-found", "日志不存在。", 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="publish-{log_id}.log"')
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
 
     def handle_article_publish_preview(self) -> None:
         data = self.read_json_body()

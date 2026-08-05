@@ -82,6 +82,7 @@
       <div class="actions">
         <a id="publishResultOpen" class="button primary small" target="_blank" rel="noopener">打开正式文章</a>
         <button id="publishResultCopy" class="secondary small" type="button">复制文章网址</button>
+        <a id="publishResultLogLink" class="secondary small hidden" href="#">下载完整日志</a>
       </div>
       <details class="fm-panel">
         <summary>发布日志（尾部）</summary>
@@ -527,13 +528,14 @@
             <option value="spam">垃圾</option>
             <option value="hidden">已隐藏</option>
             <option value="deleted">已删除</option>
-            <option value="orphaned">孤立</option>
+            <option value="orphaned">历史段评</option>
           </select>
           <select id="feedbackScope" aria-label="类型筛选">
             <option value="all" selected>全部类型</option>
             <option value="paragraph">段评</option>
             <option value="article">章评</option>
           </select>
+          <span id="feedbackOrphanHint" class="meta-text" title="段落随发布转为历史后，其段评不再对外展示，并归入此筛选以便核查">历史段评=原段落已转为历史</span>
           <select id="feedbackArticle" aria-label="文章筛选"><option value="">全部文章</option></select>
           <input id="feedbackSearch" type="search" placeholder="搜索昵称或正文">
           <button id="feedbackRefresh" class="secondary small" type="button">刷新</button>

@@ -581,15 +581,19 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 entry["status"] = "failed_publish"
                 entry["error"] = "发布流程失败（构建/备份/上传/切换任一阶段出错）。"
                 record_publish(project_root, entry)
+                output_tail = (result.get("output") or "")[-4000:]
                 state.article_publish_result = {"articleId": article_id, "ok": False,
                                                 "error": "发布失败，请查看日志；服务器仍停留在旧版本。",
-                                                "output": (result.get("output") or "")[-4000:]}
+                                                "output": output_tail,
+                                                "logUrl": _persist_publish_log(state.project_root, entry["id"],
+                                                                              result.get("output") or "")}
                 return
             entry["status"] = "ok"
             entry["completedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
             entry["releaseId"] = _release_id_from_output(result.get("output", ""))
             record_publish(project_root, entry)
             state.article_preview = None
+            output_tail = (result.get("output") or "")[-4000:]
             state.article_publish_result = {
                 "articleId": article_id,
                 "ok": True,
@@ -597,7 +601,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 "canonicalUrl": _canonical_url(article),
                 "releaseId": entry["releaseId"],
                 "completedAt": entry["completedAt"],
-                "output": (result.get("output") or "")[-4000:],
+                "output": output_tail,
+                "logUrl": _persist_publish_log(state.project_root, entry["id"], result.get("output") or ""),
             }
         except Exception as error:  # 线程内兜底：任何异常都写入账本失败状态
             entry["status"] = "failed_internal"
@@ -613,6 +618,22 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
     _threading.Thread(target=work, name="article-publish", daemon=True).start()
     return {"ok": True, "task": {"inFlight": True, "stage": "validating", "idempotencyKey": idempotency_key}}
 
+
+
+_PUBLISH_LOG_ID_RE = re.compile(r"^pub_[0-9a-f]{12}$")
+
+
+def _persist_publish_log(project_root: str, log_id: str, output: str) -> str:
+    """把发布完整日志写入 .cache/studio/publish-logs/<id>.log，返回下载 URL（失败返回空串）。"""
+    if not output:
+        return ""
+    log_dir = Path(project_root) / ".cache" / "studio" / "publish-logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / f"{log_id}.log").write_text(output, encoding="utf-8")
+        return f"/api/article/publish-log?id={log_id}"
+    except OSError:
+        return ""
 
 
 _RELEASE_RE = re.compile(r"release=(\S+)")

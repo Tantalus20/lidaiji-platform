@@ -600,3 +600,30 @@ class PublishScriptForwardingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PublishLogPersistenceTests(unittest.TestCase):
+    """发布完整日志持久化与下载标识校验。"""
+
+    def test_log_id_format_rejects_unsafe_input(self):
+        self.assertTrue(pa._PUBLISH_LOG_ID_RE.match("pub_1a2b3c4d5e6f"))
+        self.assertIsNone(pa._PUBLISH_LOG_ID_RE.match("pub_../../etc/passwd"))
+        self.assertIsNone(pa._PUBLISH_LOG_ID_RE.match("../pub_1a2b3c4d5e6f"))
+        self.assertIsNone(pa._PUBLISH_LOG_ID_RE.match("pub_1a2b3c4d5e6f/../x"))
+        self.assertIsNone(pa._PUBLISH_LOG_ID_RE.match("pub_1a2b3c4d5e6f.log"))
+        self.assertIsNone(pa._PUBLISH_LOG_ID_RE.match(""))
+
+    def test_persist_publish_log_writes_file_and_returns_url(self):
+        with tempfile.TemporaryDirectory() as root:
+            url = pa._persist_publish_log(root, "pub_1a2b3c4d5e6f", "line1\nline2\n")
+            self.assertEqual(url, "/api/article/publish-log?id=pub_1a2b3c4d5e6f")
+            log_path = Path(root) / ".cache" / "studio" / "publish-logs" / "pub_1a2b3c4d5e6f.log"
+            self.assertEqual(log_path.read_text(encoding="utf-8"), "line1\nline2\n")
+
+    def test_persist_publish_log_empty_output_skips(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(pa._persist_publish_log(root, "pub_1a2b3c4d5e6f", ""), "")
+            self.assertFalse((Path(root) / ".cache" / "studio" / "publish-logs").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

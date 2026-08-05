@@ -842,12 +842,26 @@
       $("#publishResultMeta").textContent = `\u6B63\u5F0F\u7F51\u5740 ${result.canonicalUrl || ""} \xB7 \u53D1\u5E03\u65F6\u95F4 ${result.completedAt || ""} \xB7 release ${result.releaseId || "\u2014"} \xB7 \u6587\u7AE0\u7248\u672C ${String(result.revision || "").slice(-8)}`;
       $("#publishResultOpen").href = result.canonicalUrl || "#";
       $("#publishResultLog").textContent = result.output || "\uFF08\u65E0\u65E5\u5FD7\uFF09";
+      const link = $("#publishResultLogLink");
+      if (result.logUrl) {
+        link.href = result.logUrl;
+        link.classList.remove("hidden");
+      } else {
+        link.classList.add("hidden");
+      }
     } else {
       $("#publishResultTitle").textContent = `\u53D1\u5E03\u5931\u8D25\uFF1A${result.error || "\u672A\u77E5\u539F\u56E0"}`;
       $("#publishResultMeta").textContent = "\u8BF7\u67E5\u770B\u65E5\u5FD7\uFF1B\u670D\u52A1\u5668\u4ECD\u505C\u7559\u5728\u65E7\u7248\u672C\u3002";
       $("#publishResultLog").textContent = result.output || result.logTail || "\uFF08\u65E0\u65E5\u5FD7\uFF09";
       $("#publishResultOpen").classList.add("hidden");
       $("#publishResultOpen").classList.add("hidden");
+      const link = $("#publishResultLogLink");
+      if (result.logUrl) {
+        link.href = result.logUrl;
+        link.classList.remove("hidden");
+      } else {
+        link.classList.add("hidden");
+      }
     }
   }
   async function refreshPublishStatus() {
@@ -1022,7 +1036,7 @@
     spam: "\u5783\u573E",
     hidden: "\u5DF2\u9690\u85CF",
     deleted: "\u5DF2\u5220\u9664",
-    orphaned: "\u5B64\u7ACB"
+    orphaned: "\u5386\u53F2\u6BB5\u8BC4"
   };
   function feedbackQuery() {
     const params = new URLSearchParams();
@@ -1194,7 +1208,7 @@
       ["\u5F85\u5BA1\u6838", stats.pending || 0],
       ["\u5DF2\u901A\u8FC7", stats.approved || 0],
       ["\u5783\u573E", stats.spam || 0],
-      ["\u5B64\u7ACB", stats.orphaned || 0]
+      ["\u5386\u53F2\u6BB5\u8BC4", stats.orphaned || 0]
     ];
     for (const [label, count] of entries) {
       const card = document.createElement("div");

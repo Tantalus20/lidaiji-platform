@@ -481,12 +481,26 @@ function renderPublishResult() {
       `release ${result.releaseId || "—"} · 文章版本 ${String(result.revision || "").slice(-8)}`;
     $("#publishResultOpen").href = result.canonicalUrl || "#";
     $("#publishResultLog").textContent = result.output || "（无日志）";
+    const link = $("#publishResultLogLink");
+    if (result.logUrl) {
+      link.href = result.logUrl;
+      link.classList.remove("hidden");
+    } else {
+      link.classList.add("hidden");
+    }
   } else {
     $("#publishResultTitle").textContent = `发布失败：${result.error || "未知原因"}`;
     $("#publishResultMeta").textContent = "请查看日志；服务器仍停留在旧版本。";
     $("#publishResultLog").textContent = result.output || result.logTail || "（无日志）";
     $("#publishResultOpen").classList.add("hidden");
     $("#publishResultOpen").classList.add("hidden");
+    const link = $("#publishResultLogLink");
+    if (result.logUrl) {
+      link.href = result.logUrl;
+      link.classList.remove("hidden");
+    } else {
+      link.classList.add("hidden");
+    }
   }
 }
 

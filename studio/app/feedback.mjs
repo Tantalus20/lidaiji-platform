@@ -27,7 +27,7 @@ const FEEDBACK_STATUS_LABELS = {
   spam: "垃圾",
   hidden: "已隐藏",
   deleted: "已删除",
-  orphaned: "孤立",
+  orphaned: "历史段评",
 };
 
 function feedbackQuery() {
@@ -215,7 +215,7 @@ function renderFeedbackStats(stats) {
     ["待审核", stats.pending || 0],
     ["已通过", stats.approved || 0],
     ["垃圾", stats.spam || 0],
-    ["孤立", stats.orphaned || 0],
+    ["历史段评", stats.orphaned || 0],
   ];
   for (const [label, count] of entries) {
     const card = document.createElement("div");
