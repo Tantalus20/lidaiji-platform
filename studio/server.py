@@ -54,7 +54,7 @@ import import_stages  # noqa: E402
 from import_api import document_info  # noqa: E402
 
 from studio import articles  # noqa: E402
-from studio import credentials, feedback, media, notes, publish_center, versions  # noqa: E402
+from studio import credentials, feedback, media, notes, publish_article, publish_center, versions  # noqa: E402
 from studio.preview_render import render_markdown  # noqa: E402
 
 DEFAULT_PORT = 4173
@@ -615,6 +615,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.handle_suggest_slug()
             elif path == "/api/article":
                 self.handle_article_read()
+            elif path == "/api/article/publish-status":
+                self.handle_article_publish_status()
             elif path == "/api/git/status":
                 self.handle_git_status()
             elif path == "/api/git/log":
@@ -645,6 +647,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.send_error_json(error.code, error.message)
         except articles.ArticleFailure as error:
             self.send_error_json(error.code, error.message)
+        except publish_article.ArticlePublishError as error:
+            self.send_error_json(error.code, error.message)
         except (feedback.FeedbackFailure, notes.NoteFailure) as error:
             self.send_error_json(error.code, error.message)
         except BrokenPipeError:
@@ -674,6 +678,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             "/api/article/save": self.handle_article_save,
             "/api/article/new": self.handle_article_new,
             "/api/article/open-page": self.handle_article_open_page,
+            "/api/article/publish-preview": self.handle_article_publish_preview,
+            "/api/article/publish": self.handle_article_publish,
             "/api/render": self.handle_render,
             "/api/git/commit": self.handle_git_commit,
             "/api/publish/preflight": self.handle_publish_preflight,
@@ -697,6 +703,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         except StudioError as error:
             self.send_error_json(error.code, error.message)
         except articles.ArticleFailure as error:
+            self.send_error_json(error.code, error.message)
+        except publish_article.ArticlePublishError as error:
             self.send_error_json(error.code, error.message)
         except (feedback.FeedbackFailure, notes.NoteFailure) as error:
             self.send_error_json(error.code, error.message)
@@ -887,6 +895,21 @@ class StudioHandler(BaseHTTPRequestHandler):
         rel_path = (query.get("path") or [""])[0]
         self.send_json({"ok": True, "article": articles.read_article(self.state.project_root, rel_path)})
 
+    def handle_article_publish_status(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        rel_path = (query.get("path") or [""])[0]
+        self.send_json({"ok": True, "status": publish_article.article_publish_status(self.state, rel_path)})
+
+    def handle_article_publish_preview(self) -> None:
+        data = self.read_json_body()
+        result = publish_article.article_publish_preview(self.state, str(data.get("path") or ""))
+        self.send_json({"ok": result["ok"], **result})
+
+    def handle_article_publish(self) -> None:
+        data = self.read_json_body()
+        result = publish_article.article_publish(self.state, str(data.get("path") or ""), data)
+        self.send_json(result)
+
     def handle_article_save(self) -> None:
         data = self.read_json_body(MAX_RENDER_BYTES)
         result = articles.save_article(
@@ -980,9 +1003,19 @@ class StudioHandler(BaseHTTPRequestHandler):
         age = time.time() - self.state.preflight_ok_at
         if self.state.preflight_ok_at <= 0 or age > PREFLIGHT_FRESH_SECONDS:
             raise StudioError("preflight-required", "请先运行一次成功的发布前检查（30 分钟内有效）。")
+        site_key = f"site-{secrets.token_hex(8)}"
+        lock = publish_article.acquire_publish_lock(self.state, idempotency_key=site_key)
+        if lock.get("idempotencyKey") != site_key:
+            raise StudioError("conflict", "已有另一个发布任务正在进行，请稍后再试。")
         platform_root = self.state.platform_root or self.state.project_root
-        result = publish_center.run_publish(platform_root, self.state.workspace_environment)
-        self.send_json({"ok": True, "publish": result})
+        try:
+            publish_article.update_publish_stage(self.state, "building")
+            result = publish_center.run_publish(platform_root, self.state.workspace_environment)
+            if not result["success"]:
+                raise StudioError("service-error", "发布失败，请查看日志；服务器可能仍停留在旧版本。")
+            return self.send_json({"ok": True, "publish": result})
+        finally:
+            publish_article.release_publish_lock(self.state)
 
     # -- 媒体库 API ----------------------------------------------------------
 
