@@ -104,7 +104,7 @@ def resolve_published_baseline(state, domain: str) -> dict:
         # 按 articleId 在私人仓库 HEAD 树中定位文件（canonicalPath 无法唯一定位
         # works 文集层级），找不到按未核对处理
         grep = subprocess.run(
-            ["git", "grep", "-l", f"articleId:\\s*{article['articleId']}", "HEAD", "--", "content/"],
+            ["git", "grep", "-l", f"{article['articleId']}", "HEAD", "--", "content/"],
             capture_output=True, text=True, cwd=private_repo, timeout=60,
         )
         rels = [line.strip() for line in grep.stdout.splitlines() if line.strip() and ":" in line]
