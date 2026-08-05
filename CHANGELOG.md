@@ -1,5 +1,23 @@
 # 更新日志
 
+## Studio v0.2.4（2026-08-06，大规模段落失效门禁放行链路）
+
+- 修复《考试机器》发布失败根因：v0.5.1 大规模段落失效门禁（一次将超过 100 个或
+  现有 current 20% 转为 historical 时默认拒绝）在服务器端拦截并回滚；此前预览的
+  锚点预演在无发布账本记录的文章上回退为“文件自身对比”（deleted=0），门禁检查形同虚设；
+- 预演基准改为线上 comment-manifest 段落集：无账本记录的文章也能真实对比
+  （《考试机器》实测转历史 335 与服务器端 sync-manifest 报告完全一致）；
+- 仅门禁 FAIL 时预览放行为 gate-only：仍签发快照与预览标识、允许进入确认对话框，
+  其余检查 FAIL 仍拒绝发布；
+- 确认对话框新增红色警告与“我确认这是一次有意的段落结构调整”勾选；
+  未勾选发布即被拒绝（confirmation-required）；
+- 放行标志完整传递到服务器端：publish.sh 透传 --allow-large-retire，
+  server-publish.sh 在 sync-manifest 前 export COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE=1
+  （runuser --preserve-environment 仅保留 exported 变量）；
+- 前端 api() 不再把 gate-only 预览误判为错误（新增 apiRaw 通道）；
+- 发布失败结果附带输出尾部，便于查看服务器日志；
+- 新增门禁回归测试（ISO-GATE-*）与发布脚本标志传递链测试。
+
 ## Studio v0.2.3（2026-08-05，文章级隔离发布）
 
 - 发布模型从“整个私人仓库必须干净”改为“已发布基线 + 目标文章快照 = 隔离候选”；
