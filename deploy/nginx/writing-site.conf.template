@@ -65,6 +65,12 @@ server {
         deny all;
     }
 
+    # v0.5.1：/source/ 是生产工作区目录，不是公开源码下载区；
+    # 公开代码一律以 GitHub 仓库与正式 source release 为准。
+    location ^~ /source/ {
+        return 404;
+    }
+
     location ~* \.(?:md|markdown|toml|yaml|yml|sh|command|env|bak|sql|git)$ {
         return 404;
     }

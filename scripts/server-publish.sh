@@ -11,6 +11,8 @@ SOURCE_ARCHIVE=""
 SOURCE_SHA=""
 COMMENTS_ARCHIVE=""
 COMMENTS_SHA=""
+EXPECTED_COMMIT=""
+VERIFY_COS_BACKUP=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,6 +23,8 @@ while [[ $# -gt 0 ]]; do
     --source-sha) SOURCE_SHA="$2"; shift 2 ;;
     --comments) COMMENTS_ARCHIVE="$2"; shift 2 ;;
     --comments-sha) COMMENTS_SHA="$2"; shift 2 ;;
+    --expected-commit) EXPECTED_COMMIT="$2"; shift 2 ;;
+    --verify-cos-backup) VERIFY_COS_BACKUP=1 ;;
     *) printf '未知参数：%s\n' "$1" >&2; exit 2 ;;
   esac
 done
@@ -30,6 +34,70 @@ done
 [[ "$(sha256sum "$RELEASE_ARCHIVE" | awk '{print $1}')" == "$RELEASE_SHA" ]] || { printf '静态发布包校验失败。\n' >&2; exit 2; }
 [[ "$(sha256sum "$SOURCE_ARCHIVE" | awk '{print $1}')" == "$SOURCE_SHA" ]] || { printf '源码包校验失败。\n' >&2; exit 2; }
 [[ "$(sha256sum "$COMMENTS_ARCHIVE" | awk '{print $1}')" == "$COMMENTS_SHA" ]] || { printf '段评服务包校验失败。\n' >&2; exit 2; }
+
+# 候选包结构 preflight（v0.5.1）：
+#   1) 候选不得包含绝对路径或失效符号链接；
+#   2) 候选不得包含数据库或 .env；
+#   3) BUILD_INFO 存在且版本/sourceCommit 正确（评论服务）。
+COMMENTS_CHECK_DIR="$(mktemp -d)"
+cleanup_check() { rm -rf "$COMMENTS_CHECK_DIR"; }
+trap cleanup_check EXIT
+tar -xzf "$COMMENTS_ARCHIVE" -C "$COMMENTS_CHECK_DIR"
+if find "$COMMENTS_CHECK_DIR" -type l -print0 | xargs -0 -n1 readlink 2>/dev/null | grep -q '^/'; then
+  printf '段评候选包含绝对路径符号链接，禁止发布。\n' >&2
+  exit 2
+fi
+if find "$COMMENTS_CHECK_DIR" -type l -print0 2>/dev/null | while IFS= read -r -d '' link; do
+    target="$(readlink "$link")"
+    case "$target" in
+      /*) continue ;;
+    esac
+    [ -e "$(dirname "$link")/$target" ] || printf '%s\n' "$link"
+  done | grep -q .; then
+  printf '段评候选包含失效符号链接，禁止发布。\n' >&2
+  exit 2
+fi
+if find "$COMMENTS_CHECK_DIR" -type f \( -name '*.sqlite' -o -name '*.sqlite3' -o -name '.env' -o -name '*.env' \) | grep -q .; then
+  printf '段评候选包含数据库或环境文件，禁止发布。\n' >&2
+  exit 2
+fi
+[[ -f "$COMMENTS_CHECK_DIR/package.json" ]] || { printf '段评候选缺少package.json。\n' >&2; exit 2; }
+[[ -f "$COMMENTS_CHECK_DIR/src/server.js" ]] || { printf '段评候选缺少入口文件src/server.js。\n' >&2; exit 2; }
+[[ -f "$COMMENTS_CHECK_DIR/BUILD_INFO" ]] || { printf '段评候选缺少BUILD_INFO。\n' >&2; exit 2; }
+[[ -f "$COMMENTS_CHECK_DIR/migrations/003-qq-source-notifications.sql" ]] || { printf '段评候选缺少migration 003。\n' >&2; exit 2; }
+CANDIDATE_VERSION="$(python3 -c 'import json; print(json.load(open("'"$COMMENTS_CHECK_DIR"'/package.json"))["version"])')"
+BUILD_INFO_COMMIT="$(awk -F': ' '/^sourceCommit:/{print $2}' "$COMMENTS_CHECK_DIR/BUILD_INFO")"
+BUILD_INFO_VERSION="$(awk -F': ' '/^version:/{print $2}' "$COMMENTS_CHECK_DIR/BUILD_INFO")"
+printf '段评候选版本：%s（BUILD_INFO：%s，sourceCommit：%s）\n' "$CANDIDATE_VERSION" "$BUILD_INFO_VERSION" "$BUILD_INFO_COMMIT"
+if [[ "$CANDIDATE_VERSION" != "$BUILD_INFO_VERSION" ]]; then
+  printf '段评候选package.json与BUILD_INFO版本不一致。\n' >&2
+  exit 2
+fi
+if [[ -n "$EXPECTED_COMMIT" && "$BUILD_INFO_COMMIT" != "$EXPECTED_COMMIT" ]]; then
+  printf '段评候选sourceCommit与期望提交不一致：%s != %s\n' "$BUILD_INFO_COMMIT" "$EXPECTED_COMMIT" >&2
+  exit 2
+fi
+if [[ -n "$EXPECTED_COMMIT" && "$BUILD_INFO_COMMIT" == "unknown" ]]; then
+  printf '段评候选sourceCommit不可用。\n' >&2
+  exit 2
+fi
+
+# 正式评论服务端口检查（v0.5.1）：4317 只能有一个监听者，且不存在root实例。
+LISTEN_4317="$(ss -tlnp 2>/dev/null | grep -c ':4317' || true)"
+if [[ "$LISTEN_4317" != "1" ]]; then
+  printf '评论服务端口4317监听者数量异常：%s（应为1）\n' "$LISTEN_4317" >&2
+  exit 2
+fi
+if ss -tlnp 2>/dev/null | grep ':4318' >/dev/null && ps aux 2>/dev/null | grep -E 'node .*src/server\.js' | grep -v grep | awk '{print $1}' | grep -q '^root$'; then
+  printf '检测到以root运行的评论服务实例（4318），禁止发布，请先清理。\n' >&2
+  exit 2
+fi
+
+# 可选：发布前执行一次完整异地备份（含COS远端校验）。
+if [[ "$VERIFY_COS_BACKUP" == "1" ]]; then
+  printf '执行发布前异地备份与COS校验……\n'
+  /usr/local/sbin/backup-to-cos.sh || { printf '发布前异地备份失败，禁止发布。\n' >&2; exit 2; }
+fi
 
 # 任何文件替换前先验证运行环境，失败时旧站完全不受影响。
 command -v nginx >/dev/null 2>&1 || { printf '未安装Nginx，禁止发布。\n' >&2; exit 2; }
@@ -161,6 +229,11 @@ chmod 0600 "$COMMENTS_DB_BACKUP"
 COMMENTS_DB_TOUCHED=1
 runuser -u lidaiji-comments --preserve-environment -- node --experimental-sqlite "$COMMENTS_RELEASE/src/cli.js" migrate
 runuser -u lidaiji-comments --preserve-environment -- node --experimental-sqlite "$COMMENTS_RELEASE/src/cli.js" sync-manifest "$RELEASE/comment-manifest.json"
+# v0.5.1：把本次release的完整manifest同步为服务启动时读取的权威清单，
+# 避免服务重启后读到旧清单导致段落状态回退。
+if [[ -n "${COMMENTS_MANIFEST:-}" ]]; then
+  install -o lidaiji-comments -g lidaiji-comments -m 0600 "$RELEASE/comment-manifest.json" "$COMMENTS_MANIFEST"
+fi
 ln -s "$COMMENTS_RELEASE" "$COMMENTS_ROOT/current.next"
 mv -Tf "$COMMENTS_ROOT/current.next" "$COMMENTS_ROOT/current"
 COMMENTS_SWITCHED=1
