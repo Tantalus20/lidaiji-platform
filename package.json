@@ -1,7 +1,7 @@
 {
   "name": "lidaiji-platform",
   "version": "0.2.1",
-  "studioVersion": "0.2.0",
+  "studioVersion": "0.2.1",
   "private": true,
   "description": "历代纪静态站本地预览入口（构建后由段评服务同源托管）",
   "scripts": {
@@ -13,6 +13,7 @@
     "studio:restart": "node scripts/run-studio-tool.mjs",
     "studio:install": "node scripts/run-studio-tool.mjs",
     "studio:uninstall": "node scripts/run-studio-tool.mjs",
+    "studio:setup": "node scripts/run-studio-tool.mjs",
     "build": "node scripts/run-build.mjs",
     "build:editor": "node scripts/build-editor-bundle.mjs",
     "build:app": "node scripts/build-studio-app.mjs",

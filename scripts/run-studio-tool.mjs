@@ -11,9 +11,27 @@ import path from "node:path";
 import { IS_WIN, ROOT, die, log } from "./cross-platform/common.mjs";
 
 const event = process.env.npm_lifecycle_event || "";
-const tool = event.replace(/^studio:/, ""); // open/status/stop/restart/install/uninstall
+const tool = event.replace(/^studio:/, ""); // open/status/stop/restart/install/uninstall/setup
 const PORT = 4173;
 const URL = "http://127.0.0.1:4173/";
+
+/* 一次性本机授权设置：写入评论服务管理员凭据（Keychain/600文件），
+ * 凭据不进入终端回显与日志。 */
+function runSetup() {
+  const candidates = [
+    process.env.WRITING_IMPORT_PYTHON,
+    path.join(ROOT, ".venv-importer", "bin", "python3"),
+    "python3",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate, [path.join(ROOT, "scripts", "studio-credentials-setup.py")], {
+      stdio: "inherit",
+    });
+    if (result.error) continue;
+    process.exit(result.status ?? 1);
+  }
+  die("未找到 Python 运行环境，无法执行本机授权设置。");
+}
 
 if (IS_WIN) {
   const script = {
@@ -24,6 +42,7 @@ if (IS_WIN) {
     install: "install-startup-task.ps1",
     uninstall: "uninstall-startup-task.ps1",
   }[tool];
+  if (tool === "setup") runSetup();
   if (!script) die(`未知操作：${tool}`);
   const ps = path.join(ROOT, "scripts", "windows", script);
   const result = spawnSync(
@@ -43,6 +62,7 @@ if (process.platform === "darwin") {
     install: "install-launch-agent.sh",
     uninstall: "uninstall-launch-agent.sh",
   }[tool];
+  if (tool === "setup") runSetup();
   if (!script) die(`未知操作：${tool}`);
   const sh = path.join(ROOT, "scripts", "macos", script);
   spawnSync("bash", [sh, ...process.argv.slice(2)], { stdio: "inherit" });
@@ -142,6 +162,9 @@ switch (tool) {
       `Linux 上请使用桌面环境的自启动配置（或 systemd 用户服务）管理 Studio；` +
         `直接运行 npm run studio 即可启动。`,
     );
+    break;
+  case "setup":
+    runSetup();
     break;
   default:
     die(`未知操作：${tool}`);
