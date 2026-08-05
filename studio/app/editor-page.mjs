@@ -484,7 +484,8 @@ function renderPublishResult() {
   } else {
     $("#publishResultTitle").textContent = `发布失败：${result.error || "未知原因"}`;
     $("#publishResultMeta").textContent = "请查看日志；服务器仍停留在旧版本。";
-    $("#publishResultLog").textContent = result.output || "";
+    $("#publishResultLog").textContent = result.output || result.logTail || "（无日志）";
+    $("#publishResultOpen").classList.add("hidden");
     $("#publishResultOpen").classList.add("hidden");
   }
 }
@@ -529,11 +530,14 @@ $("#editPublishPreview").addEventListener("click", async () => {
   try {
     const payload = await api("/api/article/publish-preview", { path: editState.path });
     stage.classList.add("hidden");
-    if (!payload.ok) {
+    if (!payload.ok && !payload.gateOnly) {
       const failed = payload.checks.filter((c) => c.status === "FAIL").map((c) => c.name).join("、");
       showError($("#editError"), `发布预览未通过：${failed || "检查失败"}（详见日志尾部）。`);
       $("#publishResultLog").textContent = payload.buildOutput || "";
       return;
+    }
+    if (payload.gateOnly) {
+      showError($("#editError"), "发布预览通过（触发大规模段落调整门禁：请确认后发布）。");
     }
     publishState.preview = payload;
     const anchor = payload.anchor || {};
@@ -583,6 +587,9 @@ $("#editPublish").addEventListener("click", async () => {
     return;
   }
   publishState.dialogData = status;
+  const gate = publishState.preview && publishState.preview.largeRetireGate;
+  $("#pdLargeRetireWrap").classList.toggle("hidden", !gate);
+  $("#pdLargeRetire").checked = false;
   $("#pdTitle").textContent = status.slug || "—";
   $("#pdUrl").textContent = status.canonicalUrl || "—";
   $("#pdLiveAt").textContent = status.publishedAt ? fmtTime(new Date(status.publishedAt).getTime() / 1000) : "尚未发布";
@@ -610,6 +617,7 @@ $("#publishDialogYes").addEventListener("click", async () => {
       previewBuildId: publishState.preview ? publishState.preview.previewBuildId : "",
       snapshotId: publishState.preview ? publishState.preview.snapshotId : "",
       idempotencyKey,
+      allowLargeRetire: $("#pdLargeRetire").checked === true,
     });
     $("#publishStage").classList.remove("hidden");
     $("#publishStageText").textContent = "正在发布…";

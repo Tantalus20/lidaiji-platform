@@ -226,16 +226,26 @@ def anchors_in(markdown: str) -> list[str]:
     return ANCHOR_RE.findall(markdown or "")
 
 
-def rehearsal(project_root: Path, article: dict) -> dict:
-    """锚点迁移预演：以上次成功发布记录的锚点集为基准。
+def rehearsal(project_root: Path, article: dict, baseline: dict | None = None) -> dict:
+    """锚点迁移预演：以“当前线上已发布版本”的段落集为基准（而非工作区自身）。
 
-    - retained：上次发布存在且本次仍存在；
-    - created：本次新增；
-    - deleted：上次发布存在、本次已消失（将转 historical）。
+    - retained：线上存在且目标快照仍存在；
+    - created：目标快照新增；
+    - deleted：线上存在、目标快照已消失（将转 historical）。
+
+    基准优先级：线上 manifest 中该文章的 paragraphs → 账本上次发布锚点 →
+    兜底用当前文件自身（仅当两者都缺失时，deleted 恒为 0，门禁不误报）。
     """
     article_id = str(article["frontMatter"].get("articleId") or "")
-    last = last_article_record(project_root, article_id)
-    before = set(last.get("anchors") or []) if last else set(anchors_in(article.get("body") or ""))
+    before: set[str] = set()
+    if baseline is not None:
+        for entry in baseline.get("manifest", {}).get("articles", []):
+            if entry.get("articleId") == article_id:
+                before = {p.get("paragraphId", "") for p in entry.get("paragraphs", []) if p.get("paragraphId")}
+                break
+    if not before:
+        last = last_article_record(project_root, article_id)
+        before = set(last.get("anchors") or []) if last else set(anchors_in(article.get("body") or ""))
     after = set(anchors_in(article.get("body") or ""))
     return {
         "retained": sorted(before & after),
@@ -330,7 +340,7 @@ def article_publish_preview(state, rel_path: str) -> dict:
               f"其他资源 {dirty['byKind'].get('otherAsset', 0)}、笔记 {dirty['byKind'].get('notes', 0)}、"
               f"其他 {dirty['byKind'].get('other', 0)}）；这些文件不会进入本次发布候选。")
 
-    anchor = rehearsal(project_root, article)
+    anchor = rehearsal(project_root, article, baseline)
     affected, reachable = affected_comment_count(state, article_id, anchor["deleted"])
     if anchor["deleted"] and not reachable:
         check("comments-compat", "WARNING", "评论服务不可达，受影响段评数量未知")
@@ -339,15 +349,19 @@ def article_publish_preview(state, rel_path: str) -> dict:
         check("comments-compat", "WARNING", f"受影响段评 {affected} 条（锚点转历史后不公开显示）")
     else:
         check("comments-compat", "PASS", "")
-    if len(anchor["deleted"]) > 100:
-        check("paragraph-large-gate", "FAIL", f"将转历史的段落 {len(anchor['deleted'])} 个，超过大规模失效门禁（100）")
+    large_gate = len(anchor["deleted"]) > 100
+    if large_gate:
+        check("paragraph-large-gate", "FAIL",
+              f"本次发布将把 {len(anchor['deleted'])} 个线上段落转为历史，超过大规模失效门禁（100/20%）。"
+              "这是有意的段落结构调整时，可在发布确认时勾选“确认大规模段落调整”放行。")
     else:
         check("paragraph-large-gate", "PASS", "")
 
     snapshot = None
     candidate = None
     build_result = {"success": False, "output": "", "duration": 0.0}
-    failed_so_far = [c for c in checks if c["status"] == "FAIL"]
+    # 仅“段落大规模失效门禁”FAIL 不阻断快照/隔离构建（该门禁由发布确认时显式放行）
+    failed_so_far = [c for c in checks if c["status"] == "FAIL" and c["name"] != "paragraph-large-gate"]
     if not failed_so_far and baseline is not None:
         try:
             target = publish_isolated._resolve_target(state, rel_path)
@@ -389,9 +403,10 @@ def article_publish_preview(state, rel_path: str) -> dict:
             check("target-snapshot", "FAIL", f"快照/隔离构建异常：{str(error)[:120]}")
 
     failed = [c for c in checks if c["status"] == "FAIL"]
+    gate_only = bool(failed) and all(c["name"] == "paragraph-large-gate" for c in failed)
     preview_build_id = ""
     canonical = _canonical_url(article)
-    if not failed and snapshot is not None:
+    if (not failed or gate_only) and snapshot is not None:
         preview_build_id = hashlib.sha256(f"{article_id}|{revision}|{snapshot['snapshotId']}|{_time.time()}".encode()).hexdigest()[:20]
         state.article_preview = {
             "articleId": article_id,
@@ -403,11 +418,14 @@ def article_publish_preview(state, rel_path: str) -> dict:
             "canonicalUrl": canonical,
             "baseline": baseline,
             "domain": domain,
+            "largeRetireGate": gate_only,
         }
     return {
         "ok": not failed,
+        "gateOnly": gate_only,
         "checks": checks,
         "anchor": {"retained": len(anchor["retained"]), "created": len(anchor["created"]), "deleted": len(anchor["deleted"])},
+        "largeRetireGate": len(anchor["deleted"]) > 100,
         "affectedComments": affected,
         "previewBuildId": preview_build_id,
         "snapshotId": (snapshot or {}).get("snapshotId", ""),
@@ -454,6 +472,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                     "articleId", "revision", "canonicalUrl", "releaseId", "completedAt")}}
 
     snapshot_id = str(payload.get("snapshotId") or "")
+    allow_large_retire = payload.get("allowLargeRetire") is True
     if not snapshot_id:
         raise ArticlePublishError("validation-failed", "发布参数不完整（缺少snapshotId）。")
 
@@ -471,6 +490,12 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
         raise ArticlePublishError("preflight-required", "snapshotId 与预览不一致，请重新生成发布预览。")
     if time.time() - preview.get("createdAt", 0) > PREVIEW_FRESH_SECONDS:
         raise ArticlePublishError("preflight-required", "预览已过期（超过30分钟），请重新生成发布预览。")
+
+    if preview.get("largeRetireGate") and not allow_large_retire:
+        raise ArticlePublishError(
+            "confirmation-required",
+            "该预览触发了大规模段落失效门禁，请在确认对话框勾选“我确认这是一次有意的段落结构调整”后重试。",
+        )
 
     # 同步重验目标文章快照哈希（预览后文件变化 → 立即拒绝，不启动发布任务）
     snapshot = preview.get("snapshot") or {}
@@ -526,6 +551,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
             # 使用预览时创建的快照（内容寻址不可变）；文件或资源变化会在此校验失败
             merged = publish_isolated.build_merged_content(state, target, preview["snapshot"])
             iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
+            if allow_large_retire:
+                iso_env["COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE"] = "1"
             update_publish_stage(state, "building")
             preflight = publish_center.run_preflight(
                 platform_root, full=False, content_repo_root=merged["repoRoot"],
@@ -555,7 +582,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 entry["error"] = "发布流程失败（构建/备份/上传/切换任一阶段出错）。"
                 record_publish(project_root, entry)
                 state.article_publish_result = {"articleId": article_id, "ok": False,
-                                                "error": "发布失败，请查看日志；服务器仍停留在旧版本。"}
+                                                "error": "发布失败，请查看日志；服务器仍停留在旧版本。",
+                                                "output": (result.get("output") or "")[-4000:]}
                 return
             entry["status"] = "ok"
             entry["completedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")

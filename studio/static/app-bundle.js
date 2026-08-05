@@ -831,7 +831,8 @@
     } else {
       $("#publishResultTitle").textContent = `\u53D1\u5E03\u5931\u8D25\uFF1A${result.error || "\u672A\u77E5\u539F\u56E0"}`;
       $("#publishResultMeta").textContent = "\u8BF7\u67E5\u770B\u65E5\u5FD7\uFF1B\u670D\u52A1\u5668\u4ECD\u505C\u7559\u5728\u65E7\u7248\u672C\u3002";
-      $("#publishResultLog").textContent = result.output || "";
+      $("#publishResultLog").textContent = result.output || result.logTail || "\uFF08\u65E0\u65E5\u5FD7\uFF09";
+      $("#publishResultOpen").classList.add("hidden");
       $("#publishResultOpen").classList.add("hidden");
     }
   }
@@ -873,11 +874,14 @@
     try {
       const payload = await api("/api/article/publish-preview", { path: editState.path });
       stage.classList.add("hidden");
-      if (!payload.ok) {
+      if (!payload.ok && !payload.gateOnly) {
         const failed = payload.checks.filter((c) => c.status === "FAIL").map((c) => c.name).join("\u3001");
         showError($("#editError"), `\u53D1\u5E03\u9884\u89C8\u672A\u901A\u8FC7\uFF1A${failed || "\u68C0\u67E5\u5931\u8D25"}\uFF08\u8BE6\u89C1\u65E5\u5FD7\u5C3E\u90E8\uFF09\u3002`);
         $("#publishResultLog").textContent = payload.buildOutput || "";
         return;
+      }
+      if (payload.gateOnly) {
+        showError($("#editError"), "\u53D1\u5E03\u9884\u89C8\u901A\u8FC7\uFF08\u89E6\u53D1\u5927\u89C4\u6A21\u6BB5\u843D\u8C03\u6574\u95E8\u7981\uFF1A\u8BF7\u786E\u8BA4\u540E\u53D1\u5E03\uFF09\u3002");
       }
       publishState.preview = payload;
       const anchor = payload.anchor || {};
@@ -926,6 +930,9 @@
       return;
     }
     publishState.dialogData = status;
+    const gate = publishState.preview && publishState.preview.largeRetireGate;
+    $("#pdLargeRetireWrap").classList.toggle("hidden", !gate);
+    $("#pdLargeRetire").checked = false;
     $("#pdTitle").textContent = status.slug || "\u2014";
     $("#pdUrl").textContent = status.canonicalUrl || "\u2014";
     $("#pdLiveAt").textContent = status.publishedAt ? fmtTime(new Date(status.publishedAt).getTime() / 1e3) : "\u5C1A\u672A\u53D1\u5E03";
@@ -950,7 +957,8 @@
         draftRevision: status.revision,
         previewBuildId: publishState.preview ? publishState.preview.previewBuildId : "",
         snapshotId: publishState.preview ? publishState.preview.snapshotId : "",
-        idempotencyKey
+        idempotencyKey,
+        allowLargeRetire: $("#pdLargeRetire").checked === true
       });
       $("#publishStage").classList.remove("hidden");
       $("#publishStageText").textContent = "\u6B63\u5728\u53D1\u5E03\u2026";

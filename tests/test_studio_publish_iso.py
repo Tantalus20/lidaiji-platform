@@ -500,3 +500,71 @@ class WorksPathTests(unittest.TestCase):
 def hashlib256(path):
     import hashlib
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class LargeRetireGateTests(unittest.TestCase):
+    """大规模段落失效门禁：线上锚点集 vs 目标快照差异 > 100 时 gate-only 预览+显式确认。"""
+
+    def setUp(self):
+        self.ws = IsoWorkspace()
+        self.state = FakeState(self.ws)
+
+    def tearDown(self):
+        self.ws.cleanup()
+
+    def _online_manifest_with_many_paragraphs(self):
+        """构造线上状态：目标文章已提交（线上revision），线上段落集为120个旧锚点。"""
+        target = _make_article_file(self.ws.root, "gate-target", "线上版本正文第一段。\n\n线上版本正文第二段。", False)
+        _git(self.ws.root, "add", "-A")
+        _git(self.ws.root, "commit", "-qm", "gate target online")
+        self.committed_target = target
+        entry = _article_manifest_entry(target["file"])
+        entry["paragraphs"] = [
+            {"paragraphId": f"p-{i:012d}", "position": i, "headingContext": "",
+             "excerpt": f"e{i}", "checksum": "a" * 64}
+            for i in range(120)
+        ]
+        manifest = {"schemaVersion": 1, "articles": [dict(a) for a in self.ws.baseline_manifest["articles"]]}
+        manifest["articles"].append(entry)
+        _TMP_MANIFEST.write_text(json.dumps(manifest), encoding="utf-8")
+        # 作者保存新版本（revision 变化，段落大幅调整）
+        updated = _make_article_file(self.ws.root, "gate-target", "新版正文第一段。\n\n新版正文第二段。", False,
+                                     article_id=target["frontMatter"]["articleId"])
+        return updated
+
+    def test_ISO_GATE_01_线上锚点集对比触发门禁且可显式确认发布(self):
+        target = self._online_manifest_with_many_paragraphs()
+        self.ws.write_candidate_manifest(target)
+        result = pa.article_publish_preview(self.state, target["path"])
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["gateOnly"], "仅门禁FAIL时应允许继续到确认")
+        self.assertGreater(result["anchor"]["deleted"], 100)
+        # 未确认 → 拒绝
+        with self.assertRaises(pa.ArticlePublishError) as ctx:
+            pa.article_publish(self.state, target["path"], {
+                "draftRevision": target["frontMatter"]["articleRevision"],
+                "previewBuildId": result["previewBuildId"],
+                "snapshotId": result["snapshotId"],
+                "idempotencyKey": "gate-0000000001",
+            })
+        self.assertEqual(ctx.exception.code, "confirmation-required")
+        # 显式确认 → 允许发布（env 放行由 work() 设置）
+        self.state.article_preview = None
+        re_preview = pa.article_publish_preview(self.state, target["path"])
+        self.assertTrue(re_preview["gateOnly"])
+        task = pa.article_publish(self.state, target["path"], {
+            "draftRevision": target["frontMatter"]["articleRevision"],
+            "previewBuildId": re_preview["previewBuildId"],
+            "snapshotId": re_preview["snapshotId"],
+            "idempotencyKey": "gate-0000000002",
+            "allowLargeRetire": True,
+        })
+        self.assertTrue(task["ok"])
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            status = pa.article_publish_status(self.state, target["path"])
+            if not (status["lock"] or {}).get("inFlight"):
+                break
+            time.sleep(0.1)
+        result2 = pa.article_publish_status(self.state, target["path"])["result"]
+        self.assertTrue(result2 and result2["ok"], result2)
