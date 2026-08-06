@@ -614,6 +614,8 @@ $("#editPublishPreview").addEventListener("click", async () => {
     ];
     $("#publishStageText").textContent = lines.join(" | ");
     stage.classList.remove("hidden");
+    // 预览成功后刷新发布栏（快照/基线/候选清单字段来自 publish-status）
+    await refreshPublishStatus();
     window.open(payload.previewUrl, "_blank", "noopener");
   } catch (error) {
     stage.classList.add("hidden");

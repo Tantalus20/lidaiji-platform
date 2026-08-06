@@ -962,6 +962,7 @@
       ];
       $("#publishStageText").textContent = lines.join(" | ");
       stage.classList.remove("hidden");
+      await refreshPublishStatus();
       window.open(payload.previewUrl, "_blank", "noopener");
     } catch (error) {
       stage.classList.add("hidden");
