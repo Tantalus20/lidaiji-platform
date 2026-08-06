@@ -40,6 +40,18 @@
   对已有归档执行解压复验（VERIFY_OK / VERIFY_FAILED），供恢复前抽查。
 - **本地保留副本**：设置 `BACKUP_KEEP_DIR=<目录>` 时，验证通过后归档/校验和/清单
   复制到该目录（运维自查与恢复演练用）。
-- **测试**：`tests/test_backup_to_cos.py`（15 项，全部虚构目录，覆盖 current 解析/
+- **状态语义（v0.5.3 收口）**：
+  - 普通真实备份终止状态：`SNAPSHOT_CREATED → MANIFEST_CREATED → ARCHIVE_CREATED →
+    LOCAL_VERIFY_DONE → UPLOAD_STARTED → UPLOAD_DONE → REMOTE_VERIFY_DONE → BACKUP_COMPLETE`；
+    `BACKUP_COMPLETE` 仅在远端完整性验证通过后出现；
+  - `COS_BACKUP_VALIDATE_ONLY=1`：`… → LOCAL_VERIFY_DONE → VALIDATE_ONLY_COMPLETE`
+    （不写 BACKUP_COMPLETE、不更新最近成功时间、不触发通知/清理）；
+  - `BACKUP_VERIFY_ONLY=<归档>`：`VERIFY_ONLY_STARTED → VERIFY_ONLY_DONE`；
+  - 结构化状态记录 `STATE_DIR/backup-last-verify.json`：
+    `{mode, remoteUploadPerformed, remoteVerified, backupComplete, archivePayloadVerified}`；
+    失败 marker 附带 `mode/failedStage/remoteUploadPerformed`；
+  - 归档内 manifest 携带 `mode`（validate-only 另含三个远端 false 字段；full 的
+    远端真相以状态记录为准，快照时未知故不写入）。
+- **测试**：`tests/test_backup_to_cos.py`（27 项，全部虚构目录，覆盖 current 解析/
   切换/断裂/越界、空 release、内部符号链接逃逸、归档损坏、清单不一致、缺文件、
-  并发锁、临时残留、空格路径、秘密不进日志）。
+  并发锁、临时残留、空格路径、秘密不进日志、模式状态机、上传门控与成功时间语义）。
