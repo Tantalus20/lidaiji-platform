@@ -121,7 +121,12 @@ function walk(directory) {
 }
 for (const section of ["works", "essays", "archives"]) walk(path.join(root, "content", section));
 
-const manifest = { schemaVersion: 1, generatedAt: new Date().toISOString(), articles: [] };
+// LIDAIJI_DETERMINISTIC_BUILD=1（隔离候选构建）时使用固定时间戳，
+// 保证相同输入重复构建产生字节一致的 manifest（候选确定性）。
+const generatedAt = process.env.LIDAIJI_DETERMINISTIC_BUILD === "1"
+  ? "1970-01-01T00:00:00.000Z"
+  : new Date().toISOString();
+const manifest = { schemaVersion: 1, generatedAt, articles: [] };
 const ids = new Set();
 for (const file of articleFiles.sort()) {
   const parsed = parseFrontMatter(fs.readFileSync(file, "utf8"));

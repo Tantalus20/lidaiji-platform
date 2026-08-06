@@ -528,6 +528,7 @@ def build_merged_content(state, target: dict, snapshot: dict, baseline: dict | N
 def isolated_environment(merged: dict, base_environment: dict | None = None) -> dict:
     """发布子进程环境：LIDAIJI_* 指向隔离内容仓库（既有 build/publish 脚本原样复用）。"""
     env = dict(base_environment or os.environ)
+    env["LIDAIJI_DETERMINISTIC_BUILD"] = "1"  # 隔离构建确定性（候选可复现）
     env["LIDAIJI_CONTENT_REPO_ROOT"] = str(merged["repoRoot"])
     env["LIDAIJI_CONTENT_ROOT"] = str(merged["contentRoot"])
     env["LIDAIJI_AUTHOR_NOTES_ROOT"] = str(merged["authorNotesRoot"])
