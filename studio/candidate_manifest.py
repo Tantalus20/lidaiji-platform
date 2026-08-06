@@ -24,16 +24,19 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 BUILDER_VERSION = "candidate-manifest-1"
 # 允许的派生/构建产物路径（相对候选站点根）
-DERIVED_INDEX_PREFIXES = (
-    "about/", "archives/", "categories/", "collections/", "people/",
-    "periods/", "places/", "series/", "tags/", "search/",
-)
 DERIVED_INDEX_FILES = {"index.html", "index.xml", "sitemap.xml",
                        "robots.txt", "search-index.json"}
-# 板块根页（essays/works/archives/about 的 index 本身是派生列表页；
-# 注意不能整目录放行——其他文章页面必须保持"目标前缀才允许"）
-SECTION_ROOT_FILES = {"essays/index.html", "works/index.html",
-                      "archives/index.html", "about/index.html"}
+# 板块根页与板块 Feed（essays/works/archives/about/timeline 的 index 是派生列表页；
+# 注意不能整目录放行——其他文章页面必须走 baseline-content 分类）
+SECTION_PAGE_RE = __import__("re").compile(
+    r"^(essays|works|archives|about|timeline)/index\.(html|xml)$")
+# 分类体系页（taxonomy 列表）
+TAXONOMY_PREFIXES = ("categories/", "collections/", "people/", "periods/",
+                     "places/", "series/", "tags/", "search/")
+# 已知文章板块（essays/<slug>、works/<文集>/<slug>、archives/<slug>）：
+# 非目标文章页面归类为 baseline-content —— 由候选差异检查（manifest 逐篇
+# digest）保证与线上一致（候选内容来自基线 HEAD 树，构造上不可能含无关脏文件）
+ARTICLE_SECTION_PREFIXES = ("essays/", "works/", "archives/")
 BUILD_METADATA_FILES = {"BUILD_INFO", "comment-manifest.json"}
 BUILD_METADATA_DIRS = ("css/", "js/", "fonts/", "img/", "images/", "favicon/")
 CANDIDATE_ID_RE = __import__("re").compile(r"^cand_[0-9a-f]{20}$")
@@ -67,14 +70,16 @@ def classify_file(rel_path: str, target_url_prefix: str, asset_sha256: set[str],
         if rel.endswith(".html") and rel.count("/") <= prefix.count("/"):
             return "target-article"
         return "target-resource"
-    if rel in DERIVED_INDEX_FILES or rel in SECTION_ROOT_FILES:
+    if rel in DERIVED_INDEX_FILES or SECTION_PAGE_RE.match(rel):
         return "derived-index"
-    if any(rel.startswith(prefix) for prefix in DERIVED_INDEX_PREFIXES):
+    if any(rel.startswith(prefix) for prefix in TAXONOMY_PREFIXES):
         return "derived-index"
     if rel in BUILD_METADATA_FILES:
         return "build-metadata"
     if any(rel.startswith(prefix) for prefix in BUILD_METADATA_DIRS):
         return "build-metadata"
+    if any(rel.startswith(prefix) for prefix in ARTICLE_SECTION_PREFIXES):
+        return "baseline-content"
     return "unclassified"
 
 

@@ -58,7 +58,8 @@ class CandidateManifestTests(unittest.TestCase):
         self.assertEqual(cm.classify_file("BUILD_INFO", "/essays/x/", set(), "d"), "build-metadata")
         self.assertEqual(cm.classify_file("css/main.css", "/essays/x/", set(), "d"), "build-metadata")
         self.assertEqual(cm.classify_file("foo/bar.html", "/essays/x/", set(), "d"), "unclassified")
-        self.assertEqual(cm.classify_file("essays/other/index.html", "/essays/x/", set(), "d"), "unclassified")
+        self.assertEqual(cm.classify_file("essays/other/index.html", "/essays/x/", set(), "d"), "baseline-content")
+        self.assertEqual(cm.classify_file("essays/index.xml", "/essays/x/", set(), "d"), "derived-index")
         self.assertEqual(cm.classify_file("media/p/1/a.jpg", "/essays/x/", {"a" * 64}, "a" * 64), "target-resource")
         self.assertEqual(cm.classify_file("media/p/1/b.jpg", "/essays/x/", {"a" * 64}, "b" * 64), "unclassified")
 
