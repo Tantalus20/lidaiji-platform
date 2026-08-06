@@ -188,11 +188,40 @@ def _validate_cache_entry(platform_root: Path, path: str) -> str | None:
     return None
 
 
+def _scan_cache_entries(platform_root: Path) -> list[str]:
+    """磁盘扫描 .cache/studio（git 忽略的条目 git status 看不到），
+    未知条目或校验失败必须阻断。"""
+    problems: list[str] = []
+    cache_root = platform_root / ".cache" / "studio"
+    if not cache_root.is_dir():
+        return problems
+    for child in sorted(cache_root.iterdir()):
+        rel = f".cache/studio/{child.name}"
+        if child.name in ("candidates", "publish-logs", "locks"):
+            if child.is_symlink():
+                problems.append(f"{rel}（符号链接）")
+                continue
+            for sub in sorted(child.iterdir()) if child.is_dir() else []:
+                sub_rel = f"{rel}/{sub.name}"
+                issue = _validate_cache_entry(platform_root, sub_rel)
+                if issue:
+                    problems.append(f"{sub_rel}（{issue}）")
+            continue
+        if child.name == "publish-history.json":
+            issue = _validate_cache_entry(platform_root, rel)
+            if issue:
+                problems.append(f"{rel}（{issue}）")
+            continue
+        problems.append(f"{rel}（未知 .cache 条目）")
+    return problems
+
+
 def platform_clean_check(platform_root: Path) -> list[str]:
     """平台代码/发布工具/配置脏时列出（阻止发布）。
 
     .cache 只豁免明确受控路径（候选/账本/发布日志/锁），且逐项校验
-    realpath/符号链接/属主/权限/名称格式；出现任何未知 .cache 条目即阻断。
+    realpath/符号链接/属主/权限/名称格式；.cache 出现任何未知条目即阻断
+    （git 忽略的条目由磁盘扫描覆盖）。
     """
     out = subprocess.run(
         ["git", "status", "--porcelain=v1"], capture_output=True, text=True,
@@ -218,6 +247,7 @@ def platform_clean_check(platform_root: Path) -> list[str]:
                 blocked.append(f"{path[:120]}（.cache 条目校验失败：{issue}）")
             continue
         blocked.append(path[:120])
+    blocked.extend(_scan_cache_entries(platform_root))
     return blocked[:20]
 
 
