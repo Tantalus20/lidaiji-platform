@@ -181,10 +181,12 @@ def materialize_candidate(project_root, site_dir: Path, baseline: dict, snapshot
             shutil.rmtree(tmp_dir, ignore_errors=True)
         else:
             tmp_site.rename(final_dir)
+        # manifestSha256 = 剔除自身字段后的规范 JSON 载荷哈希（确定性、可复算）
+        payload = {k: v for k, v in manifest.items() if k != "manifestSha256"}
+        manifest["manifestSha256"] = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         (final_dir / "candidate-manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        manifest["manifestSha256"] = hashlib.sha256(
-            (final_dir / "candidate-manifest.json").read_bytes()).hexdigest()
         return {
             "candidateId": manifest["candidateId"],
             "candidateDir": str(final_dir),
