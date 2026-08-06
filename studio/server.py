@@ -929,6 +929,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             "candidateId": manifest.get("candidateId"),
             "baselineId": manifest.get("baselineId"),
             "snapshotId": manifest.get("snapshotId"),
+            "buildMode": (manifest.get("testIdentity") or {}).get("buildMode", "production"),
+            "testRunId": (manifest.get("testIdentity") or {}).get("testRunId", ""),
             "targetArticleId": manifest.get("targetArticleId"),
             "targetSlug": manifest.get("targetSlug"),
             "fileCount": len(manifest.get("files", [])),
