@@ -416,10 +416,10 @@ def article_publish_preview(state, rel_path: str) -> dict:
                                 scan = sensitive_scan.scan_candidate(candidate["candidateDir"])
                                 unclassified = candidate["manifest"].get("unclassifiedPaths", [])
                                 markers = candidate_manifest.test_marker_hits(candidate["manifest"])
-                                blocked = bool(scan["blocked"]) or bool(unclassified) or bool(markers)
+                                blocked = bool(scan["blocked"]) or bool(unclassified)
                                 if markers:
-                                    check("test-marker", "FAIL",
-                                          f"候选含测试 fixture 标记，已阻止：{'、'.join(markers[:5])}")
+                                    check("test-marker", "WARNING",
+                                          f"候选含测试 fixture 标记（生产发布将被拒绝）：{'、'.join(markers[:5])}")
                                 else:
                                     check("test-marker", "PASS", "无测试 fixture 标记")
                                 if scan["blocked"]:

@@ -292,7 +292,7 @@ class OutputIsolationAndGatesTests(unittest.TestCase):
             self.assertTrue(result["ok"], result["checks"])
             self.assertFalse((self.ws.root / "dist" / "site").exists())
 
-    def test_test_marker_slug_blocked(self):
+    def test_test_marker_slug_blocks_production_publish(self):
         target = iso_mod._make_article_file(self.ws.root, "acc-browser",
                                             "验收文章正文。\n\n第二段。", False)
         self.ws.write_candidate_manifest(target)
@@ -301,8 +301,21 @@ class OutputIsolationAndGatesTests(unittest.TestCase):
         (page / "index.html").write_text("<h1>验收</h1>", encoding="utf-8")
         result = pa.article_publish_preview(self.state, target["path"])
         checks = {c["name"]: c["status"] for c in result["checks"]}
-        self.assertEqual(checks.get("test-marker"), "FAIL")
-        self.assertFalse(result["ok"])
+        self.assertEqual(checks.get("test-marker"), "WARNING")
+        self.assertTrue(result["ok"])  # 本地预览允许（候选不部署）
+        # 生产发布被标记门禁阻断
+        pa.article_publish(self.state, target["path"], {
+            "draftRevision": target["frontMatter"]["articleRevision"],
+            "previewBuildId": result["previewBuildId"],
+            "snapshotId": result["snapshotId"],
+            "idempotencyKey": "marker-gate-001",
+        })
+        deadline = time.time() + 30
+        while time.time() < deadline and not (self.state.article_publish_result or {}).get("error"):
+            time.sleep(0.2)
+        result = self.state.article_publish_result or {}
+        self.assertFalse(result.get("ok"))
+        self.assertIn("测试 fixture 标记", result.get("error", ""))
 
     def test_deploy_disabled_server_gate(self):
         target = iso_mod._new_target(self.ws)
