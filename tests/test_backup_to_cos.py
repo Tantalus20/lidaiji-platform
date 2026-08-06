@@ -46,6 +46,8 @@ class BackupFixture:
         self.keep_dir = self.root / "keep"
         self.lock_file = self.root / "lock" / "backup.lock"
         self.cos_config = self.root / "cos.yaml"
+        self.coscli = None
+        self.coscli_log = self.root / "coscli-calls.log"
         for d in (self.site_root, self.comments_root, self.data_dir, self.state_dir,
                   self.workdir_base, self.keep_dir, self.lock_file.parent):
             d.mkdir(parents=True, exist_ok=True)
@@ -121,6 +123,36 @@ class BackupFixture:
         archives = sorted(self.keep_dir.glob("*.tar.gz"))
         assert archives, "KEEP_DIR 无归档"
         return archives[-1]
+
+    def counting_coscli(self) -> Path:
+        """把 coscli 替换为计数包装器：每次调用追加一行日志。"""
+        wrapper = self.root / "fake-coscli.sh"
+        self.coscli_log = self.root / "coscli-calls.log"
+        wrapper.write_text(
+            '#!/usr/bin/env bash\n'
+            'echo "$*" >> "$COSCLI_LOG"\n'
+            'exit 0\n', encoding="utf-8")
+        wrapper.chmod(0o755)
+        return wrapper
+
+    def env(self, **extra) -> dict:
+        env = dict(os.environ)
+        env.update({
+            "COSCLI": str(self.coscli or "/usr/bin/true"),
+            "COS_CONFIG": str(self.cos_config),
+            "LOCK_FILE": str(self.lock_file),
+            "STATE_DIR": str(self.state_dir),
+            "SITE_ROOT": str(self.site_root),
+            "COMMENTS_ROOT": str(self.comments_root),
+            "COMMENTS_DATA_DIR": str(self.data_dir),
+            "SRC_ROOT": str(self.site_root),
+            "WORKDIR_BASE": str(self.workdir_base),
+            "BACKUP_KEEP_DIR": str(self.keep_dir),
+            "COS_BACKUP_VALIDATE_ONLY": "1",
+            "COSCLI_LOG": str(getattr(self, "coscli_log", self.root / "coscli-calls.log")),
+        })
+        env.update(extra)
+        return env
 
     def failure_marker(self) -> dict:
         marker = self.state_dir / "backup-failure.marker"
@@ -354,3 +386,58 @@ class TestBackupConsistencyAndConcurrency(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUploadSemantics(unittest.TestCase):
+    """上传语义：verify-only 绝不调用 coscli；验证成功前上传调用数为 0。"""
+
+    def setUp(self):
+        self.fx = BackupFixture()
+        self.fx.coscli = self.fx.counting_coscli()
+
+    def tearDown(self):
+        self.fx.cleanup()
+
+    def test_15_verify_only_mode_never_uploads(self):
+        self.fx.run()  # 先产生一份正常备份（VALIDATE_ONLY，coscli 也不该被调用）
+        calls_after_backup = self.fx.coscli_log.read_text() if self.fx.coscli_log.is_file() else ""
+        self.assertEqual(calls_after_backup, "", "VALIDATE_ONLY 模式下不得调用 coscli")
+        archive = self.fx.kept_archive()
+        verify = subprocess.run(
+            ["bash", str(SCRIPT)], env=self.fx.env(BACKUP_VERIFY_ONLY=str(archive)),
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+        calls = self.fx.coscli_log.read_text() if self.fx.coscli_log.is_file() else ""
+        self.assertEqual(calls, "", "BACKUP_VERIFY_ONLY 模式上传调用次数必须为 0")
+
+    def test_16_no_upload_on_verify_failure(self):
+        proc = subprocess.Popen(
+            ["bash", str(SCRIPT)],
+            env=self.fx.env(BACKUP_TEST_HOOK_DELAY_3_S="3"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(1.2)
+        tars = sorted(self.fx.workdir_base.glob("cos-backup.*/*.tar.gz.tmp"))
+        self.assertTrue(tars)
+        data = bytearray(tars[-1].read_bytes())
+        data[100] ^= 0xFF
+        tars[-1].write_bytes(bytes(data))
+        out, err = proc.communicate(timeout=120)
+        self.assertNotEqual(proc.returncode, 0)
+        calls = self.fx.coscli_log.read_text() if self.fx.coscli_log.is_file() else ""
+        self.assertEqual(calls, "", "验证失败时上传调用次数必须为 0（不得上传未复验归档）")
+        self.assertEqual(list(self.fx.keep_dir.glob("*.tar.gz")), [], "验证失败不得产出正式归档")
+
+    def test_17_verified_flag_only_on_successful_backup(self):
+        self.fx.run()
+        manifest = json.loads((self.fx.keep_dir / "backup-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["schemaVersion"], 2)
+        self.assertTrue(manifest["archivePayloadVerified"])
+        # 验证失败场景：不产生携带该标志的正式归档
+        fx2 = BackupFixture()
+        fx2.coscli = fx2.counting_coscli()
+        (fx2.site_root / "current").unlink()
+        subprocess.run(["bash", str(SCRIPT)], env=fx2.env(), capture_output=True, text=True, timeout=60)
+        self.assertEqual(list(fx2.keep_dir.glob("*.tar.gz")), [], "失败备份不得产出归档")
+        fx2.cleanup()
