@@ -15,9 +15,11 @@
 import { Schema } from "prosemirror-model";
 import { EditorState, Plugin, TextSelection } from "prosemirror-state";
 import { EditorView } from "prosemirror-view";
+import { findWrapping } from "prosemirror-transform";
 import {
   baseKeymap,
   chainCommands,
+  setBlockType,
   splitBlock,
   toggleMark,
   wrapIn,
@@ -85,7 +87,8 @@ const schema = new Schema({
       parseDOM: [{ tag: "div.poetry-block" }],
       toDOM: () => ["div", { class: "poetry-block" }, 0],
     },
-    /* 尾注块：右对齐、小字号（CSS .end-note 控制） */
+    /* 附记块（endnote_block，界面文案为“附记”）：右对齐、小字号（CSS .end-note 控制）。
+   * 注意：附记是无编号的补充说明块，不是真正的脚注或尾注系统。 */
     endnote_block: {
       content: "block+",
       group: "block",
@@ -431,8 +434,66 @@ function positionForTextOffset(doc, target) {
   return Math.min(low, size);
 }
 
+/* 段落块类型转换命令（正文/标题）：
+ * 光标场景（from===to）也支持——把光标所在整个文本块转换为目标类型；
+ * 支持 dry-run（dispatch=null）供 enabled 判定。 */
+function setBlockTypeCommand(nodeType, attrs = null) {
+  return (state, dispatch) => {
+    let { from, to } = state.selection;
+    let applicable = false;
+    if (from === to) {
+      const $from = state.selection.$from;
+      const parent = $from.parent;
+      if (!parent.isTextblock) return false;
+      if (parent.type === nodeType && parent.hasMarkup(nodeType, attrs)) return true;
+      const $parentPos = state.doc.resolve($from.before($from.depth));
+      const index = $parentPos.index();
+      if (!$parentPos.parent.canReplaceWith(index, index + 1, nodeType)) return false;
+      from = $from.before($from.depth);
+      to = from + parent.nodeSize;
+      applicable = true;
+    } else {
+      state.doc.nodesBetween(from, to, (node, pos) => {
+        if (applicable) return false;
+        if (!node.isTextblock || node.hasMarkup(nodeType, attrs)) return false;
+        if (node.type === nodeType) applicable = true;
+        else {
+          const $pos = state.doc.resolve(pos);
+          const index = $pos.index();
+          applicable = $pos.parent.canReplaceWith(index, index + 1, nodeType);
+        }
+        return true;
+      });
+      if (!applicable) return false;
+    }
+    if (dispatch) dispatch(state.tr.setBlockType(from, to, nodeType, attrs).scrollIntoView());
+    return true;
+  };
+}
+
 /* ---------------- 编辑器 ---------------- */
 
+/* 光标所在位置的段落类型（内容类型维度，与对齐属性正交）。
+ * 返回：paragraph | heading | poetry | endnote | quote | list | code | table | other */
+function blockTypeAt($pos) {
+  for (let depth = $pos.depth; depth > 0; depth -= 1) {
+    const type = $pos.node(depth).type.name;
+    if (type === "poetry_block") return "poetry";
+    if (type === "endnote_block") return "endnote";
+    if (type === "blockquote") return "quote";
+    if (type === "bullet_list" || type === "ordered_list" || type === "list_item") return "list";
+    if (type === "table" || type === "table_row" || type === "table_cell" || type === "table_header") return "table";
+  }
+  const parent = $pos.parent.type.name;
+  if (parent === "paragraph") return "paragraph";
+  if (parent === "heading") return "heading";
+  if (parent === "code_block") return "code";
+  return "other";
+}
+
+/* 借鉴 Tiptap 的 isActive/can 双状态思想（不引入依赖）：
+ * active 表示当前格式已生效；enabled 表示当前选择允许执行该命令。
+ * 所有 enabled 均用命令的 dry-run（dispatch=null）判定，与真实执行一致。 */
 function selectionInfo(state) {
   const marks = state.storedMarks || state.selection.$from.marks();
   const $from = state.selection.$from;
@@ -446,12 +507,47 @@ function selectionInfo(state) {
   }
   const block = $from.node($from.depth);
   if (block.type.name === "paragraph" && block.attrs.align) align = block.attrs.align;
+
+  const fromType = blockTypeAt(state.selection.$from);
+  const toType = blockTypeAt(state.selection.$to);
+  const blockType = fromType === toType ? fromType : "mixed";
+
+  /* enabled 判定 */
+  const alignEnabled = (() => {
+    let found = false;
+    state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+      if (found) return false;
+      if (node.type.name === "paragraph") found = true;
+      return true;
+    });
+    return found;
+  })();
+  /* 代码块内不允许链接：schema 虽未限制 marks，但序列化为 Markdown 时
+   * 代码块内容按纯文本输出，链接会被静默丢弃——因此命令必须禁用。 */
+  const linkEnabled =
+    $from.parent.type.allowsMarkType(schema.marks.link) && !$from.parent.type.spec.code;
+  const imageEnabled = Boolean($from.parent.type.contentMatch.matchType(schema.nodes.image));
+  const enabled = {
+    link: linkEnabled,
+    image: imageEnabled,
+    align: alignEnabled,
+    poetry: convertContainerCommand(state, null, "poetry_block"),
+    endnote: convertContainerCommand(state, null, "endnote_block"),
+    quote: convertContainerCommand(state, null, "blockquote"),
+    paragraph: setBlockTypeCommand(schema.nodes.paragraph)(state, null),
+    heading: setBlockTypeCommand(schema.nodes.heading, { level: 2 })(state, null),
+  };
+
   return {
     canUndo: undoDepth(state) > 0,
     canRedo: redoDepth(state) > 0,
     bold: Boolean(schema.marks.strong.isInSet(marks)),
     em: Boolean(schema.marks.em.isInSet(marks)),
+    link: Boolean(schema.marks.link.isInSet(marks)),
     align,
+    blockType,
+    alignEnabled,
+    enabled,
     inPoetry,
     inEndnote,
   };
@@ -510,7 +606,70 @@ function toggleContainerCommand(state, dispatch, typeName) {
   return wrapIn(schema.nodes[typeName])(state, dispatch);
 }
 
-/* 容器内空段退出：在诗歌/尾注块末尾的空段按回车 → 生成容器外的普通段落。 */
+/* 容器类型转换（段落类型下拉用）：正文/诗歌/附记/引用之间互转。
+ * 同一事务内先抬出当前容器、再包装目标容器——诗歌→附记等跨容器转换
+ * 不会产生嵌套容器，也不会丢失内容。targetTypeName 为 paragraph 时仅抬出。 */
+function convertContainerCommand(state, dispatch, targetTypeName) {
+  const containerTypes = ["poetry_block", "endnote_block", "blockquote"];
+  let current = null;
+  for (let depth = state.selection.$from.depth; depth >= 1; depth -= 1) {
+    const type = state.selection.$from.node(depth).type.name;
+    if (containerTypes.includes(type)) {
+      current = type;
+      break;
+    }
+  }
+  if (current === targetTypeName) return false;
+  let tr = state.tr;
+  let changed = false;
+  if (current) {
+    const positions = [];
+    if (state.selection.from === state.selection.to) {
+      // 折叠光标：直接用祖先容器节点的位置（避免 nodesBetween 空扫）
+      for (let depth = state.selection.$from.depth; depth >= 1; depth -= 1) {
+        if (state.selection.$from.node(depth).type.name === current) {
+          positions.push(state.selection.$from.before(depth));
+          break;
+        }
+      }
+    } else {
+      state.doc.nodesBetween(state.selection.from, state.selection.to, (node, pos) => {
+        if (node.type.name === current && node.content.childCount) positions.push(pos);
+      });
+    }
+    if (!positions.length) return false;
+    for (const pos of positions.sort((a, b) => b - a)) {
+      const node = state.doc.nodeAt(pos);
+      tr = tr.replaceWith(pos, pos + node.nodeSize, node.content);
+    }
+    changed = true;
+  }
+  if (targetTypeName !== "paragraph") {
+    const nodeType = schema.nodes[targetTypeName];
+    if (!nodeType) return false;
+    /* 抬出后选择坐标已变化：用 tr.mapping 映射原始选择到新文档，
+     * 再取光标所在块进行包装，避免包装到空位置。 */
+    const fromPos = tr.mapping.map(state.selection.from, -1);
+    const toPos = tr.mapping.map(state.selection.to, 1);
+    const $from = tr.doc.resolve(fromPos);
+    const $to = tr.doc.resolve(toPos);
+    const range = $from.blockRange($to);
+    const wrapping = range && findWrapping(range, nodeType);
+    if (!wrapping) return false;
+    tr = tr.wrap(range, wrapping);
+    changed = true;
+  }
+  if (!changed) return false;
+  /* 显式把光标放回转换后的内容起始处（assoc -1 映射），
+   * 避免光标落到容器外导致工具栏状态与内容不符。 */
+  const mappedAnchor = tr.mapping.map(state.selection.from, -1);
+  const near = TextSelection.near(tr.doc.resolve(Math.max(1, Math.min(mappedAnchor, tr.doc.content.size - 1))));
+  tr = tr.setSelection(near);
+  if (dispatch) dispatch(tr.scrollIntoView());
+  return true;
+}
+
+/* 容器内空段退出：在诗歌/附记块末尾的空段按回车 → 生成容器外的普通段落。 */
 function containerExitEnter(state, dispatch) {
   const $from = state.selection.$from;
   const parent = $from.parent;
@@ -561,7 +720,7 @@ function editorKeymap() {
     "Ctrl-b": toggleMark(schema.marks.strong),
     "Ctrl-i": toggleMark(schema.marks.em),
     // 列表内回车=新列表项，列表外回车=分段（不能只绑 splitListItem，
-    // 否则普通段落里回车无效）；诗歌/尾注块末尾空段回车=退出容器
+    // 否则普通段落里回车无效）；诗歌/附记块末尾空段回车=退出容器
     Enter: chainCommands(containerExitEnter, splitListItem(schema.nodes.list_item), splitBlock),
     "Mod-Enter": chainCommands(splitListItem(schema.nodes.list_item), splitBlock),
     Tab: sinkListItem(schema.nodes.list_item),
@@ -670,6 +829,34 @@ export function createStudioEditor(host, options = {}) {
       toggleContainerCommand(view.state, view.dispatch, "endnote_block");
     },
 
+    toggleQuote() {
+      toggleContainerCommand(view.state, view.dispatch, "blockquote");
+    },
+
+    convertContainerType(name) {
+      convertContainerCommand(view.state, view.dispatch, name);
+    },
+
+    setBlockType(name, attrs) {
+      const nodeType = schema.nodes[name];
+      if (!nodeType) return;
+      setBlockTypeCommand(nodeType, attrs || null)(view.state, view.dispatch);
+    },
+
+    insertImage(src, alt) {
+      if (!src) return;
+      const node = schema.nodes.image.create({ src, alt: alt || "" });
+      view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+    },
+
+    setLink(url) {
+      if (url) {
+        toggleMark(schema.marks.link, { href: url })(view.state, view.dispatch);
+      } else {
+        toggleMark(schema.marks.link)(view.state, view.dispatch);
+      }
+    },
+
     focus() {
       view.focus();
     },
@@ -697,8 +884,12 @@ export const _internals = {
   editorKeymap,
   buildEditorPlugins,
   schema,
+  selectionInfo,
+  blockTypeAt,
   setAlignmentCommand,
+  setBlockTypeCommand,
   toggleContainerCommand,
+  convertContainerCommand,
   selectionInContainer,
   containerExitEnter,
   containerEmptyBackspace,

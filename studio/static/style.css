@@ -229,6 +229,8 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 .save-status.saved { color: var(--ok); }
 .save-status.failed { color: var(--danger); }
 .save-status.saving { color: var(--gold); }
+/* 预留：磁盘内容已变化（外部修改检测未实现，仅占位样式） */
+.save-status.changed { color: var(--gold); font-weight: 600; }
 
 /* 元数据与作者评折叠面板 */
 .fm-panel {
@@ -250,7 +252,7 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 }
 .fm-readonly dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; word-break: break-all; }
 
-/* 格式工具栏 */
+/* 格式工具栏（v0.2.6：五组语义分组，窄窗口可换行） */
 .editor-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -262,6 +264,48 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
   padding: 0.35rem 0.6rem;
   margin-bottom: 0.6rem;
 }
+/* 视觉分组：段落类型｜文字格式｜对齐｜插入｜历史 */
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0 0.4rem;
+  border-right: 1px solid var(--line);
+}
+.toolbar-group:last-of-type { border-right: none; }
+.tool-select {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  max-width: 9rem;
+}
+.tool-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tool-select option:disabled { color: var(--ink-faint); }
+.tool-hint {
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  padding: 0 0.4rem;
+}
+/* 编辑状态条：段落类型｜对齐｜保存状态 */
+.edit-statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.9rem;
+  font-size: 0.82rem;
+  color: var(--ink-faint);
+  background: var(--paper-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.28rem 0.7rem;
+  margin-bottom: 0.6rem;
+}
+.edit-statusbar strong { color: var(--ink); font-weight: 600; }
 .editor-toolbar .tool {
   font: inherit;
   font-size: 0.9rem;

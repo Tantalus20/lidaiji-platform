@@ -1,7 +1,7 @@
 {
   "name": "lidaiji-platform",
   "version": "0.2.1",
-  "studioVersion": "0.2.3",
+  "studioVersion": "0.2.6",
   "private": true,
   "description": "历代纪静态站本地预览入口（构建后由段评服务同源托管）",
   "scripts": {
