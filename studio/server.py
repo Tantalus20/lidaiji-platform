@@ -487,7 +487,7 @@ class StudioHTTPServer(ThreadingHTTPServer):
 
 
 class StudioHandler(BaseHTTPRequestHandler):
-    server_version = "LidaijiStudio/0.2.4"
+    server_version = "LidaijiStudio/0.2.5"
 
     @property
     def state(self) -> StudioState:

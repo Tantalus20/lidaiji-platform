@@ -1,5 +1,25 @@
 # 更新日志
 
+## Studio v0.2.5（2026-08-06，文章级隔离发布收尾）
+
+- 候选 manifest：隔离候选逐文件 SHA-256 清单 + 分类（target-article /
+  target-resource / derived-index / build-metadata / baseline-content /
+  unclassified），candidateId 由可重现部分（文件清单+基线+快照+构建器版本）
+  决定，相同输入重复构建结果一致；运行元数据与可重现部分分离；
+  清单存 .cache/studio/candidates/<candidateId>/，manifestSha256 可复算；
+- 候选敏感扫描：文件名/路径/文本内容三级扫描（env/私钥头/令牌格式/DB/
+  DOCX/作者评/私人绝对路径等），只报告类型与位置、不回显内容；命中即阻断；
+- 预览与发布同源强化：发布线程重验 candidateId 与预览一致，不一致拒绝；
+  预览后目标文件变化拒绝（preview-stale）；预览过期 preview-expired；
+  结构化错误携带 expected/actual 字段；
+- 发布锁记录 processId；发布结果携带 candidateId 与 manifestSha256；
+- UI：发布栏显示快照/源SHA/基线/候选/清单SHA/“尚未部署”；开发模式开关
+  STUDIO_DISABLE_PRODUCTION_PUBLISH=1 禁用发布按钮并显示
+  “本轮仅生成候选，未部署生产。”；预览成功后发布栏立即刷新；
+- 平台工作区门禁豁免 .cache/（候选/账本/日志目录）；
+- 新增候选清单/敏感扫描/结构化失效测试 15 项；Chrome 真实浏览器验收
+  10/10（虚构工作区，未部署生产）。
+
 ## Studio v0.2.4（2026-08-06，大规模段落失效门禁放行链路）
 
 - 修复《考试机器》发布失败根因：v0.5.1 大规模段落失效门禁（一次将超过 100 个或
