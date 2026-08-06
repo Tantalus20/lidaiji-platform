@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -718,3 +719,66 @@ class TestMonitorConsumer(unittest.TestCase):
             time.strftime("%Y-%m-%dT%H:%M:%S%z"), encoding="utf-8")
         rec = self.monitor.check_backup(self.cfg)
         self.assertTrue(rec["success"])
+
+
+class TestRunTimeout(unittest.TestCase):
+    """run_timeout 可移植封装专项：退出码传播、非零状态、超时语义（GNU 环境）。"""
+
+    def _run_function(self, command: str) -> subprocess.CompletedProcess:
+        # bash 3.2（macOS）不支持 source <(...)；先落临时文件再 source（测试真实函数体）
+        tmp = tempfile.mkstemp(suffix=".sh")[1]
+        try:
+            snippet = (
+                "sed -n '/^run_timeout()/,/^}/p' %s > %s\n"
+                "source %s\n%s" % (SCRIPT, tmp, tmp, command)
+            )
+            return subprocess.run(["bash", "-c", snippet], capture_output=True, text=True, timeout=60)
+        finally:
+            os.unlink(tmp)
+
+    def test_normal_completion_exit_code(self):
+        r = self._run_function("run_timeout 10 true; echo rc=$?")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("rc=0", r.stdout)
+
+    def test_nonzero_exit_propagates(self):
+        r = self._run_function("run_timeout 10 sh -c 'exit 7'; echo rc=$?")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("rc=7", r.stdout)
+
+    def test_timeout_returns_nonzero_on_gnu(self):
+        if shutil.which("timeout") is None:
+            self.skipTest("本机无 GNU timeout（macOS）；超时语义由服务器 GNU coreutils 覆盖")
+        import time as _t
+        start = _t.monotonic()
+        r = self._run_function("run_timeout 1 sleep 30; echo rc=$?")
+        elapsed = _t.monotonic() - start
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("rc=124", r.stdout)
+        self.assertLess(elapsed, 20, "超时必须按时返回")
+
+    def test_timeout_kills_child(self):
+        if shutil.which("timeout") is None:
+            self.skipTest("本机无 GNU timeout")
+        r = self._run_function("run_timeout 1 sh -c 'sleep 60 & wait'; echo rc=$?")
+        self.assertIn("rc=124", r.stdout)
+        # 无残留 sleep（timeout 已终止进程组）
+        leftover = subprocess.run(["bash", "-c", "pgrep -f 'sleep 60' | wc -l | tr -d ' '"],
+                                  capture_output=True, text=True).stdout.strip()
+        self.assertEqual(leftover, "0", "超时后不得残留子进程")
+
+    def test_upload_failure_not_mistaken_for_timeout(self):
+        fx = BackupFixture()
+        try:
+            m = FakeCoscliMixin()
+            m.fx = fx
+            m.install_fake_coscli("upload-fail")
+            env = fx.env()
+            env["COS_BACKUP_VALIDATE_ONLY"] = "0"
+            r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=120)
+            self.assertNotEqual(r.returncode, 0)
+            marker = fx.failure_marker()
+            self.assertEqual(marker.get("stage"), "cos-upload")
+            self.assertIn(str(marker.get("errorCode")), ("1",), "上传失败必须以实际错误码记录，不得误标为超时")
+        finally:
+            fx.cleanup()
