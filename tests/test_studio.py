@@ -302,7 +302,8 @@ class StudioTestCase(unittest.TestCase):
         _, payload = self.upload()
         self.assertTrue((self.root / ".cache" / "studio" / payload["token"]).is_dir())
         self.server.server_close()
-        self.assertFalse((self.root / ".cache" / "studio").exists())
+        # 会话临时目录必须清理；持久状态（账本/候选/发布日志）保留
+        self.assertFalse((self.root / ".cache" / "studio" / payload["token"]).exists())
 
     def test_14元数据路径字段与穿越值被拒(self):
         _, payload = self.upload()
