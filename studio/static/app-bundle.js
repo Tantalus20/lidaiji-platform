@@ -795,6 +795,11 @@
     $("#pubLiveVersion").textContent = live ? `\u7EBF\u4E0A\u7248\u672C\uFF1A${live.slice(-8)}\uFF08${fmtTime(new Date(status.publishedAt || 0).getTime() / 1e3)}\uFF09` : "\u7EBF\u4E0A\u7248\u672C\uFF1A\u5C1A\u672A\u53D1\u5E03";
     const unsaved = $("#pubUnsaved");
     unsaved.classList.toggle("hidden", !editState.dirty);
+    const preview = status.preview || {};
+    $("#pubSnapshot").textContent = preview.snapshotId ? `\u5FEB\u7167 ${preview.snapshotId.slice(0, 8)}\u2026 \xB7 \u6E90SHA ${preview.sourceFileSha256 || "\u2014"}` : "\u5C1A\u672A\u751F\u6210\u5FEB\u7167";
+    $("#pubBaseline").textContent = preview.baselineCommit ? `\u57FA\u7EBF ${preview.baselineCommit}\u2026` : "";
+    const candidate = preview.candidate || {};
+    $("#pubCandidate").textContent = candidate.candidateId ? candidate.blocked ? `\u5019\u9009\uFF1A\u5DF2\u963B\u65AD\uFF08${candidate.error || "\u654F\u611F\u626B\u63CF\u6216\u5206\u7C7B\u672A\u901A\u8FC7"}\uFF09` : `\u5019\u9009 ${candidate.candidateId} \xB7 \u6E05\u5355SHA ${String(candidate.manifestSha256 || "").slice(0, 12)} \xB7 ${candidate.fileCount || 0} \u6587\u4EF6 \xB7 \u5C1A\u672A\u90E8\u7F72` : "";
     const history = $("#publishHistory");
     const list = $("#publishHistoryList");
     list.textContent = "";
@@ -814,6 +819,28 @@
       });
     } else {
       history.classList.add("hidden");
+    }
+  }
+  async function ensureDeployMode() {
+    if (typeof window.studioDeployDisabled !== "boolean") {
+      try {
+        const payload = await apiGet("/api/system/status");
+        window.studioDeployDisabled = payload.deployDisabled === true;
+      } catch (error) {
+        window.studioDeployDisabled = false;
+      }
+    }
+    renderDeployMode();
+  }
+  function renderDeployMode() {
+    if (!editState.path) return;
+    const banner = $("#deployDevBanner");
+    const disabled = window.studioDeployDisabled === true;
+    banner.classList.toggle("hidden", !disabled);
+    const publishBtn = $("#editPublish");
+    if (publishBtn) {
+      publishBtn.disabled = disabled;
+      if (disabled) publishBtn.title = "\u5F00\u53D1\u6A21\u5F0F\uFF1A\u53D1\u5E03\u5230\u751F\u4EA7\u5DF2\u7981\u7528";
     }
   }
   function renderPublishStage() {
@@ -870,6 +897,8 @@
       const payload = await apiGet(`/api/article/publish-status?path=${encodeURIComponent(editState.path)}`);
       publishState.status = payload.status;
       renderPublishBar();
+      renderDeployMode();
+      ensureDeployMode();
       renderPublishStage();
       renderPublishResult();
       const lock = payload.status.lock;
@@ -933,6 +962,7 @@
       ];
       $("#publishStageText").textContent = lines.join(" | ");
       stage.classList.remove("hidden");
+      await refreshPublishStatus();
       window.open(payload.previewUrl, "_blank", "noopener");
     } catch (error) {
       stage.classList.add("hidden");
@@ -1790,6 +1820,11 @@
 \u5E73\u53F0\u4EE3\u7801\uFF1A${payload.workspace.platformRoot}`;
       }
       status.textContent = payload.preview.running ? `\u9884\u89C8\u8FD0\u884C\u4E2D\uFF1A${payload.preview.url}` : "";
+      window.studioDeployDisabled = payload.deployDisabled === true;
+      if (window.studioDeployDisabled) {
+        const banner = document.getElementById("deployDevBanner");
+        if (banner) banner.classList.remove("hidden");
+      }
     } catch (error) {
       status.textContent = "";
     }

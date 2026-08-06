@@ -59,3 +59,15 @@ Word 导入保持 parse（零写入）→ plan（零写入）→ commit（冲突
   （--allow-large-retire）完整传递到服务器端 sync-manifest。
 - 不勾选则发布被拒绝；其余检查（front matter/slug/基线/平台干净/无关差异）失败时
   勾选也无济于事。
+
+## v0.2.5 候选清单、敏感扫描与开发模式
+
+- 每次成功预览都会生成**隔离候选**（构建产物的不可变副本）与候选清单
+  （`.cache/studio/candidates/<candidateId>/`）：逐文件 SHA-256、分类、可复算
+  的 manifestSha256；相同基线/快照/构建代码重复预览得到相同 candidateId。
+- 候选发布前经**敏感扫描**（env/私钥/令牌/DB/DOCX/作者评/私人路径等）；
+  命中即阻断，只报告类型与位置。
+- 发布时服务端重验 candidateId 与预览一致，预览失效返回结构化错误
+  （preview-stale/preview-expired，含 expected/actual 字段）。
+- 开发模式：`STUDIO_DISABLE_PRODUCTION_PUBLISH=1` 启动时禁用发布按钮并显示
+  “本轮仅生成候选，未部署生产。”；不设置时功能与日常一致。

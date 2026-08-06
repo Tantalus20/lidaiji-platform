@@ -181,6 +181,11 @@ async function refreshPreviewStatus() {
       $("#workspaceTarget").title = `内容提交目标：${payload.workspace.contentRepoRoot}\n平台代码：${payload.workspace.platformRoot}`;
     }
     status.textContent = payload.preview.running ? `预览运行中：${payload.preview.url}` : "";
+    window.studioDeployDisabled = payload.deployDisabled === true;
+    if (window.studioDeployDisabled) {
+      const banner = document.getElementById("deployDevBanner");
+      if (banner) banner.classList.remove("hidden");
+    }
   } catch (error) {
     status.textContent = "";
   }

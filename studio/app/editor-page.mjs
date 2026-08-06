@@ -430,6 +430,19 @@ function renderPublishBar() {
     : "线上版本：尚未发布";
   const unsaved = $("#pubUnsaved");
   unsaved.classList.toggle("hidden", !editState.dirty);
+  const preview = status.preview || {};
+  $("#pubSnapshot").textContent = preview.snapshotId
+    ? `快照 ${preview.snapshotId.slice(0, 8)}… · 源SHA ${preview.sourceFileSha256 || "—"}`
+    : "尚未生成快照";
+  $("#pubBaseline").textContent = preview.baselineCommit
+    ? `基线 ${preview.baselineCommit}…`
+    : "";
+  const candidate = preview.candidate || {};
+  $("#pubCandidate").textContent = candidate.candidateId
+    ? (candidate.blocked
+        ? `候选：已阻断（${candidate.error || "敏感扫描或分类未通过"}）`
+        : `候选 ${candidate.candidateId} · 清单SHA ${String(candidate.manifestSha256 || "").slice(0, 12)} · ${candidate.fileCount || 0} 文件 · 尚未部署`)
+    : "";
   const history = $("#publishHistory");
   const list = $("#publishHistoryList");
   list.textContent = "";
@@ -449,6 +462,30 @@ function renderPublishBar() {
     });
   } else {
     history.classList.add("hidden");
+  }
+}
+
+async function ensureDeployMode() {
+  if (typeof window.studioDeployDisabled !== "boolean") {
+    try {
+      const payload = await apiGet("/api/system/status");
+      window.studioDeployDisabled = payload.deployDisabled === true;
+    } catch (error) {
+      window.studioDeployDisabled = false;
+    }
+  }
+  renderDeployMode();
+}
+
+function renderDeployMode() {
+  if (!editState.path) return;
+  const banner = $("#deployDevBanner");
+  const disabled = window.studioDeployDisabled === true;
+  banner.classList.toggle("hidden", !disabled);
+  const publishBtn = $("#editPublish");
+  if (publishBtn) {
+    publishBtn.disabled = disabled;
+    if (disabled) publishBtn.title = "开发模式：发布到生产已禁用";
   }
 }
 
@@ -510,6 +547,8 @@ async function refreshPublishStatus() {
     const payload = await apiGet(`/api/article/publish-status?path=${encodeURIComponent(editState.path)}`);
     publishState.status = payload.status;
     renderPublishBar();
+    renderDeployMode();
+    ensureDeployMode();
     renderPublishStage();
     renderPublishResult();
     const lock = payload.status.lock;
@@ -575,6 +614,8 @@ $("#editPublishPreview").addEventListener("click", async () => {
     ];
     $("#publishStageText").textContent = lines.join(" | ");
     stage.classList.remove("hidden");
+    // 预览成功后刷新发布栏（快照/基线/候选清单字段来自 publish-status）
+    await refreshPublishStatus();
     window.open(payload.previewUrl, "_blank", "noopener");
   } catch (error) {
     stage.classList.add("hidden");

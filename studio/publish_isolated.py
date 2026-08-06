@@ -100,6 +100,7 @@ def resolve_published_baseline(state, domain: str) -> dict:
     manifest_by_id = {a["articleId"]: a for a in manifest["articles"]}
     mismatches: list[str] = []
     verified: list[str] = []
+    public_bundles: dict[str, str] = {}  # articleId -> 文章 bundle 相对路径（公开内容基线）
     for article in manifest["articles"]:
         # 按 articleId 在私人仓库 HEAD 树中定位文件（canonicalPath 无法唯一定位
         # works 文集层级），找不到按未核对处理
@@ -117,6 +118,7 @@ def resolve_published_baseline(state, domain: str) -> dict:
             mismatches.append(f"{article.get('title')}（线上 {article.get('revision', '?')[-12:] } vs 仓库 {rev[-12:] if rev else '无'}）")
         else:
             verified.append(aid)
+            public_bundles[aid] = str(Path(rel).parent.as_posix())
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=private_repo, timeout=15)
     baseline_commit = head.stdout.strip() if head.returncode == 0 else ""
     if mismatches:
@@ -125,11 +127,17 @@ def resolve_published_baseline(state, domain: str) -> dict:
             "无法确认当前线上内容基线（以下文章线上版本与私人仓库提交不一致）："
             + "；".join(mismatches[:5]) + "。请先核验发布记录。",
         )
+    if len(public_bundles) != len(manifest["articles"]):
+        raise IsolationError(
+            "baseline-mismatch",
+            "无法为全部线上文章定位公开内容文件（公开内容基线无法构造），发布已阻止。",
+        )
     return {
         "publicPlatformCommit": "",
         "privateContentCommit": baseline_commit,
         "releaseId": "",
         "verifiedArticles": len(verified),
+        "publicArticleBundles": public_bundles,
         "manifestSha256": hashlib.sha256(
             json.dumps(manifest.get("articles", []), sort_keys=True, ensure_ascii=False).encode()
         ).hexdigest(),
@@ -142,8 +150,79 @@ def resolve_published_baseline(state, domain: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+# 平台工作区允许豁免的 .cache 受控路径（收窄：未知 .cache 条目必须阻断）
+_CACHE_ALLOWLIST = (
+    ".cache/studio/candidates",
+    ".cache/studio/publish-history.json",
+    ".cache/studio/publish-logs",
+    ".cache/studio/locks",
+)
+_CACHE_ID_RE = __import__("re").compile(r"^(cand_[0-9a-f]{20}|pub_[0-9a-f]{12})$")
+_PUB_LOG_RE = __import__("re").compile(r"^(pub_[0-9a-f]{12}|sweep-failures)\.log$")
+
+
+def _validate_cache_entry(platform_root: Path, path: str) -> str | None:
+    """校验受控 .cache 条目；返回违规原因（None=合法）。"""
+    node = platform_root / path
+    try:
+        if node.is_symlink() or any(part.is_symlink() for part in node.relative_to(platform_root).parents if part != platform_root and part.exists()):
+            return "符号链接"
+        if not node.exists():
+            return "不存在"
+        stat = node.lstat()
+        if stat.st_uid != os.getuid():
+            return "属主不符"
+        if node.is_dir():
+            if stat.st_mode & 0o022:
+                return "权限过宽（应≤0700）"
+        else:
+            if stat.st_mode & 0o022:
+                return "权限过宽（应≤0600）"
+        name = node.name
+        if path.startswith(".cache/studio/candidates") and not (_CACHE_ID_RE.match(name) or name in (".",)):
+            return "名称格式不符"
+        if path.startswith(".cache/studio/publish-logs") and not (_PUB_LOG_RE.match(name) or name in (".",)):
+            return "名称格式不符"
+    except OSError:
+        return "无法读取"
+    return None
+
+
+def _scan_cache_entries(platform_root: Path) -> list[str]:
+    """磁盘扫描 .cache/studio（git 忽略的条目 git status 看不到），
+    未知条目或校验失败必须阻断。"""
+    problems: list[str] = []
+    cache_root = platform_root / ".cache" / "studio"
+    if not cache_root.is_dir():
+        return problems
+    for child in sorted(cache_root.iterdir()):
+        rel = f".cache/studio/{child.name}"
+        if child.name in ("candidates", "publish-logs", "locks"):
+            if child.is_symlink():
+                problems.append(f"{rel}（符号链接）")
+                continue
+            for sub in sorted(child.iterdir()) if child.is_dir() else []:
+                sub_rel = f"{rel}/{sub.name}"
+                issue = _validate_cache_entry(platform_root, sub_rel)
+                if issue:
+                    problems.append(f"{sub_rel}（{issue}）")
+            continue
+        if child.name == "publish-history.json":
+            issue = _validate_cache_entry(platform_root, rel)
+            if issue:
+                problems.append(f"{rel}（{issue}）")
+            continue
+        problems.append(f"{rel}（未知 .cache 条目）")
+    return problems
+
+
 def platform_clean_check(platform_root: Path) -> list[str]:
-    """平台代码/发布工具/配置脏时列出（阻止发布）。"""
+    """平台代码/发布工具/配置脏时列出（阻止发布）。
+
+    .cache 只豁免明确受控路径（候选/账本/发布日志/锁），且逐项校验
+    realpath/符号链接/属主/权限/名称格式；.cache 出现任何未知条目即阻断
+    （git 忽略的条目由磁盘扫描覆盖）。
+    """
     out = subprocess.run(
         ["git", "status", "--porcelain=v1"], capture_output=True, text=True,
         cwd=platform_root, timeout=15,
@@ -158,7 +237,20 @@ def platform_clean_check(platform_root: Path) -> list[str]:
             continue  # 本机配置与构建产物不阻止
         if path.startswith(("content/", "data/", "site-overrides/")):
             continue  # 内容仓库路径（真实架构中不在平台仓库内）
+        if path == ".cache" or path == ".cache/" or path.startswith(".cache/"):
+            # 根目录自身放行（子条目由磁盘扫描逐项校验）
+            if path in (".cache", ".cache/"):
+                continue
+            allowed = any(path == entry or path.startswith(entry + "/") for entry in _CACHE_ALLOWLIST)
+            if not allowed:
+                blocked.append(f"{path[:120]}（未知 .cache 条目）")
+                continue
+            issue = _validate_cache_entry(platform_root, path)
+            if issue:
+                blocked.append(f"{path[:120]}（.cache 条目校验失败：{issue}）")
+            continue
         blocked.append(path[:120])
+    blocked.extend(_scan_cache_entries(platform_root))
     return blocked[:20]
 
 
@@ -338,8 +430,64 @@ def _publish_workspaces_root() -> Path:
     return root
 
 
-def build_merged_content(state, target: dict, snapshot: dict) -> dict:
-    """创建隔离内容仓库：git archive 私人 HEAD 树 + 目标文章覆盖。
+def _front_matter_article_id(text: str) -> str:
+    """从文章 front matter 文本解析 articleId（无/解析失败返回空串）。"""
+    if not text.startswith("---\n"):
+        return ""
+    end = text.find("\n---", 3)
+    if end < 0:
+        return ""
+    try:
+        import yaml  # type: ignore
+        data = yaml.safe_load(text[3:end])
+    except Exception:
+        return ""
+    if isinstance(data, dict):
+        return str(data.get("articleId") or "")
+    return ""
+
+
+def _public_content_pathspecs(private_repo: Path, public_bundles: dict[str, str]) -> list[str]:
+    """按"线上清单公开内容"构造 git archive 路径白名单。
+
+    规则：
+    - 含 index.md 且 front matter 有 articleId 的目录 = 文章 bundle；
+      articleId 不在线上清单（公开集）→ 整个 bundle 从路径白名单排除
+      （未发布/私密文章及其资源绝不进入隔离输入）；
+    - 非 index.md/_index.md 的 .md 文件 → 排除（普通命名私密 Markdown）；
+    - 其余（公开文章 bundle、板块 _index.md、文集级资源）全部保留。
+    """
+    tree = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", "content/"],
+        capture_output=True, text=True, cwd=private_repo, timeout=30,
+    )
+    files = [line.strip() for line in tree.stdout.splitlines() if line.strip()]
+    excluded_bundles: set[str] = set()
+    for rel in files:
+        if not rel.endswith("/index.md"):
+            continue
+        show = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"], capture_output=True, text=True,
+            cwd=private_repo, timeout=30,
+        )
+        aid = _front_matter_article_id(show.stdout) if show.returncode == 0 else ""
+        if aid and aid not in public_bundles:
+            excluded_bundles.add(rel[: -len("index.md")].rstrip("/"))
+    includes: list[str] = []
+    for rel in files:
+        if any(rel.startswith(bundle + "/") for bundle in excluded_bundles):
+            continue
+        if rel.endswith(".md") and not rel.endswith(("/index.md", "/_index.md")):
+            continue
+        includes.append(rel)
+    return includes
+
+
+def build_merged_content(state, target: dict, snapshot: dict, baseline: dict | None = None) -> dict:
+    """创建隔离内容仓库：公开内容基线（线上清单明确列出的公开文章 bundle +
+    板块索引 + site-overrides + 公开作者评）+ 目标文章快照覆盖。
+
+    已提交但未公开/私密的文章 bundle、作者评与其资源绝不进入隔离输入。
 
     返回 {repoRoot, contentRoot, authorNotesRoot, siteOverridesRoot, id}。
     """
@@ -353,21 +501,28 @@ def build_merged_content(state, target: dict, snapshot: dict) -> dict:
         work_root = Path(tempfile.mkdtemp(prefix="lidaiji-iso-", dir=Path(state.project_root).parent))
         repo = work_root / "content-repo"
         repo.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not baseline or not baseline.get("publicArticleBundles"):
+        raise IsolationError("baseline-unavailable", "缺少可信公开内容基线，无法构造隔离输入。")
     tree = subprocess.run(
         ["git", "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True,
         cwd=private_repo, timeout=30,
     )
     tracked = set(tree.stdout.splitlines())
-    roots = [r for r in ("content", "data", "site-overrides") if any(p.startswith(r + "/") for p in tracked)]
+    # 公开内容基线路径白名单：线上清单公开文章 bundle + 板块索引 + 站点覆盖；
+    # data/ 不整体归档（作者评按公开文章过滤后选择性复制，见下）。
+    # 已提交未公开/私密文章在归档前即被排除，绝不进入隔离输入。
+    pathspecs = _public_content_pathspecs(private_repo, baseline["publicArticleBundles"])
+    if "site-overrides" in tracked or any(p.startswith("site-overrides/") for p in tracked):
+        pathspecs.append("site-overrides")
     archive = subprocess.run(
-        ["git", "archive", "HEAD", *roots],
+        ["git", "archive", "HEAD", *pathspecs],
         capture_output=True, cwd=private_repo, timeout=120,
     )
     if archive.returncode != 0:
-        raise IsolationError("baseline-unavailable", "无法从私人仓库 HEAD 归档基线内容。")
+        raise IsolationError("baseline-unavailable", "无法从私人仓库 HEAD 归档公开内容基线。")
     extract = subprocess.run(["tar", "-xf", "-", "-C", str(repo)], input=archive.stdout, timeout=120)
     if extract.returncode != 0:
-        raise IsolationError("baseline-unavailable", "基线内容解包失败。")
+        raise IsolationError("baseline-unavailable", "公开内容基线解包失败。")
     # 目标文章覆盖：index.md + 引用资源（未引用资源不纳入）。
     # 所有覆盖文件必须与快照记录哈希一致（快照不可变，拒绝静默替换）。
     target_content = repo / target["relBundlePath"]
@@ -384,13 +539,12 @@ def build_merged_content(state, target: dict, snapshot: dict) -> dict:
         dest = target_content / entry["relativePath"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, dest)
-    # 目标文章作者评（data/author-notes 中匹配 articleId 的文件）
-    article_id = snapshot["articleId"]
-    notes_src = private_repo / "data" / "author-notes"
-    if notes_src.is_dir():
-        for note in notes_src.glob("*.yaml"):
-            if article_id in note.name:
-                shutil.copy2(note, repo / "data" / "author-notes" / note.name)
+    # 作者评隐私规则（v0.2.5 收口）：作者评默认且始终属于私有内容。
+    # data/author-notes/** 在归档前即被排除（data/ 不在 git archive 路径白名单），
+    # 这里不再复制任何作者评——文章公开、目标文章身份、线上 manifest 均不
+    # 推导作者评公开。authorNotesRoot 指向空目录（环境兼容，内容为空）。
+    notes_dst = repo / "data" / "author-notes"
+    notes_dst.mkdir(parents=True, exist_ok=True)
     return {
         "id": publish_id,
         "workRoot": work_root,
@@ -405,6 +559,7 @@ def build_merged_content(state, target: dict, snapshot: dict) -> dict:
 def isolated_environment(merged: dict, base_environment: dict | None = None) -> dict:
     """发布子进程环境：LIDAIJI_* 指向隔离内容仓库（既有 build/publish 脚本原样复用）。"""
     env = dict(base_environment or os.environ)
+    env["LIDAIJI_DETERMINISTIC_BUILD"] = "1"  # 隔离构建确定性（候选可复现）
     env["LIDAIJI_CONTENT_REPO_ROOT"] = str(merged["repoRoot"])
     env["LIDAIJI_CONTENT_ROOT"] = str(merged["contentRoot"])
     env["LIDAIJI_AUTHOR_NOTES_ROOT"] = str(merged["authorNotesRoot"])

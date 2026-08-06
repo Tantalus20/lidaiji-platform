@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
 
 from studio import articles, versions
-from studio import publish_center, publish_isolated
+from studio import candidate_manifest, publish_center, publish_isolated, sensitive_scan
 
 PUBLISH_LOCK_AGE_SECONDS = 900 + 60  # publish.sh 超时上限 + 恢复余量
 PREVIEW_FRESH_SECONDS = 30 * 60  # 预览构建标识有效期
@@ -38,12 +39,13 @@ ANCHOR_RE = re.compile(r"<!-- paragraph-id:(p-[a-f0-9]{12}) -->")
 
 
 class ArticlePublishError(Exception):
-    """可直接转成 JSON 错误响应的失败。"""
+    """可直接转成 JSON 错误响应的失败（可携带结构化字段）。"""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, fields: dict | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.fields = fields or {}
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,7 @@ def acquire_publish_lock(state, idempotency_key: str = "") -> dict:
             "inFlight": True,
             "stage": "validating",
             "startedAt": now,
+            "processId": os.getpid(),
             "articleId": "",
             "kind": "site",
             "status": "running",
@@ -200,8 +203,17 @@ def article_publish_status(state, rel_path: str) -> dict:
         "publishedAt": (last or {}).get("completedAt", ""),
         "release": (last or {}).get("releaseId", ""),
         "previewFresh": preview_fresh,
+        "preview": {
+            "snapshotId": str((preview or {}).get("snapshotId") or ""),
+            "sourceFileSha256": str(((preview or {}).get("snapshot") or {}).get("sourceFileSha256") or "")[:12],
+            "createdAt": (preview or {}).get("createdAt"),
+            "fresh": preview_fresh,
+            "baselineCommit": str(((preview or {}).get("baseline") or {}).get("privateContentCommit") or "")[:12],
+            "candidate": (preview or {}).get("candidate"),
+        },
         "lock": publish_lock_status(state),
         "result": getattr(state, "article_publish_result", None),
+        "candidateSweep": candidate_manifest.sweep_failure_summary(project_root),
         "history": [
             {
                 "id": entry.get("id"),
@@ -287,6 +299,8 @@ def article_publish_preview(state, rel_path: str) -> dict:
     fm = article["frontMatter"]
     article_id = str(fm.get("articleId") or "")
     revision = str(fm.get("articleRevision") or "")
+    canonical = _canonical_url(article)
+    preview_build_id = ""
     checks: list[dict] = []
 
     def check(name: str, status: str, detail: str = ""):
@@ -359,6 +373,7 @@ def article_publish_preview(state, rel_path: str) -> dict:
 
     snapshot = None
     candidate = None
+    candidate_diff = None
     build_result = {"success": False, "output": "", "duration": 0.0}
     # 仅“段落大规模失效门禁”FAIL 不阻断快照/隔离构建（该门禁由发布确认时显式放行）
     failed_so_far = [c for c in checks if c["status"] == "FAIL" and c["name"] != "paragraph-large-gate"]
@@ -366,12 +381,13 @@ def article_publish_preview(state, rel_path: str) -> dict:
         try:
             target = publish_isolated._resolve_target(state, rel_path)
             snapshot = publish_isolated.create_target_snapshot(state, rel_path, revision)
+            preview_build_id = hashlib.sha256(f"{article_id}|{revision}|{snapshot['snapshotId']}|{_time.time()}".encode()).hexdigest()[:20]
             if snapshot["assetManifest"]["unreferenced"]:
                 check("assets", "WARNING",
                       f"未使用资源（不纳入候选）：{'、'.join(snapshot['assetManifest']['unreferenced'][:5])}")
             else:
                 check("assets", "PASS", f"引用资源 {len(snapshot['assetManifest']['entries'])} 个")
-            merged = publish_isolated.build_merged_content(state, target, snapshot)
+            merged = publish_isolated.build_merged_content(state, target, snapshot, baseline)
             try:
                 iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
                 build_result = publish_center.run_preflight(
@@ -381,16 +397,65 @@ def article_publish_preview(state, rel_path: str) -> dict:
                 )
                 if build_result["success"]:
                     check("hugo-build", "PASS", f"隔离构建成功，耗时 {build_result['duration']} 秒")
-                    manifest_path = platform_root / "dist" / "site" / "comment-manifest.json"
+                    manifest_path = publish_center.site_output_dir(platform_root) / "comment-manifest.json"
                     if manifest_path.is_file():
-                        candidate = publish_isolated.candidate_diff_check(manifest_path, baseline, article_id)
-                        if candidate["unrelatedChangedCount"]:
+                        candidate_diff = publish_isolated.candidate_diff_check(manifest_path, baseline, article_id)
+                        if candidate_diff["unrelatedChangedCount"]:
                             check("candidate-diff", "FAIL",
-                                  f"候选与线上存在无关差异：{'、'.join(candidate['unrelatedChanges'][:5])}")
-                        elif not candidate["targetPresent"]:
+                                  f"候选与线上存在无关差异：{'、'.join(candidate_diff['unrelatedChanges'][:5])}")
+                        elif not candidate_diff["targetPresent"]:
                             check("candidate-diff", "FAIL", "候选缺少目标文章页面")
                         else:
                             check("candidate-diff", "PASS", "无关文章候选差异 0，目标文章已包含")
+                        if build_result["success"] and candidate_diff["unrelatedChangedCount"] == 0 \
+                                and candidate_diff["targetPresent"]:
+                            try:
+                                candidate = candidate_manifest.materialize_candidate(
+                                    project_root, publish_center.site_output_dir(platform_root),
+                                    baseline, snapshot, target_url_prefix=canonical,
+                                    preview_build_id=preview_build_id,
+                                    test_identity=candidate_manifest.build_test_identity())
+                                scan = sensitive_scan.scan_candidate(candidate["candidateDir"])
+                                unclassified = candidate["manifest"].get("unclassifiedPaths", [])
+                                blocked = bool(scan["blocked"]) or bool(unclassified)
+                                identity = candidate["manifest"].get("testIdentity") or {}
+                                if identity.get("buildMode") == "test":
+                                    check("build-mode", "WARNING",
+                                          f"测试模式候选（testRunId={identity.get('testRunId')}），正式发布将被拒绝")
+                                else:
+                                    check("build-mode", "PASS", "正式模式候选（生产发布允许）")
+                                if os.environ.get("LIDAIJI_TEST_MODE", "") == "1":
+                                    marker_hits = candidate_manifest.slug_marker_hits(candidate["manifest"])
+                                    if marker_hits:
+                                        check("test-marker", "WARNING",
+                                              "fixture 命名纪律提示（非门禁）：" + "、".join(marker_hits[:5]))
+                                if scan["blocked"]:
+                                    kinds = "、".join(sorted({f["kind"] for f in scan["findings"]}))
+                                    check("sensitive-scan", "FAIL",
+                                          f"候选命中敏感项已阻断：{kinds}（仅报告类型与位置，不显示内容）")
+                                else:
+                                    check("sensitive-scan", "PASS", "敏感扫描通过（文件/路径/内容/清单）")
+                                if unclassified:
+                                    check("candidate-manifest", "FAIL",
+                                          f"候选含 {len(unclassified)} 个未分类文件，已阻止："
+                                          + "、".join(unclassified[:5]))
+                                else:
+                                    check("candidate-manifest", "PASS",
+                                          f"候选 {candidate['candidateId']} · 清单SHA "
+                                          f"{candidate['manifestSha256'][:12]} · 文件 "
+                                          f"{len(candidate['manifest']['files'])}")
+                                candidate_info = {"candidateId": candidate["candidateId"],
+                                                  "manifestSha256": candidate["manifestSha256"],
+                                                  "fileCount": len(candidate["manifest"]["files"]),
+                                                  "blocked": blocked,
+                                                  "buildMode": (candidate["manifest"].get("testIdentity") or {}).get("buildMode", "production"),
+                                                  "testRunId": (candidate["manifest"].get("testIdentity") or {}).get("testRunId", ""),
+                                                  "error": "敏感扫描或分类未通过" if blocked else ""}
+                                state._last_candidate_info = candidate_info
+                            except candidate_manifest.CandidateError as error:
+                                candidate_info = {"blocked": True, "error": error.message}
+                                state._last_candidate_info = candidate_info
+                                check("candidate-manifest", "FAIL", error.message)
                     else:
                         check("candidate-diff", "FAIL", "构建产物缺少内容清单")
                 else:
@@ -404,10 +469,9 @@ def article_publish_preview(state, rel_path: str) -> dict:
 
     failed = [c for c in checks if c["status"] == "FAIL"]
     gate_only = bool(failed) and all(c["name"] == "paragraph-large-gate" for c in failed)
-    preview_build_id = ""
-    canonical = _canonical_url(article)
+    candidate_info: dict | None = None
     if (not failed or gate_only) and snapshot is not None:
-        preview_build_id = hashlib.sha256(f"{article_id}|{revision}|{snapshot['snapshotId']}|{_time.time()}".encode()).hexdigest()[:20]
+        candidate_info = getattr(state, "_last_candidate_info", None)
         state.article_preview = {
             "articleId": article_id,
             "revision": revision,
@@ -419,10 +483,12 @@ def article_publish_preview(state, rel_path: str) -> dict:
             "baseline": baseline,
             "domain": domain,
             "largeRetireGate": gate_only,
+            "candidate": candidate_info,
         }
     return {
         "ok": not failed,
         "gateOnly": gate_only,
+        "candidate": candidate_info,
         "checks": checks,
         "anchor": {"retained": len(anchor["retained"]), "created": len(anchor["created"]), "deleted": len(anchor["deleted"])},
         "largeRetireGate": len(anchor["deleted"]) > 100,
@@ -435,7 +501,8 @@ def article_publish_preview(state, rel_path: str) -> dict:
             "verifiedArticles": baseline.get("verifiedArticles", 0),
         },
         "unrelatedDirty": dirty,
-        "candidate": candidate,
+        "candidate": candidate_info,
+        "candidateDiff": candidate_diff,
         "canonicalUrl": canonical,
         "previewUrl": f"http://127.0.0.1:{DEFAULT_PREVIEW_PORT}{canonical}",
         "buildOutput": (build_result.get("output") or "")[-3000:],
@@ -457,6 +524,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
 
     project_root = Path(state.project_root).resolve()
     platform_root = Path(getattr(state, "platform_root", None) or state.project_root).resolve()
+    if os.environ.get("STUDIO_DISABLE_PRODUCTION_PUBLISH", "") == "1":
+        raise ArticlePublishError("forbidden", "开发模式：本轮仅生成候选，未部署生产（发布到生产已禁用）。")
     draft_revision = str(payload.get("draftRevision") or "")
     preview_build_id = str(payload.get("previewBuildId") or "")
     idempotency_key = str(payload.get("idempotencyKey") or "")
@@ -484,12 +553,20 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
     if article["frontMatter"].get("draft", True):
         raise ArticlePublishError("validation-failed", "文章仍为草稿状态，无法发布。请先在表单取消勾选「草稿」并保存。")
     preview = getattr(state, "article_preview", None)
-    if not preview or preview.get("articleId") != article_id or preview.get("buildId") != preview_build_id:
-        raise ArticlePublishError("preflight-required", "预览构建标识无效或已过期，请重新生成发布预览。")
+    if not preview:
+        raise ArticlePublishError("preview-required", "尚未生成发布预览，请先生成。")
+    if preview.get("articleId") != article_id or preview.get("buildId") != preview_build_id:
+        raise ArticlePublishError("preview-stale", "预览构建标识无效或已过期，请重新生成发布预览。",
+                                  fields={"expectedPreviewBuildId": str(preview.get("buildId") or ""),
+                                          "actualPreviewBuildId": preview_build_id})
     if preview.get("snapshotId") != snapshot_id:
-        raise ArticlePublishError("preflight-required", "snapshotId 与预览不一致，请重新生成发布预览。")
+        raise ArticlePublishError("preview-stale", "snapshotId 与预览不一致，请重新生成发布预览。",
+                                  fields={"expectedSnapshotId": str(preview.get("snapshotId") or ""),
+                                          "actualSnapshotId": snapshot_id})
     if time.time() - preview.get("createdAt", 0) > PREVIEW_FRESH_SECONDS:
-        raise ArticlePublishError("preflight-required", "预览已过期（超过30分钟），请重新生成发布预览。")
+        raise ArticlePublishError("preview-expired", "预览已过期（超过30分钟），请重新生成发布预览。",
+                                  fields={"previewCreatedAt": preview.get("createdAt"),
+                                          "previewFreshSeconds": PREVIEW_FRESH_SECONDS})
 
     if preview.get("largeRetireGate") and not allow_large_retire:
         raise ArticlePublishError(
@@ -505,7 +582,9 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
             current_sha = hashlib.sha256(
                 (Path(project_root) / str(rel_path)).read_bytes()).hexdigest()
             if current_sha != snapshot.get("sourceFileSha256"):
-                raise ArticlePublishError("conflict", "目标文章在预览后发生变化，请重新生成发布预览。")
+                raise ArticlePublishError("preview-stale", "目标文章在预览后发生变化，请重新生成发布预览。",
+                                          fields={"expectedSourceFileSha256": str(snapshot.get("sourceFileSha256") or ""),
+                                                  "actualSourceFileSha256": current_sha})
         except OSError:
             raise ArticlePublishError("conflict", "目标文章文件无法读取，请重新生成发布预览。") from None
 
@@ -549,7 +628,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
         try:
             target = publish_isolated._resolve_target(state, rel_path)
             # 使用预览时创建的快照（内容寻址不可变）；文件或资源变化会在此校验失败
-            merged = publish_isolated.build_merged_content(state, target, preview["snapshot"])
+            merged = publish_isolated.build_merged_content(state, target, preview["snapshot"],
+                                                          preview.get("baseline"))
             iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
             if allow_large_retire:
                 iso_env["COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE"] = "1"
@@ -565,7 +645,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 state.article_publish_result = {"articleId": article_id, "ok": False,
                                                 "error": "发布前检查失败，请查看日志后重试。"}
                 return
-            manifest_path = platform_root / "dist" / "site" / "comment-manifest.json"
+            manifest_path = publish_center.site_output_dir(platform_root) / "comment-manifest.json"
             if manifest_path.is_file() and preview.get("baseline"):
                 candidate = publish_isolated.candidate_diff_check(manifest_path, preview["baseline"], article_id)
                 if candidate["unrelatedChangedCount"]:
@@ -574,6 +654,57 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                     record_publish(project_root, entry)
                     state.article_publish_result = {"articleId": article_id, "ok": False,
                                                     "error": "候选包含无关文章变化，已阻止发布。"}
+                    return
+                try:
+                    rebuilt = candidate_manifest.materialize_candidate(
+                        project_root, publish_center.site_output_dir(platform_root), preview["baseline"],
+                        preview["snapshot"], target_url_prefix=preview.get("canonicalUrl", ""),
+                        preview_build_id=str(preview.get("buildId") or ""),
+                        test_identity=candidate_manifest.build_test_identity())
+                    expected_id = (preview.get("candidate") or {}).get("candidateId", "")
+                    if expected_id and rebuilt["candidateId"] != expected_id:
+                        entry["status"] = "failed_diff"
+                        entry["error"] = "候选与预览不一致（candidateId 变化）。"
+                        record_publish(project_root, entry)
+                        state.article_publish_result = {
+                            "articleId": article_id, "ok": False,
+                            "error": "候选构建结果与预览不一致，已阻止发布。请重新生成预览。",
+                            "candidateId": rebuilt["candidateId"]}
+                        return
+                    scan = sensitive_scan.scan_candidate(rebuilt["candidateDir"])
+                    unclassified = rebuilt["manifest"].get("unclassifiedPaths", [])
+                    test_identity = rebuilt["manifest"].get("testIdentity") or {}
+                    if test_identity.get("buildMode") == "test":
+                        entry["status"] = "failed_test_candidate"
+                        entry["error"] = "测试候选禁止正式发布。"
+                        record_publish(project_root, entry)
+                        state.article_publish_result = {
+                            "articleId": article_id, "ok": False,
+                            "error": "测试候选禁止正式发布（buildMode=test，"
+                                     f"testRunId={test_identity.get('testRunId')}）。"}
+                        return
+                    if scan["blocked"] or unclassified:
+                        entry["status"] = "failed_scan"
+                        entry["error"] = "候选敏感扫描或分类未通过。"
+                        record_publish(project_root, entry)
+                        reasons = []
+                        if scan["blocked"]:
+                            kinds = "、".join(sorted({f["kind"] for f in scan["findings"]}))
+                            reasons.append(f"敏感项：{kinds}")
+                        if unclassified:
+                            reasons.append(f"未分类文件：{'、'.join(unclassified[:5])}")
+                        state.article_publish_result = {
+                            "articleId": article_id, "ok": False,
+                            "error": "候选已阻断（" + "；".join(reasons) + "）"}
+                        return
+                    entry["candidateId"] = rebuilt["candidateId"]
+                    entry["candidateManifestSha256"] = rebuilt["manifestSha256"]
+                except candidate_manifest.CandidateError as error:
+                    entry["status"] = "failed_scan"
+                    entry["error"] = error.message
+                    record_publish(project_root, entry)
+                    state.article_publish_result = {"articleId": article_id, "ok": False,
+                                                    "error": error.message}
                     return
             update_publish_stage(state, "backing-up")
             result = publish_center.run_publish(platform_root, iso_env)
@@ -601,6 +732,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 "canonicalUrl": _canonical_url(article),
                 "releaseId": entry["releaseId"],
                 "completedAt": entry["completedAt"],
+                "candidateId": entry.get("candidateId", ""),
+                "candidateManifestSha256": entry.get("candidateManifestSha256", ""),
                 "output": output_tail,
                 "logUrl": _persist_publish_log(state.project_root, entry["id"], result.get("output") or ""),
             }

@@ -150,19 +150,26 @@ class StudioError(Exception):
         self.message = message
 
 
+# 工作台持久状态（会话清扫必须保留）：
+# - backups/ trash/：既有保留目录；
+# - candidates/：隔离发布候选（跨重启可读，任务书 16.10）；
+# - publish-logs/：发布完整日志（下载入口）；
+# - publish-history.json：发布账本（幂等/历史依据）。
+_PERSISTENT_CACHE_ENTRIES = frozenset(
+    {"backups", "trash", "candidates", "publish-logs", "publish-history.json"})
+
+
 def sweep_cache(cache_root: Path) -> None:
-    """清扫会话缓存目录，但保留 backups/（保存备份）与 trash/（删除回收站）。"""
+    """清扫会话缓存目录，但保留持久状态（账本/候选/发布日志/备份/回收站）。"""
     if not cache_root.is_dir():
         return
     for child in cache_root.iterdir():
-        if child.name in ("backups", "trash"):
+        if child.name in _PERSISTENT_CACHE_ENTRIES:
             continue
         if child.is_dir() and not child.is_symlink():
             shutil.rmtree(child, ignore_errors=True)
         else:
             child.unlink(missing_ok=True)
-    if not (cache_root / "backups").is_dir() and not (cache_root / "trash").is_dir():
-        shutil.rmtree(cache_root, ignore_errors=True)
 
 
 @dataclass
@@ -487,7 +494,7 @@ class StudioHTTPServer(ThreadingHTTPServer):
 
 
 class StudioHandler(BaseHTTPRequestHandler):
-    server_version = "LidaijiStudio/0.2.4"
+    server_version = "LidaijiStudio/0.2.5"
 
     @property
     def state(self) -> StudioState:
@@ -510,8 +517,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_error_json(self, code: str, message: str, status: int | None = None) -> None:
-        self.send_json({"ok": False, "error": {"code": code, "message": message}}, status or HTTP_BY_CODE.get(code, 500))
+    def send_error_json(self, code: str, message: str, status: int | None = None,
+                        fields: dict | None = None) -> None:
+        error = {"code": code, "message": message}
+        if fields:
+            error.update(fields)
+        self.send_json({"ok": False, "error": error}, status or HTTP_BY_CODE.get(code, 500))
 
     # -- 安全闸 ------------------------------------------------------------
 
@@ -619,6 +630,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.handle_article_publish_status()
             elif path == "/api/article/publish-log":
                 self.handle_article_publish_log()
+            elif path == "/api/article/candidate":
+                self.handle_article_candidate()
             elif path == "/api/git/status":
                 self.handle_git_status()
             elif path == "/api/git/log":
@@ -650,7 +663,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         except articles.ArticleFailure as error:
             self.send_error_json(error.code, error.message)
         except publish_article.ArticlePublishError as error:
-            self.send_error_json(error.code, error.message)
+            self.send_error_json(error.code, error.message, fields=error.fields or None)
         except (feedback.FeedbackFailure, notes.NoteFailure) as error:
             self.send_error_json(error.code, error.message)
         except BrokenPipeError:
@@ -707,7 +720,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         except articles.ArticleFailure as error:
             self.send_error_json(error.code, error.message)
         except publish_article.ArticlePublishError as error:
-            self.send_error_json(error.code, error.message)
+            self.send_error_json(error.code, error.message, fields=error.fields or None)
         except (feedback.FeedbackFailure, notes.NoteFailure) as error:
             self.send_error_json(error.code, error.message)
         except import_stages.ImportFailure as error:
@@ -901,6 +914,35 @@ class StudioHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         rel_path = (query.get("path") or [""])[0]
         self.send_json({"ok": True, "status": publish_article.article_publish_status(self.state, rel_path)})
+
+    def handle_article_candidate(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        candidate_id = (query.get("id") or [""])[0]
+        try:
+            manifest = publish_article.candidate_manifest.load_candidate_manifest(
+                Path(self.state.project_root), candidate_id)
+        except publish_article.candidate_manifest.CandidateError as error:
+            self.send_error_json(error.code, error.message,
+                                 status={"not-found": 404, "validation-failed": 400}.get(error.code))
+            return
+        summary = {
+            "candidateId": manifest.get("candidateId"),
+            "baselineId": manifest.get("baselineId"),
+            "snapshotId": manifest.get("snapshotId"),
+            "buildMode": (manifest.get("testIdentity") or {}).get("buildMode", "production"),
+            "testRunId": (manifest.get("testIdentity") or {}).get("testRunId", ""),
+            "targetArticleId": manifest.get("targetArticleId"),
+            "targetSlug": manifest.get("targetSlug"),
+            "fileCount": len(manifest.get("files", [])),
+            "totalBytes": sum(int(f.get("size", 0)) for f in manifest.get("files", [])),
+            "classifications": {},
+            "manifestSha256": manifest.get("manifestSha256"),
+            "createdAt": manifest.get("runtime", {}).get("createdAt", ""),
+        }
+        for f in manifest.get("files", []):
+            cls = f.get("classification", "?")
+            summary["classifications"][cls] = summary["classifications"].get(cls, 0) + 1
+        self.send_json({"ok": True, "manifest": summary})
 
     def handle_article_publish_log(self) -> None:
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -1270,6 +1312,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         running = process is not None and process.poll() is None
         self.send_json({
             "ok": True,
+            "version": self.server_version,
+            "deployDisabled": os.environ.get("STUDIO_DISABLE_PRODUCTION_PUBLISH", "") == "1",
             "preview": {"running": running, "url": "http://127.0.0.1:1313/"},
             "workspace": {
                 "mode": self.state.workspace_mode,

@@ -28,9 +28,16 @@ if str(ROOT) not in sys.path:
 from studio import publish_article as pa  # noqa: E402
 from studio import publish_isolated as iso  # noqa: E402
 
-# 测试用 manifest 覆盖（模块导入后设置）
-_TMP_MANIFEST = Path(tempfile.mkdtemp(prefix="iso-manifest-")) / "manifest.json"
-os.environ["LIDAIJI_PUBLISH_MANIFEST_FILE"] = str(_TMP_MANIFEST)
+# 测试用 manifest 覆盖（模块导入后设置）。
+# 该文件可能以 tests.test_studio_publish_iso 与顶层 test_studio_publish_iso
+# 两个名字被导入（test_studio_candidate 会 import 顶层名），因此环境变量与
+# 路径必须按“已存在则复用”守卫，保证两个模块实例共享同一 manifest 文件。
+_MANIFEST_OVERRIDE = os.environ.get("LIDAIJI_PUBLISH_MANIFEST_FILE", "")
+if _MANIFEST_OVERRIDE:
+    _TMP_MANIFEST = Path(_MANIFEST_OVERRIDE)
+else:
+    _TMP_MANIFEST = Path(tempfile.mkdtemp(prefix="iso-manifest-")) / "manifest.json"
+    os.environ["LIDAIJI_PUBLISH_MANIFEST_FILE"] = str(_TMP_MANIFEST)
 os.environ.setdefault("LIDAIJI_PUBLISH_WORKSPACES_ROOT", str(Path(tempfile.mkdtemp(prefix="iso-workspaces-"))))
 
 ANCHOR_RE = __import__("re").compile(r"<!-- paragraph-id:(p-[a-f0-9]{12}) -->")
@@ -163,6 +170,7 @@ class IsoPublishTests(unittest.TestCase):
     def setUp(self):
         self.ws = IsoWorkspace()
         self.state = FakeState(self.ws)
+        self.ws_baseline = iso.resolve_published_baseline(self.state, "example.test")
 
     def tearDown(self):
         self.ws.cleanup()
@@ -275,7 +283,8 @@ class IsoPublishTests(unittest.TestCase):
         snapshot = iso.create_target_snapshot(self.state, target["path"], target["frontMatter"]["articleRevision"])
         img.write_bytes(b"CHANGED")
         with self.assertRaises(iso.IsolationError) as ctx:
-            iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot)
+            iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot,
+                                     self.ws_baseline)
         self.assertEqual(ctx.exception.code, "conflict")
 
     # ---- 隔离候选 ----
@@ -285,8 +294,8 @@ class IsoPublishTests(unittest.TestCase):
         self.ws.write_candidate_manifest(target)
         result = pa.article_publish_preview(self.state, target["path"])
         self.assertTrue(result["ok"], [c for c in result["checks"] if c["status"] == "FAIL"])
-        self.assertEqual(result["candidate"]["unrelatedChangedCount"], 0)
-        self.assertTrue(result["candidate"]["targetPresent"])
+        self.assertEqual(result["candidateDiff"]["unrelatedChangedCount"], 0)
+        self.assertTrue(result["candidateDiff"]["targetPresent"])
 
     def test_ISO_DIFF_02_无关文章差异立即FAIL(self):
         target = _new_target(self.ws)
@@ -431,7 +440,9 @@ class IsoPublishTests(unittest.TestCase):
                 "snapshotId": snapshot_id,
                 "idempotencyKey": "iso-pub-00000006",
             })
-        self.assertEqual(ctx.exception.code, "conflict")
+        # 语义升级（v0.2.5）：预览后文件变化 → 结构化 preview-stale（带字段）
+        self.assertEqual(ctx.exception.code, "preview-stale")
+        self.assertIn("expectedSourceFileSha256", ctx.exception.fields)
 
 
 def sha256_of(path: Path) -> str:
@@ -449,6 +460,7 @@ class WorksPathTests(unittest.TestCase):
     def setUp(self):
         self.ws = IsoWorkspace()
         self.state = FakeState(self.ws)
+        self.ws_baseline = iso.resolve_published_baseline(self.state, "example.test")
 
     def tearDown(self):
         self.ws.cleanup()
@@ -488,7 +500,8 @@ class WorksPathTests(unittest.TestCase):
     def test_ISO_WORKS_02_隔离合并保留文集层级(self):
         target = self._make_works_article()
         snapshot = iso.create_target_snapshot(self.state, target["path"], target["frontMatter"]["articleRevision"])
-        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot)
+        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot,
+                                         self.ws_baseline)
         try:
             overlaid = merged["contentRoot"] / "works" / "lidai-ji" / "kao-shi-ji-qi" / "index.md"
             self.assertTrue(overlaid.is_file(), "works文章必须覆盖到文集层级路径")

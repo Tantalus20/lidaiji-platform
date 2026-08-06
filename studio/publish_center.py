@@ -31,6 +31,15 @@ CHANGELOG_HEADING = re.compile(r"^##\s+(V[\d.]+)\s*(.*)$")
 DATE_LINE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
+def site_output_dir(platform_root) -> Path:
+    """构建产物目录；测试/验收模式用 LIDAIJI_DIST_ROOT 强制指向独立临时目录，
+    绝不写入真实平台 dist/。"""
+    override = os.environ.get("LIDAIJI_DIST_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve() / "site"
+    return Path(platform_root).resolve() / "dist" / "site"
+
+
 def _tail(text: str) -> str:
     text = text or ""
     if len(text) <= MAX_OUTPUT_CHARS:

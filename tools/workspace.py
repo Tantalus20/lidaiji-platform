@@ -224,9 +224,9 @@ def materialize(workspace: Workspace, destination: Path) -> Path:
     (destination / "content").symlink_to(Path(workspace.contentRoot), target_is_directory=True)
     data = destination / "data"
     data.mkdir()
-    # Hugo 的 data 加载器不会可靠遍历目录符号链接；作者评只复制到系统临时
-    # 构建工作区，构建结束即清理，绝不写回平台仓库或进入源码包。
-    shutil.copytree(Path(workspace.authorNotesRoot), data / "author-notes")
+    # 作者评隐私规则（v0.2.5 收口）：作者评默认且始终属于私有内容，
+    # 不进入 Hugo 输入目录；data/author-notes 在物化时留空。
+    (data / "author-notes").mkdir(exist_ok=True)
     shutil.copytree(platform / "config", destination / "config")
     site = _flat_yaml(Path(workspace.siteOverridesRoot) / "site.yaml")
     branding = _flat_yaml(Path(workspace.siteOverridesRoot) / "branding.yaml")
