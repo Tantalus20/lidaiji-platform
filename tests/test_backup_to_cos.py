@@ -666,3 +666,55 @@ class TestStatusSemantics(unittest.TestCase, FakeCoscliMixin):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMonitorConsumer(unittest.TestCase):
+    """监控消费者证明：CHECK_BACKUP 仅依赖 backup-last-success 与失败 marker，
+    validate-only 不会刷新监控成功阈值。"""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "lidaiji_monitor", ROOT / "deploy" / "monitor" / "lidaiji_monitor.py")
+        self.monitor = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.monitor)
+        self.tmp = Path(tempfile.mkdtemp(prefix="monitor-test-"))
+        self.monitor.BACKUP_STATE_DIR = str(self.tmp)
+        self.monitor.BACKUP_FAILURE_MARKER = str(self.tmp / "backup-failure.marker")
+        self.monitor.BACKUP_LAST_SUCCESS = str(self.tmp / "backup-last-success")
+        self.cfg = {"CHECK_BACKUP": "1"}
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_monitor_does_not_read_backup_complete_log(self):
+        # validate-only 后：无 last-success → 监控判失败（不得视为正式成功）
+        (self.tmp / "backup-state.log").write_text(
+            "STATE=LOCAL_VERIFY_DONE\nSTATE=VALIDATE_ONLY_COMPLETE\n", encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertFalse(rec["success"])
+        self.assertEqual(rec["errorCode"], "backup_no_success_record")
+
+    def test_monitor_validate_only_does_not_refresh_success_threshold(self):
+        # 旧的正式成功时间保持 → 监控按旧时间判定（validate-only 不刷新）
+        (self.tmp / "backup-last-success").write_text(
+            "2026-08-06T04:30:53+08:00", encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertTrue(rec["success"])
+        self.assertIn("04:30:53", rec["errorCode"])
+
+    def test_monitor_failure_marker_with_mode_fields(self):
+        (self.tmp / "backup-failure.marker").write_text(json.dumps({
+            "task": "lidaiji-backup", "status": "failed", "stage": "cos-upload",
+            "errorCode": 1, "time": "T", "mode": "full",
+            "failedStage": "cos-upload", "remoteUploadPerformed": True}), encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertFalse(rec["success"])
+        self.assertIn("stage=cos-upload", rec["errorCode"])
+
+    def test_monitor_full_success_after_full_backup(self):
+        (self.tmp / "backup-last-success").write_text(
+            time.strftime("%Y-%m-%dT%H:%M:%S%z"), encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertTrue(rec["success"])
