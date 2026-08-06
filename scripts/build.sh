@@ -6,8 +6,8 @@ require_command node
 COMMENTS_PYTHON="${WRITING_IMPORT_PYTHON:-$ROOT/.venv-importer/bin/python}"
 [[ -x "$COMMENTS_PYTHON" ]] || COMMENTS_PYTHON="$(command -v python3)"
 
-DIST="$ROOT/dist"
-mkdir -p "$DIST"
+DIST="${LIDAIJI_DIST_ROOT:-$ROOT/dist}"
+mkdir -p "$DIST"  # LIDAIJI_DIST_ROOT 可把构建产物指向独立临时目录（测试/验收）
 STAGING="$(mktemp -d "$DIST/.site.XXXXXX")"
 WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/lidaiji-build-workspace.XXXXXX")"
 START="$(date +%s)"

@@ -170,6 +170,7 @@ class IsoPublishTests(unittest.TestCase):
     def setUp(self):
         self.ws = IsoWorkspace()
         self.state = FakeState(self.ws)
+        self.ws_baseline = iso.resolve_published_baseline(self.state, "example.test")
 
     def tearDown(self):
         self.ws.cleanup()
@@ -282,7 +283,8 @@ class IsoPublishTests(unittest.TestCase):
         snapshot = iso.create_target_snapshot(self.state, target["path"], target["frontMatter"]["articleRevision"])
         img.write_bytes(b"CHANGED")
         with self.assertRaises(iso.IsolationError) as ctx:
-            iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot)
+            iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot,
+                                     self.ws_baseline)
         self.assertEqual(ctx.exception.code, "conflict")
 
     # ---- 隔离候选 ----
@@ -458,6 +460,7 @@ class WorksPathTests(unittest.TestCase):
     def setUp(self):
         self.ws = IsoWorkspace()
         self.state = FakeState(self.ws)
+        self.ws_baseline = iso.resolve_published_baseline(self.state, "example.test")
 
     def tearDown(self):
         self.ws.cleanup()
@@ -497,7 +500,8 @@ class WorksPathTests(unittest.TestCase):
     def test_ISO_WORKS_02_隔离合并保留文集层级(self):
         target = self._make_works_article()
         snapshot = iso.create_target_snapshot(self.state, target["path"], target["frontMatter"]["articleRevision"])
-        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot)
+        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]), snapshot,
+                                         self.ws_baseline)
         try:
             overlaid = merged["contentRoot"] / "works" / "lidai-ji" / "kao-shi-ji-qi" / "index.md"
             self.assertTrue(overlaid.is_file(), "works文章必须覆盖到文集层级路径")

@@ -386,7 +386,7 @@ def article_publish_preview(state, rel_path: str) -> dict:
                       f"未使用资源（不纳入候选）：{'、'.join(snapshot['assetManifest']['unreferenced'][:5])}")
             else:
                 check("assets", "PASS", f"引用资源 {len(snapshot['assetManifest']['entries'])} 个")
-            merged = publish_isolated.build_merged_content(state, target, snapshot)
+            merged = publish_isolated.build_merged_content(state, target, snapshot, baseline)
             try:
                 iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
                 build_result = publish_center.run_preflight(
@@ -396,7 +396,7 @@ def article_publish_preview(state, rel_path: str) -> dict:
                 )
                 if build_result["success"]:
                     check("hugo-build", "PASS", f"隔离构建成功，耗时 {build_result['duration']} 秒")
-                    manifest_path = platform_root / "dist" / "site" / "comment-manifest.json"
+                    manifest_path = publish_center.site_output_dir(platform_root) / "comment-manifest.json"
                     if manifest_path.is_file():
                         candidate_diff = publish_isolated.candidate_diff_check(manifest_path, baseline, article_id)
                         if candidate_diff["unrelatedChangedCount"]:
@@ -410,12 +410,18 @@ def article_publish_preview(state, rel_path: str) -> dict:
                                 and candidate_diff["targetPresent"]:
                             try:
                                 candidate = candidate_manifest.materialize_candidate(
-                                    project_root, platform_root / "dist" / "site",
+                                    project_root, publish_center.site_output_dir(platform_root),
                                     baseline, snapshot, target_url_prefix=canonical,
                                     preview_build_id=preview_build_id)
                                 scan = sensitive_scan.scan_candidate(candidate["candidateDir"])
                                 unclassified = candidate["manifest"].get("unclassifiedPaths", [])
-                                blocked = bool(scan["blocked"]) or bool(unclassified)
+                                markers = candidate_manifest.test_marker_hits(candidate["manifest"])
+                                blocked = bool(scan["blocked"]) or bool(unclassified) or bool(markers)
+                                if markers:
+                                    check("test-marker", "FAIL",
+                                          f"候选含测试 fixture 标记，已阻止：{'、'.join(markers[:5])}")
+                                else:
+                                    check("test-marker", "PASS", "无测试 fixture 标记")
                                 if scan["blocked"]:
                                     kinds = "、".join(sorted({f["kind"] for f in scan["findings"]}))
                                     check("sensitive-scan", "FAIL",
@@ -509,6 +515,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
 
     project_root = Path(state.project_root).resolve()
     platform_root = Path(getattr(state, "platform_root", None) or state.project_root).resolve()
+    if os.environ.get("STUDIO_DISABLE_PRODUCTION_PUBLISH", "") == "1":
+        raise ArticlePublishError("forbidden", "开发模式：本轮仅生成候选，未部署生产（发布到生产已禁用）。")
     draft_revision = str(payload.get("draftRevision") or "")
     preview_build_id = str(payload.get("previewBuildId") or "")
     idempotency_key = str(payload.get("idempotencyKey") or "")
@@ -611,7 +619,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
         try:
             target = publish_isolated._resolve_target(state, rel_path)
             # 使用预览时创建的快照（内容寻址不可变）；文件或资源变化会在此校验失败
-            merged = publish_isolated.build_merged_content(state, target, preview["snapshot"])
+            merged = publish_isolated.build_merged_content(state, target, preview["snapshot"],
+                                                          preview.get("baseline"))
             iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
             if allow_large_retire:
                 iso_env["COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE"] = "1"
@@ -627,7 +636,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 state.article_publish_result = {"articleId": article_id, "ok": False,
                                                 "error": "发布前检查失败，请查看日志后重试。"}
                 return
-            manifest_path = platform_root / "dist" / "site" / "comment-manifest.json"
+            manifest_path = publish_center.site_output_dir(platform_root) / "comment-manifest.json"
             if manifest_path.is_file() and preview.get("baseline"):
                 candidate = publish_isolated.candidate_diff_check(manifest_path, preview["baseline"], article_id)
                 if candidate["unrelatedChangedCount"]:
@@ -639,7 +648,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                     return
                 try:
                     rebuilt = candidate_manifest.materialize_candidate(
-                        project_root, platform_root / "dist" / "site", preview["baseline"],
+                        project_root, publish_center.site_output_dir(platform_root), preview["baseline"],
                         preview["snapshot"], target_url_prefix=preview.get("canonicalUrl", ""),
                         preview_build_id=str(preview.get("buildId") or ""))
                     expected_id = (preview.get("candidate") or {}).get("candidateId", "")
@@ -654,7 +663,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                         return
                     scan = sensitive_scan.scan_candidate(rebuilt["candidateDir"])
                     unclassified = rebuilt["manifest"].get("unclassifiedPaths", [])
-                    if scan["blocked"] or unclassified:
+                    markers = candidate_manifest.test_marker_hits(rebuilt["manifest"])
+                    if scan["blocked"] or unclassified or markers:
                         entry["status"] = "failed_scan"
                         entry["error"] = "候选敏感扫描或分类未通过。"
                         record_publish(project_root, entry)
@@ -664,6 +674,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                             reasons.append(f"敏感项：{kinds}")
                         if unclassified:
                             reasons.append(f"未分类文件：{'、'.join(unclassified[:5])}")
+                        if markers:
+                            reasons.append(f"测试 fixture 标记：{'、'.join(markers[:5])}")
                         state.article_publish_result = {
                             "articleId": article_id, "ok": False,
                             "error": "候选已阻断（" + "；".join(reasons) + "）"}

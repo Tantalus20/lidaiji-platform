@@ -50,7 +50,10 @@ class CandidateError(Exception):
 
 
 def _candidates_root(project_root: Path) -> Path:
-    return Path(project_root).resolve() / ".cache" / "studio" / "candidates"
+    """候选根目录：位于发布工作区根（内容仓库之外，不被公开备份/云同步/
+    Git 收集）；tests 可用 LIDAIJI_PUBLISH_WORKSPACES_ROOT 覆盖。"""
+    from studio import publish_isolated
+    return publish_isolated._publish_workspaces_root() / "candidates"
 
 
 def classify_file(rel_path: str, target_url_prefix: str, asset_sha256: set[str],
@@ -176,17 +179,51 @@ def materialize_candidate(project_root, site_dir: Path, baseline: dict, snapshot
                                             target_url_prefix, preview_build_id)
         manifest["unclassifiedPaths"] = [
             f["path"] for f in manifest["files"] if f["classification"] == "unclassified"]
+        # manifestSha256 必须基于最终载荷（含 unclassifiedPaths）计算
+        final_payload = {k: v for k, v in manifest.items() if k != "manifestSha256"}
+        manifest["manifestSha256"] = hashlib.sha256(
+            json.dumps(final_payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         final_dir = _candidates_root(project_root) / manifest["candidateId"]
         if final_dir.is_dir():
+            # 复用路径：必须先完整重验（防篡改/半成品目录）
+            manifest_file = final_dir / "candidate-manifest.json"
+            if not manifest_file.is_file():
+                raise CandidateError("candidate-tampered", "候选清单缺失（半成品目录），已阻止复用。")
+            stored = json.loads(manifest_file.read_text(encoding="utf-8"))
+            violations = verify_candidate(final_dir, stored, baseline, snapshot)
+            if violations:
+                raise CandidateError(
+                    "candidate-tampered",
+                    "候选已被篡改或损坏，已阻止：" + "；".join(violations[:5]))
+            manifest = stored
             shutil.rmtree(tmp_dir, ignore_errors=True)
         else:
             tmp_site.rename(final_dir)
-        # manifestSha256 = 剔除自身字段后的规范 JSON 载荷哈希（确定性、可复算）
-        payload = {k: v for k, v in manifest.items() if k != "manifestSha256"}
-        manifest["manifestSha256"] = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            violations = verify_candidate(final_dir, manifest, baseline, snapshot)
+            if violations:
+                raise CandidateError("candidate-tampered", "候选自检失败：" + "；".join(violations[:5]))
+        for file in sorted(final_dir.rglob("*")):
+            try:
+                if file.is_symlink():
+                    raise CandidateError("candidate-tampered", "候选目录含符号链接。")
+                if file.is_dir():
+                    file.chmod(0o700)
+                else:
+                    file.chmod(0o600)
+            except OSError as error:
+                raise CandidateError("candidate-tampered", f"候选权限设置失败：{error}") from error
         (final_dir / "candidate-manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # 生命周期清理：保留当前使用中候选；已发布候选按账本识别
+        published_ids: set[str] = set()
+        try:
+            from studio import publish_article as _pa
+            for entry in _pa.read_ledger(Path(project_root)):
+                if entry.get("status") == "ok" and entry.get("candidateId"):
+                    published_ids.add(str(entry["candidateId"]))
+        except Exception:
+            pass
+        sweep_candidates(project_root, keep_id=manifest["candidateId"], published_ids=published_ids)
         return {
             "candidateId": manifest["candidateId"],
             "candidateDir": str(final_dir),
@@ -204,3 +241,141 @@ def load_candidate_manifest(project_root: Path, candidate_id: str) -> dict:
     if not manifest_path.is_file():
         raise CandidateError("not-found", "候选不存在。")
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# 候选完整性重验（复用与正式发布前必须执行）
+# ---------------------------------------------------------------------------
+
+_CLASS_TYPE_RULES = {
+    "target-article": lambda rel: rel.endswith(".html"),
+    "derived-index": lambda rel: rel.endswith((".html", ".xml"))
+    or rel in ("robots.txt", "search-index.json", "404.html", "index.html"),
+    "build-metadata": lambda rel: rel in ("BUILD_INFO", "comment-manifest.json")
+    or any(rel.startswith(p) for p in BUILD_METADATA_DIRS),
+    "baseline-content": lambda rel: rel.endswith(".html"),
+    "target-resource": lambda rel: not rel.endswith(".html"),
+}
+
+
+def verify_candidate(candidate_dir: Path, manifest: dict, baseline: dict | None = None,
+                     snapshot: dict | None = None) -> list[str]:
+    """候选文件树完整性重验；返回违规清单（空 = 通过）。"""
+    violations: list[str] = []
+    candidate_dir = Path(candidate_dir)
+    if manifest.get("schemaVersion") != SCHEMA_VERSION:
+        violations.append("manifest schema 版本不符")
+    cid = str(manifest.get("candidateId") or "")
+    if not CANDIDATE_ID_RE.match(cid):
+        violations.append("candidateId 格式非法")
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        return violations + ["manifest 缺少 files 列表"]
+    # manifestSha256 重算
+    payload = {k: v for k, v in manifest.items() if k != "manifestSha256"}
+    if hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest() != str(manifest.get("manifestSha256") or ""):
+        violations.append("manifestSha256 不匹配")
+    # candidateId 重算（需基线+快照）
+    if baseline is not None and snapshot is not None:
+        reproducible = [f for f in files if f.get("path") != "BUILD_INFO"]
+        digest = hashlib.sha256(json.dumps(reproducible, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        expected = "cand_" + hashlib.sha256(
+            f"{str(baseline.get('privateContentCommit') or '')[:16]}|{str(snapshot.get('snapshotId') or '')}|{BUILDER_VERSION}|{digest}".encode()
+        ).hexdigest()[:20]
+        if expected != cid:
+            violations.append("candidateId 与内容不匹配")
+    # 目录遍历：无符号链接、无额外文件
+    actual: set[str] = set()
+    for root, dirs, names in os.walk(candidate_dir, followlinks=False):
+        for name in dirs + names:
+            node = Path(root) / name
+            if node.is_symlink():
+                violations.append(f"符号链接：{node.relative_to(candidate_dir).as_posix()}")
+                continue
+            if node.is_file() and node.name != "candidate-manifest.json":
+                actual.add(node.relative_to(candidate_dir).as_posix())
+    expected = {str(f["path"]) for f in files if f.get("path")}
+    for rel in sorted(expected - actual):
+        violations.append(f"缺失文件：{rel}")
+    for rel in sorted(actual - expected):
+        violations.append(f"额外文件：{rel}")
+    for entry in files:
+        rel = str(entry.get("path") or "")
+        if not rel or rel.startswith(("/", "../")) or ".." in rel.split("/") or "\\" in rel:
+            violations.append(f"路径越界：{rel}")
+            continue
+        node = candidate_dir / rel
+        if not node.is_file():
+            violations.append(f"文件不存在：{rel}")
+            continue
+        if int(entry.get("size", -1)) != node.stat().st_size:
+            violations.append(f"大小不符：{rel}")
+        if str(entry.get("sha256") or "") != hashlib.sha256(node.read_bytes()).hexdigest():
+            violations.append(f"SHA-256 不符：{rel}")
+        rule = _CLASS_TYPE_RULES.get(str(entry.get("classification") or ""))
+        if rule and not rule(rel):
+            violations.append(f"文件类型与分类不符：{rel}（{entry.get('classification')}）")
+    return violations
+
+
+# ---------------------------------------------------------------------------
+# 测试标记门禁（生产发布拒绝含测试 fixture 的候选）
+# ---------------------------------------------------------------------------
+
+TEST_MARKER_SEGMENTS = ("acc-", "iso-", "ce-shi-", "layout-test", "fixture-", "test-fixture")
+
+
+def test_marker_hits(manifest: dict) -> list[str]:
+    """候选路径中命中测试 fixture 标记的列表。"""
+    hits: list[str] = []
+    for entry in manifest.get("files", []):
+        rel = str(entry.get("path") or "")
+        segments = [seg for seg in rel.split("/") if seg]
+        if any(any(seg.startswith(marker) for marker in TEST_MARKER_SEGMENTS) for seg in segments):
+            hits.append(rel)
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# 候选生命周期
+# ---------------------------------------------------------------------------
+
+KEEP_VALID_DAYS = 7
+KEEP_BLOCKED_DAYS = 1
+KEEP_PUBLISHED_DAYS = 30
+
+
+def sweep_candidates(project_root, keep_id: str = "", published_ids: set[str] | None = None) -> dict:
+    """清理过期候选；保留：当前使用中（keep_id）、已发布（published_ids，30 天）、
+    有效未发布（7 天）、BLOCKED（1 天）。清理只针对校验过的候选目录。"""
+    from datetime import datetime
+    root = _candidates_root(project_root)
+    if not root.is_dir():
+        return {"removed": [], "failed": []}
+    removed: list[str] = []
+    failed: list[str] = []
+    now = datetime.now().astimezone()
+    published_ids = published_ids or set()
+    for child in sorted(root.iterdir()):
+        if not CANDIDATE_ID_RE.match(child.name):
+            continue
+        if child.name == keep_id:
+            continue
+        try:
+            manifest = json.loads((child / "candidate-manifest.json").read_text(encoding="utf-8"))
+            created_raw = (manifest.get("runtime") or {}).get("createdAt", "")
+            created = datetime.fromisoformat(created_raw)
+            age_days = (now - created).total_seconds() / 86400.0
+            blocked = bool(manifest.get("unclassifiedCount")) or bool(test_marker_hits(manifest))
+            if child.name in published_ids:
+                keep = KEEP_PUBLISHED_DAYS
+            elif blocked:
+                keep = KEEP_BLOCKED_DAYS
+            else:
+                keep = KEEP_VALID_DAYS
+            if age_days > keep:
+                shutil.rmtree(child, ignore_errors=False)
+                removed.append(child.name)
+        except Exception as error:  # 清理失败不阻断（记录）
+            failed.append(f"{child.name}: {str(error)[:80]}")
+    return {"removed": removed, "failed": failed}
