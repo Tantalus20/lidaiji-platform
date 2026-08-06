@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -47,6 +48,31 @@ class CandidateError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+TEST_MODE_ENV = "LIDAIJI_TEST_MODE"
+TEST_RUN_ID_ENV = "LIDAIJI_TEST_RUN_ID"
+TEST_SOURCE_KIND_ENV = "LIDAIJI_TEST_SOURCE_KIND"
+
+
+def build_test_identity(environment: dict | None = None) -> dict:
+    """候选测试身份：仅由受信任的 Studio 启动环境签发。
+
+    前端请求参数、文章 front matter 与 slug 均不参与；
+    未启用测试模式 → 恒为 production/fixture=false。
+    """
+    env = environment if environment is not None else os.environ
+    if str(env.get(TEST_MODE_ENV, "")).strip() == "1":
+        return {
+            "buildMode": "test",
+            "fixture": True,
+            "testRunId": str(env.get(TEST_RUN_ID_ENV, "")).strip() or "test",
+            "sourceKind": str(env.get(TEST_SOURCE_KIND_ENV, "")).strip() or "acceptance-fixture",
+        }
+    return {"buildMode": "production", "fixture": False, "testRunId": "", "sourceKind": ""}
+
+
+PRODUCTION_IDENTITY = {"buildMode": "production", "fixture": False, "testRunId": "", "sourceKind": ""}
 
 
 def _candidates_root(project_root: Path) -> Path:
@@ -101,10 +127,12 @@ def build_candidate_manifest(
     snapshot: dict,
     target_url_prefix: str,
     preview_build_id: str = "",
+    test_identity: dict | None = None,
 ) -> dict:
     """扫描候选目录生成清单。
 
     candidateDir 顶层即站点根（由调用方把构建产物复制进来）。
+    testIdentity 由受信环境签发，参与 manifestSha256 与 candidateId 计算。
     """
     candidate_dir = Path(candidate_dir)
     if not candidate_dir.is_dir():
@@ -131,8 +159,12 @@ def build_candidate_manifest(
     files_digest = hashlib.sha256(
         json.dumps(reproducible_files, sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
+    identity = dict(test_identity or PRODUCTION_IDENTITY)
+    identity["buildMode"] = "test" if identity.get("buildMode") == "test" else "production"
+    identity["fixture"] = bool(identity.get("fixture"))
     candidate_id = "cand_" + hashlib.sha256(
-        f"{baseline_id}|{str(snapshot.get('snapshotId') or '')}|{BUILDER_VERSION}|{files_digest}".encode()
+        f"{baseline_id}|{str(snapshot.get('snapshotId') or '')}|{BUILDER_VERSION}"
+        f"|{identity['buildMode']}:{int(identity['fixture'])}|{files_digest}".encode()
     ).hexdigest()[:20]
     manifest = {
         "schemaVersion": SCHEMA_VERSION,
@@ -143,6 +175,7 @@ def build_candidate_manifest(
         "targetArticleId": str(snapshot.get("articleId") or ""),
         "targetSlug": str(snapshot.get("slug") or ""),
         "builderVersion": BUILDER_VERSION,
+        "testIdentity": identity,
         "runtime": {
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "previewBuildId": preview_build_id,
@@ -160,15 +193,18 @@ def build_candidate_manifest(
 
 
 def materialize_candidate(project_root, site_dir: Path, baseline: dict, snapshot: dict,
-                          target_url_prefix: str, preview_build_id: str = "") -> dict:
+                          target_url_prefix: str, preview_build_id: str = "",
+                          test_identity: dict | None = None) -> dict:
     """把构建产物复制进不可变候选目录并生成清单。
 
     返回 {candidateId, candidateDir, manifest, manifestSha256}；
     候选目录同名已存在时直接复用（幂等）。
+    testIdentity 由受信环境签发（未传入时按环境推导）。
     """
     project_root = Path(project_root).resolve()
     if not baseline:
         raise CandidateError("baseline-unavailable", "缺少可信基线，无法生成候选清单。")
+    identity = test_identity if test_identity is not None else build_test_identity()
     # 先复制到一个临时名，算出 candidateId 后落位（避免半成品目录）
     tmp_dir = _candidates_root(project_root) / f"tmp-{os.getpid()}-{int(time.time())}"
     tmp_site = tmp_dir / "site"
@@ -176,7 +212,7 @@ def materialize_candidate(project_root, site_dir: Path, baseline: dict, snapshot
         tmp_site.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         shutil.copytree(site_dir, tmp_site)
         manifest = build_candidate_manifest(tmp_site, baseline, snapshot,
-                                            target_url_prefix, preview_build_id)
+                                            target_url_prefix, preview_build_id, identity)
         manifest["unclassifiedPaths"] = [
             f["path"] for f in manifest["files"] if f["classification"] == "unclassified"]
         # manifestSha256 必须基于最终载荷（含 unclassifiedPaths）计算
@@ -268,6 +304,9 @@ def verify_candidate(candidate_dir: Path, manifest: dict, baseline: dict | None 
     cid = str(manifest.get("candidateId") or "")
     if not CANDIDATE_ID_RE.match(cid):
         violations.append("candidateId 格式非法")
+    identity = manifest.get("testIdentity")
+    if not isinstance(identity, dict) or identity.get("buildMode") not in ("test", "production"):
+        violations.append("testIdentity 缺失或非法")
     files = manifest.get("files")
     if not isinstance(files, list):
         return violations + ["manifest 缺少 files 列表"]
@@ -276,11 +315,12 @@ def verify_candidate(candidate_dir: Path, manifest: dict, baseline: dict | None 
     if hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest() != str(manifest.get("manifestSha256") or ""):
         violations.append("manifestSha256 不匹配")
     # candidateId 重算（需基线+快照）
-    if baseline is not None and snapshot is not None:
+    if baseline is not None and snapshot is not None and isinstance(identity, dict):
         reproducible = [f for f in files if f.get("path") != "BUILD_INFO"]
         digest = hashlib.sha256(json.dumps(reproducible, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         expected = "cand_" + hashlib.sha256(
-            f"{str(baseline.get('privateContentCommit') or '')[:16]}|{str(snapshot.get('snapshotId') or '')}|{BUILDER_VERSION}|{digest}".encode()
+            f"{str(baseline.get('privateContentCommit') or '')[:16]}|{str(snapshot.get('snapshotId') or '')}|{BUILDER_VERSION}"
+            f"|{identity.get('buildMode')}:{int(bool(identity.get('fixture')))}|{digest}".encode()
         ).hexdigest()[:20]
         if expected != cid:
             violations.append("candidateId 与内容不匹配")
@@ -319,14 +359,16 @@ def verify_candidate(candidate_dir: Path, manifest: dict, baseline: dict | None 
 
 
 # ---------------------------------------------------------------------------
-# 测试标记门禁（生产发布拒绝含测试 fixture 的候选）
+# slug 前缀启发式已移除（审计阻断项）：slug 不以 acc-/iso-/ce-shi-/layout-test/
+# fixture- 开头作为测试判定。测试身份只来自 build_test_identity 的受信环境。
+# 以下仅保留“测试模式下检查 fixture 命名纪律”的辅助（不参与任何门禁）。
 # ---------------------------------------------------------------------------
 
 TEST_MARKER_SEGMENTS = ("acc-", "iso-", "ce-shi-", "layout-test", "fixture-", "test-fixture")
 
 
-def test_marker_hits(manifest: dict) -> list[str]:
-    """候选路径中命中测试 fixture 标记的列表。"""
+def slug_marker_hits(manifest: dict) -> list[str]:
+    """仅测试模式下的 fixture 命名纪律提示（非门禁）。"""
     hits: list[str] = []
     for entry in manifest.get("files", []):
         rel = str(entry.get("path") or "")
@@ -345,9 +387,43 @@ KEEP_BLOCKED_DAYS = 1
 KEEP_PUBLISHED_DAYS = 30
 
 
+_SWEEP_FAILURE_LOG_NAME = "sweep-failures.log"
+_SWEEP_LOG_MAX_BYTES = 1024 * 1024
+
+
+def _redact_sweep_error(message: str) -> str:
+    """安全截断与脱敏：不记录正文、Token、绝对私人路径、凭据。"""
+    text = str(message or "")[:300]
+    text = re.sub(r"[/\\]Users[/\\][^:\s]+", "<path>", text)
+    text = re.sub(r"\b(ghp_|glpat-|AKIA|xox[abprs]-)[A-Za-z0-9_-]+", r"\1<redacted>", text)
+    text = re.sub(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", "<private-key>", text)
+    return text
+
+
+def _sweep_log_path(project_root) -> Path:
+    return Path(project_root).resolve() / ".cache" / "studio" / "publish-logs" / _SWEEP_FAILURE_LOG_NAME
+
+
+def _append_sweep_failure(project_root, entry: dict) -> None:
+    """清理失败安全日志（受控 publish-logs 目录，JSONL 追加，大小上限 1MB）。"""
+    try:
+        log_path = _sweep_log_path(project_root)
+        log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if log_path.is_file() and log_path.stat().st_size > _SWEEP_LOG_MAX_BYTES:
+            log_path.unlink(missing_ok=True)  # 超限轮转：重写为仅保留最近条目（下次追加）
+        with open(log_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # 日志写入失败绝不触发递归崩溃
+
+
 def sweep_candidates(project_root, keep_id: str = "", published_ids: set[str] | None = None) -> dict:
     """清理过期候选；保留：当前使用中（keep_id）、已发布（published_ids，30 天）、
-    有效未发布（7 天）、BLOCKED（1 天）。清理只针对校验过的候选目录。"""
+    有效未发布（7 天）、BLOCKED（1 天）。清理只针对校验过的候选目录。
+
+    清理失败写入受控日志（publish-logs/sweep-failures.log，脱敏），
+    不阻断、不扩大范围、不跟随符号链接；下一次清理自然重试。
+    """
     from datetime import datetime
     root = _candidates_root(project_root)
     if not root.is_dir():
@@ -361,21 +437,73 @@ def sweep_candidates(project_root, keep_id: str = "", published_ids: set[str] | 
             continue
         if child.name == keep_id:
             continue
+        stage = "remove"
+        status = "unknown"
         try:
             manifest = json.loads((child / "candidate-manifest.json").read_text(encoding="utf-8"))
+        except Exception as read_error:
+            # 半删除/清单缺失（如上次删除中途失败）：目录已不可用，
+            # 下一安全周期直接整体修复清理（不评估保留期）
+            try:
+                shutil.rmtree(child, ignore_errors=False)
+                removed.append(f"{child.name} (repair)")
+            except Exception as repair_error:
+                failed.append(f"{child.name}: {_redact_sweep_error(repair_error)}")
+                _append_sweep_failure(project_root, {
+                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    "candidateId": child.name,
+                    "status": "repair",
+                    "stage": "remove",
+                    "errorType": type(repair_error).__name__,
+                    "message": _redact_sweep_error(repair_error),
+                })
+            continue
+        try:
             created_raw = (manifest.get("runtime") or {}).get("createdAt", "")
             created = datetime.fromisoformat(created_raw)
             age_days = (now - created).total_seconds() / 86400.0
-            blocked = bool(manifest.get("unclassifiedCount")) or bool(test_marker_hits(manifest))
+            blocked = bool(manifest.get("unclassifiedCount")) \
+                or (manifest.get("testIdentity") or {}).get("buildMode") == "test"
             if child.name in published_ids:
                 keep = KEEP_PUBLISHED_DAYS
+                status = "published"
             elif blocked:
                 keep = KEEP_BLOCKED_DAYS
+                status = "blocked"
             else:
                 keep = KEEP_VALID_DAYS
+                status = "valid"
+            stage = "evaluate"
             if age_days > keep:
+                stage = "remove"
                 shutil.rmtree(child, ignore_errors=False)
                 removed.append(child.name)
-        except Exception as error:  # 清理失败不阻断（记录）
-            failed.append(f"{child.name}: {str(error)[:80]}")
+        except Exception as error:  # 清理失败不阻断：安全记录，下次重试
+            failed.append(f"{child.name}: {_redact_sweep_error(error)}")
+            _append_sweep_failure(project_root, {
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "candidateId": child.name,
+                "status": status,
+                "stage": stage,
+                "errorType": type(error).__name__,
+                "message": _redact_sweep_error(error),
+            })
     return {"removed": removed, "failed": failed}
+
+
+def sweep_failure_summary(project_root) -> dict:
+    """清理失败日志摘要（状态接口可展示；不泄露正文/秘密）。"""
+    log_path = _sweep_log_path(project_root)
+    if not log_path.is_file():
+        return {"count": 0, "recent": []}
+    entries: list[dict] = []
+    try:
+        for line in log_path.read_text(encoding="utf-8").splitlines()[-50:]:
+            try:
+                entries.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError:
+        return {"count": 0, "recent": []}
+    return {"count": len(entries), "recent": [
+        {k: e.get(k) for k in ("ts", "candidateId", "stage", "errorType")} for e in entries[-3:]]}

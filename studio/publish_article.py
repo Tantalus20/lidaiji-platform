@@ -213,6 +213,7 @@ def article_publish_status(state, rel_path: str) -> dict:
         },
         "lock": publish_lock_status(state),
         "result": getattr(state, "article_publish_result", None),
+        "candidateSweep": candidate_manifest.sweep_failure_summary(project_root),
         "history": [
             {
                 "id": entry.get("id"),
@@ -412,16 +413,22 @@ def article_publish_preview(state, rel_path: str) -> dict:
                                 candidate = candidate_manifest.materialize_candidate(
                                     project_root, publish_center.site_output_dir(platform_root),
                                     baseline, snapshot, target_url_prefix=canonical,
-                                    preview_build_id=preview_build_id)
+                                    preview_build_id=preview_build_id,
+                                    test_identity=candidate_manifest.build_test_identity())
                                 scan = sensitive_scan.scan_candidate(candidate["candidateDir"])
                                 unclassified = candidate["manifest"].get("unclassifiedPaths", [])
-                                markers = candidate_manifest.test_marker_hits(candidate["manifest"])
                                 blocked = bool(scan["blocked"]) or bool(unclassified)
-                                if markers:
-                                    check("test-marker", "WARNING",
-                                          f"候选含测试 fixture 标记（生产发布将被拒绝）：{'、'.join(markers[:5])}")
+                                identity = candidate["manifest"].get("testIdentity") or {}
+                                if identity.get("buildMode") == "test":
+                                    check("build-mode", "WARNING",
+                                          f"测试模式候选（testRunId={identity.get('testRunId')}），正式发布将被拒绝")
                                 else:
-                                    check("test-marker", "PASS", "无测试 fixture 标记")
+                                    check("build-mode", "PASS", "正式模式候选（生产发布允许）")
+                                if os.environ.get("LIDAIJI_TEST_MODE", "") == "1":
+                                    marker_hits = candidate_manifest.slug_marker_hits(candidate["manifest"])
+                                    if marker_hits:
+                                        check("test-marker", "WARNING",
+                                              "fixture 命名纪律提示（非门禁）：" + "、".join(marker_hits[:5]))
                                 if scan["blocked"]:
                                     kinds = "、".join(sorted({f["kind"] for f in scan["findings"]}))
                                     check("sensitive-scan", "FAIL",
@@ -441,6 +448,8 @@ def article_publish_preview(state, rel_path: str) -> dict:
                                                   "manifestSha256": candidate["manifestSha256"],
                                                   "fileCount": len(candidate["manifest"]["files"]),
                                                   "blocked": blocked,
+                                                  "buildMode": (candidate["manifest"].get("testIdentity") or {}).get("buildMode", "production"),
+                                                  "testRunId": (candidate["manifest"].get("testIdentity") or {}).get("testRunId", ""),
                                                   "error": "敏感扫描或分类未通过" if blocked else ""}
                                 state._last_candidate_info = candidate_info
                             except candidate_manifest.CandidateError as error:
@@ -650,7 +659,8 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                     rebuilt = candidate_manifest.materialize_candidate(
                         project_root, publish_center.site_output_dir(platform_root), preview["baseline"],
                         preview["snapshot"], target_url_prefix=preview.get("canonicalUrl", ""),
-                        preview_build_id=str(preview.get("buildId") or ""))
+                        preview_build_id=str(preview.get("buildId") or ""),
+                        test_identity=candidate_manifest.build_test_identity())
                     expected_id = (preview.get("candidate") or {}).get("candidateId", "")
                     if expected_id and rebuilt["candidateId"] != expected_id:
                         entry["status"] = "failed_diff"
@@ -663,8 +673,17 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                         return
                     scan = sensitive_scan.scan_candidate(rebuilt["candidateDir"])
                     unclassified = rebuilt["manifest"].get("unclassifiedPaths", [])
-                    markers = candidate_manifest.test_marker_hits(rebuilt["manifest"])
-                    if scan["blocked"] or unclassified or markers:
+                    test_identity = rebuilt["manifest"].get("testIdentity") or {}
+                    if test_identity.get("buildMode") == "test":
+                        entry["status"] = "failed_test_candidate"
+                        entry["error"] = "测试候选禁止正式发布。"
+                        record_publish(project_root, entry)
+                        state.article_publish_result = {
+                            "articleId": article_id, "ok": False,
+                            "error": "测试候选禁止正式发布（buildMode=test，"
+                                     f"testRunId={test_identity.get('testRunId')}）。"}
+                        return
+                    if scan["blocked"] or unclassified:
                         entry["status"] = "failed_scan"
                         entry["error"] = "候选敏感扫描或分类未通过。"
                         record_publish(project_root, entry)
@@ -674,8 +693,6 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                             reasons.append(f"敏感项：{kinds}")
                         if unclassified:
                             reasons.append(f"未分类文件：{'、'.join(unclassified[:5])}")
-                        if markers:
-                            reasons.append(f"测试 fixture 标记：{'、'.join(markers[:5])}")
                         state.article_publish_result = {
                             "articleId": article_id, "ok": False,
                             "error": "候选已阻断（" + "；".join(reasons) + "）"}

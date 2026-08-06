@@ -158,7 +158,7 @@ _CACHE_ALLOWLIST = (
     ".cache/studio/locks",
 )
 _CACHE_ID_RE = __import__("re").compile(r"^(cand_[0-9a-f]{20}|pub_[0-9a-f]{12})$")
-_PUB_LOG_RE = __import__("re").compile(r"^pub_[0-9a-f]{12}\.log$")
+_PUB_LOG_RE = __import__("re").compile(r"^(pub_[0-9a-f]{12}|sweep-failures)\.log$")
 
 
 def _validate_cache_entry(platform_root: Path, path: str) -> str | None:
@@ -237,7 +237,10 @@ def platform_clean_check(platform_root: Path) -> list[str]:
             continue  # 本机配置与构建产物不阻止
         if path.startswith(("content/", "data/", "site-overrides/")):
             continue  # 内容仓库路径（真实架构中不在平台仓库内）
-        if path.startswith(".cache/"):
+        if path == ".cache" or path == ".cache/" or path.startswith(".cache/"):
+            # 根目录自身放行（子条目由磁盘扫描逐项校验）
+            if path in (".cache", ".cache/"):
+                continue
             allowed = any(path == entry or path.startswith(entry + "/") for entry in _CACHE_ALLOWLIST)
             if not allowed:
                 blocked.append(f"{path[:120]}（未知 .cache 条目）")
@@ -540,10 +543,12 @@ def build_merged_content(state, target: dict, snapshot: dict, baseline: dict | N
     # 未公开/私密文章的作者评绝不进入隔离输入
     public_ids = set(baseline.get("publicArticleBundles", {}).keys()) | {snapshot["articleId"]}
     notes_src = private_repo / "data" / "author-notes"
+    notes_dst = repo / "data" / "author-notes"
     if notes_src.is_dir():
+        notes_dst.mkdir(parents=True, exist_ok=True)
         for note in notes_src.glob("*.yaml"):
             if any(pid in note.name for pid in public_ids):
-                shutil.copy2(note, repo / "data" / "author-notes" / note.name)
+                shutil.copy2(note, notes_dst / note.name)
     return {
         "id": publish_id,
         "workRoot": work_root,
