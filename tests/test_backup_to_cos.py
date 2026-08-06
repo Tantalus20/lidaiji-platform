@@ -150,6 +150,8 @@ class BackupFixture:
             "BACKUP_KEEP_DIR": str(self.keep_dir),
             "COS_BACKUP_VALIDATE_ONLY": "1",
             "COSCLI_LOG": str(getattr(self, "coscli_log", self.root / "coscli-calls.log")),
+            "FAKE_COS_MODE": getattr(self, "fake_cos_mode", "ok"),
+            "FAKE_COS_ROOT": str(getattr(self, "fake_cos_root", self.root / "fake-cos")),
         })
         env.update(extra)
         return env
@@ -441,3 +443,226 @@ class TestUploadSemantics(unittest.TestCase):
         subprocess.run(["bash", str(SCRIPT)], env=fx2.env(), capture_output=True, text=True, timeout=60)
         self.assertEqual(list(fx2.keep_dir.glob("*.tar.gz")), [], "失败备份不得产出归档")
         fx2.cleanup()
+_FAKE_COSCLI_LINES = [
+    "#!/usr/bin/env bash",
+    'echo "$*" >> "$COSCLI_LOG"',
+    "set -e",
+    'MODE="$FAKE_COS_MODE"',
+    'OP="$1"; shift',
+    'case "$OP" in',
+    "  cp)",
+    '    SRC="$1"; DST="$2"',
+    '    if [[ "$SRC" == cos://* ]]; then',
+    '      OBJ="$(printf \'%s\' "$SRC" | sed \'s|cos://[^/]*/||\')"',
+    '      TARGET="$FAKE_COS_ROOT/$OBJ"',
+    '      mkdir -p "$(dirname "$DST")"',
+    '      cp "$TARGET" "$DST"',
+    "    else",
+    '      OBJ="$(printf \'%s\' "$DST" | sed \'s|cos://[^/]*/||\')"',
+    '      TARGET="$FAKE_COS_ROOT/$OBJ"',
+    '      if [[ "$MODE" == "upload-fail" ]]; then echo "upload failed" >&2; exit 1; fi',
+    '      mkdir -p "$(dirname "$TARGET")"',
+    '      cp "$SRC" "$TARGET"',
+    '      if [[ "$MODE" == "checksum-fail" && "$OBJ" == *.sha256 ]]; then',
+    '        echo "0000000000000000000000000000000000000000000000000000000000000000  x" > "$TARGET"',
+    "      fi",
+    "    fi",
+    "    ;;",
+    "  ls)",
+    '    PATTERN="${1#cos://*/}"',
+    '    find "$FAKE_COS_ROOT" -type f -name "$(basename "$PATTERN")" 2>/dev/null | head -1 || true',
+    "    ;;",
+    "esac",
+    "exit 0",
+]
+
+
+class FakeCoscliMixin:
+    """可配置故障的假 coscli：ok / upload-fail / checksum-fail。"""
+
+    def install_fake_coscli(self, mode: str = "ok"):
+        root = self.fx.root
+        wrapper = root / "fake-coscli.sh"
+        fake_root = root / "fake-cos"
+        fake_root.mkdir(exist_ok=True)
+        wrapper.write_text("\n".join(_FAKE_COSCLI_LINES) + "\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        self.fx.coscli = wrapper
+        self.fx.coscli_log = root / "coscli-calls.log"
+        self.fx.fake_cos_mode = mode
+        self.fx.fake_cos_root = fake_root
+        return wrapper, fake_root
+
+    def coscli_calls(self) -> str:
+        return self.fx.coscli_log.read_text(encoding="utf-8") if self.fx.coscli_log.is_file() else ""
+
+
+class TestStatusSemantics(unittest.TestCase, FakeCoscliMixin):
+    """状态语义：模式化终止状态、BACKUP_COMPLETE 门控、成功时间与结构化记录。"""
+
+    def setUp(self):
+        self.fx = BackupFixture()
+        self.state_log_path = self.fx.state_dir / "backup-state.log"
+
+    def tearDown(self):
+        self.fx.cleanup()
+
+    def state_log(self) -> str:
+        return self.state_log_path.read_text(encoding="utf-8")
+
+    def last_verify(self) -> dict:
+        p = self.fx.state_dir / "backup-last-verify.json"
+        return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else {}
+
+    def last_success(self) -> str:
+        p = self.fx.state_dir / "backup-last-success"
+        return p.read_text(encoding="utf-8").strip() if p.is_file() else ""
+
+    def _run_full(self):
+        env = self.fx.env()
+        env["COS_BACKUP_VALIDATE_ONLY"] = "0"
+        return subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=120)
+
+    def test_1_validate_only_complete_state(self):
+        self.fx.coscli = self.fx.counting_coscli()
+        self.fx.run()
+        log = self.state_log()
+        self.assertEqual(log.count("STATE=LOCAL_VERIFY_DONE"), 1)
+        self.assertEqual(log.count("STATE=VALIDATE_ONLY_COMPLETE"), 1)
+        self.assertEqual(log.count("STATE=UPLOAD_STARTED"), 0)
+        self.assertEqual(log.count("STATE=UPLOAD_DONE"), 0)
+        self.assertEqual(log.count("STATE=REMOTE_VERIFY_DONE"), 0)
+        self.assertEqual(log.count("STATE=BACKUP_COMPLETE"), 0)
+        self.assertEqual(self.coscli_calls(), "", "上传调用次数=0")
+        lv = self.last_verify()
+        self.assertEqual(lv.get("mode"), "validate-only")
+        self.assertFalse(lv.get("remoteUploadPerformed"))
+        self.assertFalse(lv.get("remoteVerified"))
+        self.assertFalse(lv.get("backupComplete"))
+        self.assertTrue(lv.get("archivePayloadVerified"))
+
+    def test_2_verify_only_states(self):
+        self.fx.coscli = self.fx.counting_coscli()
+        self.fx.run()
+        archive = self.fx.kept_archive()
+        n_before = len(list(self.fx.keep_dir.glob("*.tar.gz")))
+        verify = subprocess.run(
+            ["bash", str(SCRIPT)], env=self.fx.env(BACKUP_VERIFY_ONLY=str(archive)),
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(verify.returncode, 0, verify.stderr)
+        log = self.state_log()
+        self.assertIn("STATE=VERIFY_ONLY_STARTED", log)
+        self.assertIn("STATE=VERIFY_ONLY_DONE", log)
+        self.assertEqual(log.count("STATE=BACKUP_COMPLETE"), 0)
+        self.assertEqual(self.coscli_calls(), "", "verify-only 上传调用=0")
+        self.assertEqual(len(list(self.fx.keep_dir.glob("*.tar.gz"))), n_before,
+                         "verify-only 不得创建新正式备份")
+
+    def test_3_full_backup_state_order(self):
+        self.install_fake_coscli("ok")
+        result = self._run_full()
+        self.assertEqual(result.returncode, 0, result.stderr[-500:])
+        log = self.state_log()
+        order = [st for st in ("LOCAL_VERIFY_DONE", "UPLOAD_STARTED", "UPLOAD_DONE",
+                               "REMOTE_VERIFY_DONE", "BACKUP_COMPLETE") if f"STATE={st}" in log]
+        self.assertEqual(order, ["LOCAL_VERIFY_DONE", "UPLOAD_STARTED", "UPLOAD_DONE",
+                                 "REMOTE_VERIFY_DONE", "BACKUP_COMPLETE"])
+        self.assertEqual(log.count("STATE=BACKUP_COMPLETE"), 1)
+        lv = self.last_verify()
+        self.assertEqual(lv.get("mode"), "full")
+        self.assertTrue(lv.get("remoteUploadPerformed"))
+        self.assertTrue(lv.get("remoteVerified"))
+        self.assertTrue(lv.get("backupComplete"))
+        self.assertTrue(self.last_success(), "full 成功必须更新最近成功时间")
+
+    def test_4_upload_failure_states(self):
+        self.install_fake_coscli("upload-fail")
+        result = self._run_full()
+        self.assertNotEqual(result.returncode, 0)
+        log = self.state_log()
+        self.assertIn("STATE=UPLOAD_STARTED", log)
+        self.assertEqual(log.count("STATE=UPLOAD_DONE"), 0)
+        self.assertEqual(log.count("STATE=REMOTE_VERIFY_DONE"), 0)
+        self.assertEqual(log.count("STATE=BACKUP_COMPLETE"), 0)
+        marker = self.fx.failure_marker()
+        self.assertEqual(marker.get("mode"), "full")
+        self.assertTrue(marker.get("remoteUploadPerformed"))
+        self.assertFalse(marker.get("remoteVerified"))
+        self.assertEqual(self.last_success(), "", "失败不得更新成功时间")
+
+    def test_5_remote_verify_failure_states(self):
+        self.install_fake_coscli("checksum-fail")
+        result = self._run_full()
+        self.assertNotEqual(result.returncode, 0)
+        log = self.state_log()
+        self.assertIn("STATE=UPLOAD_DONE", log)
+        self.assertEqual(log.count("STATE=REMOTE_VERIFY_DONE"), 0)
+        self.assertEqual(log.count("STATE=BACKUP_COMPLETE"), 0)
+        self.assertEqual(self.last_success(), "")
+
+    def test_6_local_verify_failure_states(self):
+        self.fx.coscli = self.fx.counting_coscli()
+        proc = subprocess.Popen(
+            ["bash", str(SCRIPT)],
+            env=self.fx.env(BACKUP_TEST_HOOK_DELAY_3_S="3"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(1.2)
+        tars = sorted(self.fx.workdir_base.glob("cos-backup.*/*.tar.gz.tmp"))
+        data = bytearray(tars[-1].read_bytes())
+        data[100] ^= 0xFF
+        tars[-1].write_bytes(bytes(data))
+        proc.communicate(timeout=120)
+        log = self.state_log()
+        self.assertEqual(log.count("STATE=LOCAL_VERIFY_DONE"), 0)
+        self.assertEqual(log.count("STATE=UPLOAD_STARTED"), 0)
+        self.assertEqual(log.count("STATE=BACKUP_COMPLETE"), 0)
+        marker = self.fx.failure_marker()
+        self.assertEqual(marker.get("mode"), "full")
+        self.assertFalse(marker.get("remoteUploadPerformed"))
+
+    def test_7_success_time_only_full(self):
+        self.fx.coscli = self.fx.counting_coscli()
+        self.fx.run()
+        self.assertEqual(self.last_success(), "", "validate-only 不得写成功时间")
+        archive = self.fx.kept_archive()
+        subprocess.run(["bash", str(SCRIPT)], env=self.fx.env(BACKUP_VERIFY_ONLY=str(archive)),
+                       capture_output=True, text=True, timeout=60)
+        self.assertEqual(self.last_success(), "", "verify-only 不得写成功时间")
+        self.install_fake_coscli("ok")
+        result = self._run_full()
+        self.assertEqual(result.returncode, 0, result.stderr[-400:])
+        self.assertTrue(self.last_success(), "full 成功才更新成功时间")
+
+    def test_8_validate_only_no_notification_cleanup_signals(self):
+        existing = self.fx.keep_dir / "existing-old-backup.tar.gz"
+        existing.write_bytes(b"old")
+        self.fx.coscli = self.fx.counting_coscli()
+        self.fx.run()
+        self.assertFalse((self.fx.state_dir / "backup-failure.marker").exists())
+        self.assertTrue(existing.is_file(), "validate-only 不得删除既有保留归档")
+        log = self.state_log()
+        self.assertEqual(log.count("STATE=VALIDATE_ONLY_COMPLETE"), 1)
+
+    def test_9_restore_selector_cannot_misselect(self):
+        self.fx.coscli = self.fx.counting_coscli()
+        self.fx.run()
+        lv = self.last_verify()
+        self.assertEqual(lv["mode"], "validate-only")
+        self.assertFalse(lv["backupComplete"])
+        self.assertFalse(lv["remoteUploadPerformed"])
+        self.assertFalse(lv["remoteVerified"])
+        self.assertFalse(lv.get("backupComplete") and lv.get("remoteUploadPerformed")
+                          and lv.get("remoteVerified"),
+                         "不得被恢复选择器选为完整远端备份")
+        archive = self.fx.kept_archive()
+        import tarfile
+        with tarfile.open(archive, "r:gz") as tf:
+            m = json.loads(tf.extractfile("manifests/backup-manifest.json").read())
+        self.assertEqual(m["mode"], "validate-only")
+        self.assertTrue(m["archivePayloadVerified"])
+
+
+if __name__ == "__main__":
+    unittest.main()

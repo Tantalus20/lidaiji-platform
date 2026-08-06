@@ -42,6 +42,16 @@ RELEASE_ID_RE='^[0-9]{8}_[0-9]{6}$'
 
 # GNU/BSD 可移植封装（服务器为 GNU coreutils，本机构建环境可为 BSD）
 date_iso() { date -Is 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S%z'; }
+# timeout 为 GNU coreutils 命令；无 timeout 的环境（如 macOS 构建机）直接执行。
+run_timeout() {
+    local secs="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+    else
+        "$@"
+    fi
+}
 stat_perms() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 stat_size() { stat -c '%s' "$1" 2>/dev/null || stat -f '%z' "$1"; }
 
@@ -58,15 +68,27 @@ log_msg() {
     echo "[$(date_iso)] $1" | tee -a "$STATE_LOG"
 }
 
+RUN_MODE="${RUN_MODE:-full}"
+
 fail_with_marker() {
     local stage="${1:-unknown}"
     local code="${2:-$?}"
-    log_msg "备份失败：阶段=${stage} 错误码=${code}"
+    local upload_performed="false"
+    if [ "$RUN_MODE" = "full" ] && [ -f "$WORKDIR/upload-started.marker" ]; then
+        upload_performed="true"
+    fi
+    log_msg "备份失败：阶段=${stage} 错误码=${code} mode=${RUN_MODE}"
     cat > "$FAILURE_MARKER" <<EOF
-{"task":"lidaiji-backup","status":"failed","stage":"${stage}","errorCode":"${code}","time":"$(date_iso)"}
+{"task":"lidaiji-backup","status":"failed","stage":"${stage}","errorCode":"${code}","time":"$(date_iso)","mode":"${RUN_MODE}","failedStage":"${stage}","remoteUploadPerformed":${upload_performed}}
 EOF
     chmod 0600 "$FAILURE_MARKER"
-    log_state "BACKUP_FAILED" "stage=${stage}"
+    if [ "$RUN_MODE" = "validate-only" ]; then
+        log_state "VALIDATE_ONLY_FAILED" "stage=${stage}"
+    elif [ "$RUN_MODE" = "verify-only" ]; then
+        log_state "VERIFY_ONLY_FAILED" "stage=${stage}"
+    else
+        log_state "BACKUP_FAILED" "stage=${stage}"
+    fi
     exit "$code"
 }
 
@@ -156,6 +178,8 @@ required_files_present() {
 verify_existing_archive() {
     local archive="$1"
     local vdir code=0
+    RUN_MODE="verify-only"
+    log_state "VERIFY_ONLY_STARTED"
     vdir="$(mktemp -d "$WORKDIR_BASE/cos-verify.XXXXXX")"
     if [ ! -s "$archive" ]; then
         echo "归档不存在或为空：$archive" >&2
@@ -201,6 +225,7 @@ PYEOT
     rm -rf -- "$vdir"
     if [ "$code" -eq 0 ]; then
         echo "VERIFY_OK"
+        log_state "VERIFY_ONLY_DONE"
     else
         echo "VERIFY_FAILED" >&2
     fi
@@ -356,6 +381,16 @@ MANIFEST="${WORKDIR}/backup-manifest.json"
     echo "{"
     echo "  \"schemaVersion\": 2,"
     echo "  \"archivePayloadVerified\": true,"
+    # 归档内 mode 在快照时即确定；远端完成真相以状态记录
+    # （STATE_DIR/backup-last-verify.json）为准——full 模式的远端字段在快照时未知，不写入。
+    if [ "${COS_BACKUP_VALIDATE_ONLY:-0}" = "1" ]; then
+        echo "  \"mode\": \"validate-only\","
+        echo "  \"remoteUploadPerformed\": false,"
+        echo "  \"remoteVerified\": false,"
+        echo "  \"backupComplete\": false,"
+    else
+        echo "  \"mode\": \"full\","
+    fi
     echo "  \"backupId\": \"${BACKUP_ID}\","
     echo "  \"createdAt\": \"$(date_iso)\","
     echo "  \"host\": \"${HOST}\","
@@ -509,11 +544,17 @@ record_switch_check() {
 }
 
 if [ "${COS_BACKUP_VALIDATE_ONLY:-0}" = "1" ]; then
+    RUN_MODE="validate-only"
     record_switch_check
+    # 结构化状态记录：validate-only 不更新正式最近成功时间、远端索引与通知
+    cat > "$LAST_VERIFY" <<EOF
+{"backupId":"${BACKUP_ID}","archiveSha256":"${LOCAL_SHA}","archiveSize":${ARCHIVE_SIZE},"filesCompared":"${SITE_COUNT}+${COMMENTS_COUNT}","verifiedAt":"$(date_iso)","ok":true,"mode":"validate-only","remoteUploadPerformed":false,"remoteVerified":false,"backupComplete":false,"archivePayloadVerified":true}
+EOF
+    chmod 0600 "$LAST_VERIFY"
     echo "[$(date_iso)] 本地生成与复验完成（验证模式，不上传 COS）"
     echo "archive-sha256: $LOCAL_SHA"
     echo "archive-size: $ARCHIVE_SIZE"
-    log_state "BACKUP_COMPLETE" "validate-only"
+    log_state "VALIDATE_ONLY_COMPLETE"
     exit 0
 fi
 
@@ -528,24 +569,26 @@ print(min(240, 30 + int(mb) * 10))
 " 2>/dev/null || echo 240)"
 COS_VERIFY_DEADLINE="$(( $(date +%s) + 300 ))"
 
+RUN_MODE="full"
 log_state "UPLOAD_STARTED"
-timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$ARCHIVE" "${DAILY_DEST}/$(basename "$ARCHIVE")" >/dev/null 2>&1 \
+: > "${WORKDIR}/upload-started.marker"
+run_timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$ARCHIVE" "${DAILY_DEST}/$(basename "$ARCHIVE")" >/dev/null 2>&1 \
     || fail_with_marker "cos-upload" $?
-timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$CHECKSUM" "${DAILY_DEST}/$(basename "$CHECKSUM")" >/dev/null 2>&1 \
+run_timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$CHECKSUM" "${DAILY_DEST}/$(basename "$CHECKSUM")" >/dev/null 2>&1 \
     || fail_with_marker "cos-upload-checksum" $?
 log_state "UPLOAD_DONE"
 
-REMOTE_LISTING="$(timeout "$COS_HEAD_TIMEOUT" "$COSCLI" ls "${DAILY_DEST}/$(basename "$ARCHIVE")" 2>/dev/null || true)"
+REMOTE_LISTING="$(run_timeout "$COS_HEAD_TIMEOUT" "$COSCLI" ls "${DAILY_DEST}/$(basename "$ARCHIVE")" 2>/dev/null || true)"
 if [ -z "$REMOTE_LISTING" ]; then
     fail_with_marker "cos-object-missing" 3
 fi
-REMOTE_CHECK="$(timeout "$COS_DOWNLOAD_TIMEOUT" "$COSCLI" cp "${DAILY_DEST}/$(basename "$CHECKSUM")" "${WORKDIR}/remote.sha256" >/dev/null 2>&1 \
+REMOTE_CHECK="$(run_timeout "$COS_DOWNLOAD_TIMEOUT" "$COSCLI" cp "${DAILY_DEST}/$(basename "$CHECKSUM")" "${WORKDIR}/remote.sha256" >/dev/null 2>&1 \
     && cut -d' ' -f1 "${WORKDIR}/remote.sha256")"
 if [ "$REMOTE_CHECK" != "$LOCAL_SHA" ]; then
     fail_with_marker "cos-checksum-mismatch" 3
 fi
 REMOTE_ARCHIVE="${WORKDIR}/remote.tar.gz"
-timeout "$COS_DOWNLOAD_TIMEOUT" "$COSCLI" cp "${DAILY_DEST}/$(basename "$ARCHIVE")" "$REMOTE_ARCHIVE" >/dev/null 2>&1 \
+run_timeout "$COS_DOWNLOAD_TIMEOUT" "$COSCLI" cp "${DAILY_DEST}/$(basename "$ARCHIVE")" "$REMOTE_ARCHIVE" >/dev/null 2>&1 \
     || fail_with_marker "cos-download" $?
 REMOTE_SHA="$(sha256sum "$REMOTE_ARCHIVE" | cut -d' ' -f1)"
 REMOTE_SIZE="$(stat_size "$REMOTE_ARCHIVE")"
@@ -563,14 +606,18 @@ log_state "REMOTE_VERIFY_DONE" "sha256=${LOCAL_SHA:0:16}"
 # 月备份（每月 1 日）
 if [ "$DAY_OF_MONTH" = "01" ]; then
     MONTHLY_DEST="cos://backup/server-backups/monthly/$(date '+%Y')"
-    timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$ARCHIVE" "${MONTHLY_DEST}/$(basename "$ARCHIVE")" >/dev/null 2>&1 \
+    run_timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$ARCHIVE" "${MONTHLY_DEST}/$(basename "$ARCHIVE")" >/dev/null 2>&1 \
         || fail_with_marker "cos-upload-monthly" $?
-    timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$CHECKSUM" "${MONTHLY_DEST}/$(basename "$CHECKSUM")" >/dev/null 2>&1 \
+    run_timeout "$COS_UPLOAD_TIMEOUT" "$COSCLI" cp "$CHECKSUM" "${MONTHLY_DEST}/$(basename "$CHECKSUM")" >/dev/null 2>&1 \
         || fail_with_marker "cos-upload-monthly-checksum" $?
 fi
 
 record_switch_check
 
+cat > "$LAST_VERIFY" <<EOF
+{"backupId":"${BACKUP_ID}","archiveSha256":"${LOCAL_SHA}","archiveSize":${ARCHIVE_SIZE},"filesCompared":"${SITE_COUNT}+${COMMENTS_COUNT}","verifiedAt":"$(date_iso)","ok":true,"mode":"full","remoteUploadPerformed":true,"remoteVerified":true,"backupComplete":true,"archivePayloadVerified":true}
+EOF
+chmod 0600 "$LAST_VERIFY"
 rm -f "$FAILURE_MARKER"
 echo "$(date_iso)" > "$LAST_SUCCESS"
 chmod 0600 "$LAST_SUCCESS"
