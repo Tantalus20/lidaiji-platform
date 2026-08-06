@@ -539,16 +539,12 @@ def build_merged_content(state, target: dict, snapshot: dict, baseline: dict | N
         dest = target_content / entry["relativePath"]
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, dest)
-    # 作者评：只复制公开文章（线上清单列出的 articleId + 目标文章）的作者评；
-    # 未公开/私密文章的作者评绝不进入隔离输入
-    public_ids = set(baseline.get("publicArticleBundles", {}).keys()) | {snapshot["articleId"]}
-    notes_src = private_repo / "data" / "author-notes"
+    # 作者评隐私规则（v0.2.5 收口）：作者评默认且始终属于私有内容。
+    # data/author-notes/** 在归档前即被排除（data/ 不在 git archive 路径白名单），
+    # 这里不再复制任何作者评——文章公开、目标文章身份、线上 manifest 均不
+    # 推导作者评公开。authorNotesRoot 指向空目录（环境兼容，内容为空）。
     notes_dst = repo / "data" / "author-notes"
-    if notes_src.is_dir():
-        notes_dst.mkdir(parents=True, exist_ok=True)
-        for note in notes_src.glob("*.yaml"):
-            if any(pid in note.name for pid in public_ids):
-                shutil.copy2(note, notes_dst / note.name)
+    notes_dst.mkdir(parents=True, exist_ok=True)
     return {
         "id": publish_id,
         "workRoot": work_root,

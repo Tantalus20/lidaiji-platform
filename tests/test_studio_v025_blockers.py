@@ -36,7 +36,11 @@ import test_studio_publish_iso as iso_mod  # noqa: E402
 
 
 class PublicBaselineWorkspace(iso_mod.IsoWorkspace):
-    """扩展夹具：公开 A/B + 已提交未公开 C + 私密 D + 作者评 + 资源 + 私密 md。"""
+    """扩展夹具：公开 A/B + 已提交未公开 C + 私密 D + 作者评 + 资源 + 私密 md。
+
+    作者评隐私规则：A（公开）、B（目标）、C（未公开）均带作者评，
+    全部必须保持私有——文章公开状态与作者评公开状态互相独立。
+    """
 
     def __init__(self):
         super().__init__()
@@ -57,10 +61,10 @@ class PublicBaselineWorkspace(iso_mod.IsoWorkspace):
         (self.root / "data" / "author-notes" /
          f"{self.article_c['frontMatter']['articleId']}-notes.yaml").write_text(
             "id: n-c\nstatus: published\nbody: 私人作者评正文。\n", encoding="utf-8")
-        # A（公开 baseline-article）的公开作者评
+        # A（公开 baseline-article）的作者评——文章公开不代表作者评公开
         (self.root / "data" / "author-notes" /
          f"{self.baseline_article['frontMatter']['articleId']}-notes.yaml").write_text(
-            "id: n-a\nstatus: published\nbody: 公开作者评正文。\n", encoding="utf-8")
+            "id: n-a\nstatus: published\nbody: 公开文章作者评标记PRIV-A。\n", encoding="utf-8")
         # 状态缺失的作者评（文件名不含任何 articleId）
         (self.root / "data" / "author-notes" / "notes-2026.yaml").write_text(
             "id: n-x\nstatus: published\nbody: 状态缺失作者评正文。\n", encoding="utf-8")
@@ -109,8 +113,7 @@ class BaselineIsolationTests(unittest.TestCase):
             self.assertFalse((content / "works" / "lidai-ji" / "iso-private").exists())
             self.assertFalse((content / "essays" / "secret-notes.md").exists())
             notes = [n.name for n in merged["authorNotesRoot"].glob("*.yaml")]
-            public_id = self.ws.baseline_article["frontMatter"]["articleId"]
-            self.assertEqual(notes, [f"{public_id}-notes.yaml"])  # 仅公开评进入；C/状态缺失/伪造评不进
+            self.assertEqual(notes, [])  # 作者评一律不进入隔离输入（含公开文章 A 的评）
         finally:
             iso.cleanup_merged_content(merged)
 
@@ -423,79 +426,121 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class PublicNotesBaselineTests(unittest.TestCase):
-    """公开作者评正向/排除/保留测试（虚构夹具）。"""
+class AuthorNotesPrivacyTests(unittest.TestCase):
+    """作者评隐私边界：作者评默认且始终属于私有内容。
+
+    文章公开、目标文章身份、线上 manifest 均不推导作者评公开；
+    所有 data/author-notes/** 在归档前排除，不进入隔离输入/候选/公共派生文件。
+    """
 
     def setUp(self):
         self.ws = PublicBaselineWorkspace()
         self.state = iso_mod.FakeState(self.ws)
         self.baseline = iso.resolve_published_baseline(self.state, "example.test")
+        self.aid = {
+            "A": self.ws.baseline_article["frontMatter"]["articleId"],
+            "C": self.ws.article_c["frontMatter"]["articleId"],
+        }
 
     def tearDown(self):
         self.ws.cleanup()
 
-    def test_public_notes_enter_isolated_baseline(self):
-        target = iso_mod._new_target(self.ws)
+    def _merged(self, target):
         snapshot = iso.create_target_snapshot(self.state, target["path"],
                                               target["frontMatter"]["articleRevision"])
-        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]),
-                                          snapshot, self.baseline)
+        return iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]),
+                                        snapshot, self.baseline)
+
+    def test_public_article_private_notes_excluded(self):
+        """已公开文章 A 的作者评不进入隔离输入。"""
+        target = iso_mod._new_target(self.ws)
+        merged = self._merged(target)
         try:
             notes = {n.name for n in merged["authorNotesRoot"].glob("*.yaml")}
-            public_id = self.ws.baseline_article["frontMatter"]["articleId"]
-            self.assertIn(f"{public_id}-notes.yaml", notes)  # 公开作者评进入可信基线
-            self.assertNotIn("notes-2026.yaml", notes)       # 状态缺失评默认排除
-            self.assertNotIn(f"{self.ws.article_c['frontMatter']['articleId']}-notes.yaml", notes)
+            self.assertEqual(notes, set(), "隔离输入不应含任何作者评（含公开文章 A 的）")
+            content = "".join(n.read_text(encoding="utf-8") for n in merged["authorNotesRoot"].glob("*.yaml"))
+            self.assertNotIn("PRIV-A", content)
         finally:
             iso.cleanup_merged_content(merged)
 
-    def test_unrelated_public_note_kept_when_publishing_other_article(self):
+    def test_target_article_notes_excluded(self):
+        """目标文章 B 的作者评不进入隔离输入（本轮最重要的回归）。"""
         target = iso_mod._new_target(self.ws)
-        snapshot = iso.create_target_snapshot(self.state, target["path"],
-                                              target["frontMatter"]["articleRevision"])
-        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]),
-                                          snapshot, self.baseline)
+        (self.ws.root / "data" / "author-notes" /
+         f"{target['frontMatter']['articleId']}-notes.yaml").write_text(
+            "id: n-b\nstatus: published\nbody: 目标文章作者评标记PRIV-B。\n", encoding="utf-8")
+        merged = self._merged(target)
         try:
             notes = {n.name for n in merged["authorNotesRoot"].glob("*.yaml")}
-            public_id = self.ws.baseline_article["frontMatter"]["articleId"]
-            self.assertIn(f"{public_id}-notes.yaml", notes)  # 无关公开评不被遗漏/不被工作区版本覆盖
-            content = (merged["authorNotesRoot"] / f"{public_id}-notes.yaml").read_text(encoding="utf-8")
-            self.assertIn("公开作者评正文", content)
+            self.assertEqual(notes, set(), "目标文章作者评不得自动公开")
+            content = "".join(n.read_text(encoding="utf-8") for n in merged["authorNotesRoot"].glob("*.yaml"))
+            self.assertNotIn("PRIV-B", content)
         finally:
             iso.cleanup_merged_content(merged)
 
-    def test_forged_and_status_missing_notes_excluded(self):
-        # 伪造：把私人 C 的评改名为普通名（仍不含公开 id）→ 不进入
-        (self.ws.root / "data" / "author-notes" / "notes-2026.yaml").write_text(
-            "id: n-x\nstatus: published\nbody: 伪造作者评正文。\n", encoding="utf-8")
+    def test_unrelated_and_target_notes_excluded_preserving_public_content(self):
+        """发布 B 时：A 与 B 的作者评均不进入候选；A 的公开正文保持可信基线版本。"""
         target = iso_mod._new_target(self.ws)
-        snapshot = iso.create_target_snapshot(self.state, target["path"],
-                                              target["frontMatter"]["articleRevision"])
-        merged = iso.build_merged_content(self.state, iso._resolve_target(self.state, target["path"]),
-                                          snapshot, self.baseline)
-        try:
-            notes = {n.name for n in merged["authorNotesRoot"].glob("*.yaml")}
-            self.assertNotIn("notes-2026.yaml", notes)
-            # 伪造的 D：工作区元数据（正文/标题）不能把非公开评带入基线
-            combined = "".join(n.read_text(encoding="utf-8") for n in merged["authorNotesRoot"].glob("*.yaml"))
-            self.assertNotIn("伪造作者评正文", combined)
-            self.assertNotIn("私人作者评正文", combined)
-        finally:
-            iso.cleanup_merged_content(merged)
-
-    def test_notes_body_not_in_logs_and_not_in_candidate(self):
-        target = iso_mod._new_target(self.ws)
+        (self.ws.root / "data" / "author-notes" /
+         f"{target['frontMatter']['articleId']}-notes.yaml").write_text(
+            "id: n-b\nstatus: published\nbody: 目标文章作者评标记PRIV-B。\n", encoding="utf-8")
         self.ws.write_candidate_manifest(target)
         result = pa.article_publish_preview(self.state, target["path"])
         self.assertTrue(result["ok"], result["checks"])
-        output = result.get("buildOutput") or ""
-        self.assertNotIn("公开作者评正文", output)
-        self.assertNotIn("私人作者评正文", output)
-        self.assertNotIn("状态缺失作者评正文", output)
         manifest = cm.load_candidate_manifest(self.ws.root, result["candidate"]["candidateId"])
         paths = "\n".join(f["path"] for f in manifest["files"])
         self.assertNotIn("notes.yaml", paths)
         self.assertNotIn("author-notes", paths)
+        candidate_dir = cm._candidates_root(self.ws.root) / result["candidate"]["candidateId"]
+        html = "".join(f.read_text(encoding="utf-8", errors="replace")
+                       for f in candidate_dir.rglob("*.html"))
+        self.assertNotIn("PRIV-A", html)
+        self.assertNotIn("PRIV-B", html)
+        # A 的公开正文仍在候选 manifest（可信基线版本，与作者评无关）
+        site_manifest = json.loads((candidate_dir / "comment-manifest.json").read_text(encoding="utf-8"))
+        alpha_entry = next((a for a in site_manifest["articles"]
+                            if a["articleId"] == self.aid["A"]), None)
+        self.assertIsNotNone(alpha_entry, "公开文章 A 必须在候选清单（与作者评无关）")
+        self.assertEqual(alpha_entry["revision"],
+                         self.ws.baseline_article["frontMatter"]["articleRevision"])
+
+    def test_forged_filenames_all_excluded(self):
+        """文件名伪装（公开/目标/公开字样）全部排除。"""
+        notes_dir = self.ws.root / "data" / "author-notes"
+        for name, body in (
+            (f"{self.aid['A']}.yaml", "body: 伪装公开评PRIV-X1\n"),
+            (f"{self.aid['A']}-notes.yaml", "body: 伪装公开评PRIV-X2\n"),
+            ("public.yaml", "body: 伪装公开评PRIV-X3\n"),
+            ("published.yaml", "body: 伪装公开评PRIV-X4\n"),
+        ):
+            (notes_dir / name).write_text("id: x\nstatus: published\n" + body, encoding="utf-8")
+        target = iso_mod._new_target(self.ws)
+        merged = self._merged(target)
+        try:
+            notes = {n.name for n in merged["authorNotesRoot"].glob("*.yaml")}
+            self.assertEqual(notes, set())
+            content = "".join(n.read_text(encoding="utf-8") for n in merged["authorNotesRoot"].glob("*.yaml"))
+            for marker in ("PRIV-X1", "PRIV-X2", "PRIV-X3", "PRIV-X4"):
+                self.assertNotIn(marker, content)
+        finally:
+            iso.cleanup_merged_content(merged)
+
+    def test_notes_markers_absent_from_outputs_and_responses(self):
+        """作者评独特标记不出现在 buildOutput/候选 manifest/HTTP 可见面。"""
+        target = iso_mod._new_target(self.ws)
+        (self.ws.root / "data" / "author-notes" /
+         f"{target['frontMatter']['articleId']}-notes.yaml").write_text(
+            "id: n-b\nstatus: published\nbody: 目标文章作者评标记PRIV-B。\n", encoding="utf-8")
+        self.ws.write_candidate_manifest(target)
+        result = pa.article_publish_preview(self.state, target["path"])
+        self.assertTrue(result["ok"], result["checks"])
+        output = json.dumps(result, ensure_ascii=False)
+        for marker in ("PRIV-A", "PRIV-B", "PRIV-C", "公开作者评正文"):
+            self.assertNotIn(marker, output)
+        # 敏感扫描仍作为纵深防御：候选含 author-notes 路径名即阻断
+        scan = __import__("studio.sensitive_scan", fromlist=["scan_candidate"])
+        findings = scan.scan_candidate(self.ws.root / "dist" / "site")
+        self.assertFalse(findings["blocked"])
 
 
 class SweepFailureLogTests(unittest.TestCase):
