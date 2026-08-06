@@ -20,3 +20,26 @@
   默认 `--dry-run`；`--apply` 只恢复（historical→current），绝不把段落改为 historical。
 - v0.5.1 起服务启动时若清单未声明 `paragraphsMode: authoritative`，段落状态保持不变，
   不会再因精简清单而整体失效。
+
+## v0.5.3 归档缺陷修复（候选）与恢复要点
+
+- **根因**：v0.5.1 以 `tar -C <root> current` 归档符号链接本身（未解引用），
+  site/comments 归档只包含 `current` 链接；文件级 SHA 清单却从在线目录生成，
+  造成"清单正确、归档错误"（隔离恢复演练结论 C 证实）。
+- **修复**（`deploy/backup/backup-to-cos.sh` v0.5.3）：
+  - 备份开始时解析并锁定 current 的真实 release（目录/白名单/命名校验，fail closed）；
+  - 复制受控快照后只对快照打包与生成清单；快照内出现任何符号链接即失败；
+  - 上传前对归档解压复验：从解压内容重新生成清单并与快照清单逐文件比较；
+  - 原子生成（`*.tmp` → mv）、单实例锁（原子 mkdir + PID 陈旧检测）、状态机日志；
+  - 清单升级为 JSON `schemaVersion: 2` 且 `archivePayloadVerified: true`
+    （表示该归档已通过解压逐文件复验）；**旧 v1 备份不得视为完整恢复源**。
+- **历史备份状态**（演练结论，不得改写为"完整恢复已验证"）：
+  - `site-current.tar.gz`：归档不完整（仅符号链接）；`comments-current.tar.gz`：归档不完整；
+  - 数据库备份：经演练有效；平台源码副本：经演练有效；整站灾难恢复：未打通（待 v0.5.3 部署后重演）。
+- **独立验证模式**：`BACKUP_VERIFY_ONLY=<归档> deploy/backup/backup-to-cos.sh`
+  对已有归档执行解压复验（VERIFY_OK / VERIFY_FAILED），供恢复前抽查。
+- **本地保留副本**：设置 `BACKUP_KEEP_DIR=<目录>` 时，验证通过后归档/校验和/清单
+  复制到该目录（运维自查与恢复演练用）。
+- **测试**：`tests/test_backup_to_cos.py`（15 项，全部虚构目录，覆盖 current 解析/
+  切换/断裂/越界、空 release、内部符号链接逃逸、归档损坏、清单不一致、缺文件、
+  并发锁、临时残留、空格路径、秘密不进日志）。
