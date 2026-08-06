@@ -94,3 +94,27 @@ class ArticlePublishStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SweepCacheTests(unittest.TestCase):
+    """会话清扫必须保留持久状态（账本/候选/发布日志），只清会话临时目录。"""
+
+    def setUp(self):
+        self.root = Path(TMP)
+        (self.root / "persist-test").mkdir(parents=True, exist_ok=True)
+
+    def test_sweep_preserves_persistent_entries(self):
+        import studio.server as srv
+        base = self.root / "persist-test"
+        (base / "candidates").mkdir()
+        (base / "publish-logs").mkdir()
+        (base / "backups").mkdir()
+        (base / "publish-history.json").write_text("[]", encoding="utf-8")
+        (base / "session-tmp").mkdir()
+        (base / "session-tmp" / "x.bin").write_bytes(b"x")
+        srv.sweep_cache(base)
+        self.assertTrue((base / "candidates").is_dir())
+        self.assertTrue((base / "publish-logs").is_dir())
+        self.assertTrue((base / "backups").is_dir())
+        self.assertTrue((base / "publish-history.json").is_file())
+        self.assertFalse((base / "session-tmp").exists())

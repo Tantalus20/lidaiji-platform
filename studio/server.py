@@ -150,19 +150,26 @@ class StudioError(Exception):
         self.message = message
 
 
+# 工作台持久状态（会话清扫必须保留）：
+# - backups/ trash/：既有保留目录；
+# - candidates/：隔离发布候选（跨重启可读，任务书 16.10）；
+# - publish-logs/：发布完整日志（下载入口）；
+# - publish-history.json：发布账本（幂等/历史依据）。
+_PERSISTENT_CACHE_ENTRIES = frozenset(
+    {"backups", "trash", "candidates", "publish-logs", "publish-history.json"})
+
+
 def sweep_cache(cache_root: Path) -> None:
-    """清扫会话缓存目录，但保留 backups/（保存备份）与 trash/（删除回收站）。"""
+    """清扫会话缓存目录，但保留持久状态（账本/候选/发布日志/备份/回收站）。"""
     if not cache_root.is_dir():
         return
     for child in cache_root.iterdir():
-        if child.name in ("backups", "trash"):
+        if child.name in _PERSISTENT_CACHE_ENTRIES:
             continue
         if child.is_dir() and not child.is_symlink():
             shutil.rmtree(child, ignore_errors=True)
         else:
             child.unlink(missing_ok=True)
-    if not (cache_root / "backups").is_dir() and not (cache_root / "trash").is_dir():
-        shutil.rmtree(cache_root, ignore_errors=True)
 
 
 @dataclass
