@@ -465,6 +465,18 @@ function renderPublishBar() {
   }
 }
 
+async function ensureDeployMode() {
+  if (typeof window.studioDeployDisabled !== "boolean") {
+    try {
+      const payload = await apiGet("/api/system/status");
+      window.studioDeployDisabled = payload.deployDisabled === true;
+    } catch (error) {
+      window.studioDeployDisabled = false;
+    }
+  }
+  renderDeployMode();
+}
+
 function renderDeployMode() {
   if (!editState.path) return;
   const banner = $("#deployDevBanner");
@@ -536,6 +548,7 @@ async function refreshPublishStatus() {
     publishState.status = payload.status;
     renderPublishBar();
     renderDeployMode();
+    ensureDeployMode();
     renderPublishStage();
     renderPublishResult();
     const lock = payload.status.lock;
