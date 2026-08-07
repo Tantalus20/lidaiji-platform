@@ -326,6 +326,51 @@ class QzoneAdapterTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "cookie-invalid")
 
 
+class RealTransportContractTestCase(unittest.TestCase):
+    """真实 transport 的 HTTP 契约回归（本地假服务器捕获原始请求）：
+    NapCat v4.18：POST /<action>，body 直接传参（不包 action/params 外层）。"""
+
+    def test_napcat_call_path_and_body_contract(self):
+        import http.server
+        import json as json_mod
+        import threading
+
+        captured = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                captured["path"] = self.path
+                captured["body"] = self.rfile.read(length).decode("utf-8")
+                captured["auth"] = self.headers.get("Authorization", "")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok","data":{"user_id":"12345"}}')
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            transport = qzone_mod._RealTransport(5.0, access_token="test-token-abc")
+            result = transport.napcat_call(f"http://127.0.0.1:{port}", "get_credentials", {"domain": "qzone.qq.com"})
+            self.assertEqual(result["data"]["user_id"], "12345")
+            self.assertEqual(captured["path"], "/get_credentials")
+            body = json_mod.loads(captured["body"])
+            self.assertEqual(body, {"domain": "qzone.qq.com"})
+            self.assertNotIn("action", body)
+            self.assertNotIn("params", body)
+            self.assertEqual(captured["auth"], "Bearer test-token-abc")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+
 class DryRunTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="share-dryrun-test-")

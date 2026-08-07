@@ -72,6 +72,7 @@ class QzoneAdapterConfig:
     napcat_http_url: str = ""  # 例如 http://127.0.0.1:3000
     qq_account: str = ""  # 目标 QQ 号（NapCat 登录账号）
     timeout: float = HTTP_TIMEOUT
+    access_token: str = ""  # NapCat HTTP API 访问令牌（Authorization: Bearer）
     # 注入点：测试用假 transport；缺省为真实 urllib
     transport: object = None
 
@@ -90,15 +91,21 @@ class _RealTransport:
     def __init__(self, timeout: float):
         self.timeout = timeout
 
+    def __init__(self, timeout: float, access_token: str = ""):
+        self.timeout = timeout
+        self.access_token = access_token
+
     def napcat_call(self, base_url: str, action: str, params: dict) -> dict:
+        """NapCat v4.18 OneBot11 HTTP 契约（真机验证确认）：
+        - action 写在 URL 路径（POST /<snake_case_action>）；
+        - body 直接是参数对象（不包 {"action":..., "params":...} 外层）。
+        """
         url = f"{base_url.rstrip('/')}/{action}"
-        payload = json.dumps({"action": action, "params": params}).encode("utf-8")
-        request = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json", "X-Client-Name": "lidaiji-share-publisher"},
-            method="POST",
-        )
+        payload = json.dumps(params or {}).encode("utf-8")
+        headers = {"Content-Type": "application/json", "X-Client-Name": "lidaiji-share-publisher"}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 body = response.read().decode("utf-8", "replace")
@@ -153,7 +160,7 @@ class QzoneAdapter:
     def __init__(self, config: QzoneAdapterConfig | None = None):
         config = config or QzoneAdapterConfig()
         self.config = config
-        self._transport = config.transport or _RealTransport(config.timeout)
+        self._transport = config.transport or _RealTransport(config.timeout, config.access_token)
 
     def fetch_cookie(self) -> str:
         """通过 NapCat 动态取得当前 QQ 空间 Cookie（不落盘、不进日志）。"""

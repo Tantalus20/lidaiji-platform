@@ -56,6 +56,7 @@ def build_adapter() -> qzone_mod.QzoneAdapter:
     config = qzone_mod.QzoneAdapterConfig(
         napcat_http_url=_env("NAPCAT_HTTP_URL"),
         qq_account=_env("NAPCAT_QQ"),
+        access_token=_env("NAPCAT_ACCESS_TOKEN"),
     )
     return qzone_mod.QzoneAdapter(config)
 
