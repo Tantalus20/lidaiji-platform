@@ -263,6 +263,108 @@ async function runEditorUiAcceptance(cdp, editPath) {
   await cdp.send("Emulation.clearDeviceMetricsOverride");
 }
 
+/* 保存状态 UI 验收（v0.2.6 收口）：真实页面 DOM 断言「正在保存」中间态。
+ * 通过包裹 window.fetch 注入延迟/失败/计数，不修改服务端。 */
+async function runSaveStateAcceptance(cdp, editPath) {
+  const status = () => cdp.evaluate("(document.querySelector('#editSaveStatus')||{}).textContent || ''");
+  const reloadEditor = async () => {
+    await cdp.send("Page.navigate", { url: `${base}/#/` });
+    await sleep(1200);
+    await cdp.send("Page.navigate", { url: `${base}/#/edit?path=${encodeURIComponent(editPath)}` });
+    await sleep(3000);
+  };
+  const installFetchTrap = (delayMs, fail = false, countOnly = false) =>
+    cdp.evaluate(`(() => {
+      const orig = window.fetch;
+      window.__saveCount = 0;
+      window.fetch = (url, opts) => {
+        if (String(url).includes('/api/article/save')) {
+          window.__saveCount += 1;
+          if (${countOnly ? "false" : "true"} && ${fail ? "true" : "false"}) {
+            return new Promise((_, rej) => setTimeout(() => rej(new Error('forced-fail')), ${delayMs}));
+          }
+          return new Promise((resolve, reject) => {
+            setTimeout(() => orig(url, opts).then(resolve, reject), ${delayMs});
+          });
+        }
+        return orig(url, opts);
+      };
+    })()`);
+  const restoreFetch = () => cdp.evaluate("window.fetch = window.__origFetch;");
+
+  /* 场景1：正常保存（延迟 1200ms）——中间态必须真实出现在 DOM */
+  await reloadEditor();
+  await installFetchTrap(1200, false);
+  await cdp.evaluate("document.querySelector('#editorHost .ProseMirror').focus()");
+  await cdp.send("Input.insertText", { text: "甲" });
+  await sleep(300);
+  check("S1 修改后显示有未保存修改", (await status()).includes("未保存"), await status());
+  await cdp.evaluate("document.querySelector('#editSave').click()");
+  await sleep(400);
+  check("S1 请求 pending 期间 DOM 显示「正在保存」", (await status()).includes("正在保存"), await status());
+  await sleep(1000);
+  check("S1 放行后显示已保存", (await status()).includes("已保存"), await status());
+  await restoreFetch();
+
+  /* 场景2：保存失败——正在保存 → 保存失败 */
+  await installFetchTrap(800, true);
+  await cdp.evaluate("document.querySelector('#editorHost .ProseMirror').focus()");
+  await cdp.send("Input.insertText", { text: "乙" });
+  await sleep(300);
+  await cdp.evaluate("document.querySelector('#editSave').click()");
+  await sleep(300);
+  check("S2 pending 期间显示正在保存", (await status()).includes("正在保存"), await status());
+  await sleep(2000); // 越过点击保存失败(800ms)与自动保存重试失败，最终停留在 保存失败
+  check("S2 失败后显示保存失败", (await status()).includes("保存失败"), await status());
+  await restoreFetch();
+
+  /* 场景3：保存期间继续输入——A 成功不得伪报已保存 */
+  await reloadEditor();
+  await installFetchTrap(1200, false);
+  await cdp.evaluate("document.querySelector('#editorHost .ProseMirror').focus()");
+  await cdp.send("Input.insertText", { text: "丙" });
+  await sleep(300);
+  await cdp.evaluate("document.querySelector('#editSave').click()");
+  await sleep(300);
+  await cdp.send("Input.insertText", { text: "丁" }); // pending 期间继续输入 B
+  await sleep(1400); // A 完成（版本不匹配分支：不得显示已保存）
+  const s3 = await status();
+  check("S3 保存期间输入后不伪报已保存", !s3.includes("已保存") && s3.includes("未保存"), s3);
+  await sleep(2500); // 自动再次保存 B → 最终已保存
+  check("S3 随后自动保存 B 后已保存", (await status()).includes("已保存"), await status());
+  await restoreFetch();
+
+  /* 场景4：重复点击——pending 期间再点保存，写请求数 = 1 */
+  await reloadEditor();
+  await installFetchTrap(1200, false, true);
+  await cdp.evaluate("document.querySelector('#editorHost .ProseMirror').focus()");
+  await cdp.send("Input.insertText", { text: "戊" });
+  await sleep(300);
+  await cdp.evaluate("document.querySelector('#editSave').click()");
+  await sleep(300);
+  await cdp.evaluate("document.querySelector('#editSave').click()"); // 第二次点击
+  await sleep(300);
+  const count1 = await cdp.evaluate("window.__saveCount");
+  check("S4 pending 期间重复点击不产生并发写（1 次）", count1 === 1, `count=${count1}`);
+  const s4 = await status();
+  check("S4 重复点击期间仍为正在保存", s4.includes("正在保存"), s4);
+  await sleep(1200);
+  check("S4 完成后已保存", (await status()).includes("已保存"), await status());
+  await restoreFetch();
+
+  /* 场景5：极快保存——顺序正确，最终已保存 */
+  await reloadEditor();
+  await cdp.evaluate("document.querySelector('#editorHost .ProseMirror').focus()");
+  await cdp.send("Input.insertText", { text: "己" });
+  await sleep(300);
+  await cdp.evaluate("document.querySelector('#editSave').click()");
+  await sleep(100);
+  const s5 = await status();
+  check("S5 极快保存状态机顺序正确（不滞留有未保存修改）", !s5.includes("未保存"), s5);
+  await sleep(1200);
+  check("S5 最终已保存", (await status()).includes("已保存"), await status());
+}
+
 const chrome = spawn(
   CHROME,
   [
@@ -342,6 +444,7 @@ try {
     check("保存状态初始为已保存", editState.saveStatus === "已保存", editState.saveStatus);
 
     await runEditorUiAcceptance(cdp, editPath);
+    await runSaveStateAcceptance(cdp, editPath);
   }
 
   await sleep(500);

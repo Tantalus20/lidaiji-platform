@@ -72,17 +72,16 @@ test("重新打开文章重置为已保存", () => {
   assert.equal(m.status, "saved");
 });
 
-test("并发防护：重复 saving 不改变状态且不重复通知", () => {
+test("并发写防护在调用方：机器层每次 saving() 开启新周期（回归：陈旧 dirtyDuringSave 污染）", () => {
   const m = createSaveStateMachine();
   m.userInput();
-  let notifications = 0;
-  m.onChange(() => { notifications += 1; });
   m.saving();
-  const afterFirst = m.status;
-  const second = m.saving();
-  assert.equal(second, "saving");
-  assert.equal(m.status, afterFirst, "重复 saving 不得改变状态");
-  assert.equal(notifications, 1, "重复 saving 不得重复通知");
+  /* 保存期间输入 → dirtyDuringSave 置位（机器留在 saving） */
+  m.userInput();
+  /* 下一周期 saving() 必须清除陈旧标记，否则 saved() 会误判 dirty */
+  m.saving();
+  assert.equal(m.saved(), "saved", "新周期后 saved() 不得被上一周期污染");
+  assert.equal(m.status, "saved");
 });
 
 test("变更通知顺序：dirty→saving→saved", () => {
