@@ -26,4 +26,7 @@ fi
 "$PYTHON" "$ROOT/tests/test_studio_feedback.py"
 "$PYTHON" "$ROOT/tests/test_studio_notes.py"
 "$PYTHON" "$ROOT/tests/test_preview_render.py"
+"$PYTHON" "$ROOT/tests/test_share_content.py"
+"$PYTHON" "$ROOT/tests/test_share_publisher.py"
+"$PYTHON" "$ROOT/tests/test_studio_share.py"
 printf '作者工作台自动测试通过。\n'

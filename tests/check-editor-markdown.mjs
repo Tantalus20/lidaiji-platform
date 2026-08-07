@@ -414,6 +414,31 @@ if (fs.existsSync(path.join(root, "node_modules", "prosemirror-model"))) {
   console.log("跳过：本机未安装根依赖（node_modules），ProseMirror 层深测未运行。");
 }
 
+
+/* ---------------- 分享文档模式（stripPid 锚点政策） ---------------- */
+
+{
+  const withPid = "<!-- paragraph-id:p-aaaaaaaaaaaa -->\n\n正文段落。\n\n<!-- paragraph-id:p-bbbbbbbbbbbb -->\n\n第二段。\n";
+  const parsed = parseMarkdown(withPid);
+  assert.ok(parsed.content[0].pid === "p-aaaaaaaaaaaa", "work 模式解析必须保留 pid");
+  // 默认序列化保留锚点（work 往返不变）
+  const work = serializeMarkdown(parseMarkdown(withPid));
+  assert.ok(work.includes("paragraph-id:p-aaaaaaaaaaaa"), "work 模式序列化必须保留段评锚点");
+  // share 模式序列化剥离锚点
+  const share = serializeMarkdown(parseMarkdown(withPid), { stripPid: true });
+  assert.ok(!share.includes("paragraph-id"), "share 模式序列化不得输出段评锚点");
+  assert.ok(share.includes("正文段落。"), "share 模式正文必须完整保留");
+  assert.ok(!share.includes("<!--"), "share 模式输出不得残留任何 HTML 注释");
+  // 二次往返幂等（share 输出再 parse/serialize 保持无锚点）
+  const shareAgain = serializeMarkdown(parseMarkdown(share), { stripPid: true });
+  assert.ok(shareAgain === share, "share 模式二次往返必须幂等");
+  // 容器内段落本就不挂锚点，share 模式同样不输出
+  const container = "{{< poetry >}}\n\n诗行。\n\n{{< /poetry >}}\n";
+  const containerShare = serializeMarkdown(parseMarkdown(container), { stripPid: true });
+  assert.ok(!containerShare.includes("paragraph-id"), "容器内段落 share 模式不得输出锚点");
+  assert.ok(containerShare.includes("{{< poetry >}}"), "诗歌短代码 share 模式必须保留");
+}
+
 if (failures) {
   console.error(`Markdown 引擎测试失败 ${failures} 项。`);
   process.exit(1);

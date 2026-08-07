@@ -1,0 +1,17 @@
+{{ define "main" }}
+<header class="page-header">
+  <h1>{{ .Title }}</h1>
+  {{ with .Description }}<p>{{ . }}</p>{{ end }}
+</header>
+<div class="page-shell">
+  {{ if .Pages }}
+    <div class="article-list">
+      {{ range .Pages.ByDate.Reverse }}
+        {{ partial "article-card.html" . }}
+      {{ end }}
+    </div>
+  {{ else }}
+    <p class="empty-state">这个分类还没有公开分享。</p>
+  {{ end }}
+</div>
+{{ end }}

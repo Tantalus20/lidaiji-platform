@@ -1,0 +1,20 @@
+[Unit]
+Description=历代纪长文分享站 QQ 空间发布器（定时唤醒，运行后退出）
+Documentation=https://github.com/Tantalus20/lidaiji-platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 生产路径在部署轮确认；此模板仅作候选，未安装、未启用。
+WorkingDirectory=/opt/lidaiji-share
+ExecStart=/usr/bin/python3 -m share_publisher --project-root /opt/lidaiji-share run-once
+# 密钥与账号只从私有文件读取，绝不写进本单元文件
+EnvironmentFile=-/etc/lidaiji-share/publisher.env
+TimeoutStartSec=600
+Nice=10
+# 失败只记录，不自动重试（避免重复发说说）
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

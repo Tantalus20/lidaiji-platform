@@ -1,6 +1,6 @@
 /*! Lidaiji Studio 工作台前端包（自动生成，请勿手改）。
  * 源码：studio/app/*.mjs；重新生成：npm run build:app。
- * 平台 0.2.1 · Studio 0.2.6。 */
+ * 平台 0.2.1 · Studio 0.2.7。 */
 (() => {
   // studio/app/util.mjs
   var SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -615,6 +615,7 @@
   function ensureEditor() {
     if (studioEditor) return studioEditor;
     studioEditor = LidaijiEditor.createStudioEditor($("#editorHost"), {
+      anchorPolicy: editState.mode === "share" ? "share" : "work",
       onUpdate: () => {
         markDirty();
         scheduleAutosave();
@@ -623,28 +624,144 @@
     });
     return studioEditor;
   }
+  var QQ_TEXT_MAX = 2e3;
+  var QQ_TEXT_WARN = 1900;
+  function shareRightsHint(rightsMode) {
+    if (rightsMode === "excerpt") return "\u300C\u6458\u5F55\u300D\u5206\u4EAB\uFF1A\u5206\u4EAB\u7AD9\u9875\u9762\u53EA\u663E\u793A\u4ECB\u7ECD\u3001\u6458\u8981\u4E0E\u539F\u6587\u94FE\u63A5\uFF0C\u4E0D\u4F1A\u516C\u5F00\u5B8C\u6574\u6B63\u6587\u3002";
+    if (rightsMode === "link-only") return "\u300C\u4EC5\u94FE\u63A5\u300D\u5206\u4EAB\uFF1A\u672C\u7AD9\u4E0D\u4FDD\u5B58\u7B2C\u4E09\u65B9\u5B8C\u6574\u6B63\u6587\uFF0C\u9875\u9762\u53EA\u6709\u6807\u9898\u3001\u4ECB\u7ECD\u4E0E\u539F\u94FE\u63A5\u3002";
+    return "\u5B8C\u6574\u6B63\u6587\u4F1A\u53D1\u5E03\u5230\u5206\u4EAB\u7AD9\u9875\u9762\uFF1BQQ \u7A7A\u95F4\u53EA\u53D1\u6458\u8981\u4E0E\u94FE\u63A5\u3002";
+  }
+  function setEditMode(mode) {
+    const share = mode === "share";
+    editState.mode = share ? "share" : "work";
+    $("#fmPanel").classList.toggle("hidden", share);
+    $("#shareFmPanel").classList.toggle("hidden", !share);
+    $("#notesPanel").classList.toggle("hidden", share);
+    $("#publishBar").classList.add("hidden", share);
+    $("#editPublishPreview").classList.add("hidden", share);
+    $("#editPublish").classList.add("hidden", share);
+    $("#shareEditPrepare").classList.toggle("hidden", !share);
+    $("#shareEditPreview").classList.toggle("hidden", !share);
+    $("#editHugoPreview").classList.add("hidden", share);
+    $("#editOpenFolder").classList.add("hidden", share);
+    if (studioEditor) studioEditor.setAnchorPolicy(share ? "share" : "work");
+  }
+  function fillShareFmForm(fm) {
+    const form2 = $("#shareFmForm");
+    form2.title.value = fm.title || "";
+    form2.author.value = fm.author || "";
+    form2.sourceName.value = fm.sourceName || "";
+    form2.sourceUrl.value = fm.sourceUrl || "";
+    form2.shareKind.value = fm.shareKind || "original-writing";
+    form2.rightsMode.value = fm.rightsMode || "original";
+    form2.categories.value = Array.isArray(fm.categories) ? fm.categories.join("\uFF0C") : fm.categories || "";
+    form2.description.value = fm.description || "";
+    $("#shareQqSummary").value = fm.qqSummary || "";
+    $("#shareMetaId").textContent = fm.shareId || "\u2014";
+    $("#shareMetaRevision").textContent = fm.shareRevision || "\u2014";
+    $("#shareMetaHash").textContent = fm.shareRevision ? String(fm.shareRevision).split("@")[1] || "\u2014" : "\u2014";
+    $("#shareMetaUrl").textContent = fm.slug ? `/${fm.slug}/` : "\u2014";
+    $("#shareRightsHint").textContent = shareRightsHint(fm.rightsMode || "original");
+    updateShareChars();
+  }
+  function readShareFmForm() {
+    const form2 = $("#shareFmForm");
+    return {
+      title: form2.title.value.trim(),
+      author: form2.author.value.trim(),
+      sourceName: form2.sourceName.value.trim(),
+      sourceUrl: form2.sourceUrl.value.trim(),
+      shareKind: form2.shareKind.value,
+      rightsMode: form2.rightsMode.value,
+      description: form2.description.value.trim(),
+      categories: form2.categories.value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+      qqSummary: $("#shareQqSummary").value
+    };
+  }
+  function updateShareChars() {
+    const summary = $("#shareQqSummary").value;
+    const url = `${(window.shareBaseUrl || "http://localhost:1314/").replace(/\/$/, "")}${editState.shareUrl || ""}`;
+    const finalText = [summary.trim(), "\u9605\u8BFB\u5168\u6587\uFF1A", url].filter(Boolean).join("\n\n");
+    const length = [...finalText].length;
+    const box = $("#shareQqChars");
+    box.textContent = `\u6700\u7EC8 QQ \u6587\u6848\u7EA6 ${length} \u5B57\uFF08\u542B\u9605\u8BFB\u5168\u6587\u94FE\u63A5\uFF09`;
+    box.classList.toggle("danger-text", length > QQ_TEXT_WARN);
+    if (length > QQ_TEXT_WARN) {
+      box.textContent += `\uFF1A\u5DF2\u8D85\u8FC7 ${QQ_TEXT_WARN} \u5B57\u9884\u8B66\u7EBF\uFF0C\u8BF7\u7CBE\u7B80\uFF08QQ \u7A7A\u95F4\u5B58\u5728\u7EA6 ${QQ_TEXT_MAX} \u5B57\u4E0A\u9650\uFF0C\u6700\u7EC8\u4EE5\u63A5\u53E3\u4E3A\u51C6\uFF09\u3002`;
+    }
+    const confirmText = $("#shareConfirmText");
+    if (confirmText && !confirmText.dataset.touched) {
+      confirmText.value = finalText;
+    }
+  }
+  function resetShareForm() {
+    const form2 = $("#shareFmForm");
+    form2.reset();
+    form2.title.value = "";
+    form2.author.value = "";
+    form2.shareKind.value = "original-writing";
+    form2.rightsMode.value = "original";
+    $("#shareQqSummary").value = "";
+    $("#shareMetaId").textContent = "\u4FDD\u5B58\u540E\u751F\u6210";
+    $("#shareMetaRevision").textContent = "\u2014";
+    $("#shareMetaHash").textContent = "\u2014";
+    $("#shareMetaUrl").textContent = "\u2014";
+    editState.shareUrl = "";
+    $("#shareRightsHint").textContent = shareRightsHint("original");
+    updateShareChars();
+  }
   function showEditorMode(mode) {
     $("#editorHost").classList.toggle("hidden", mode !== "edit");
     $("#editorPreviewWrap").classList.toggle("hidden", mode !== "preview");
     $("#editorSourceWrap").classList.toggle("hidden", mode !== "source");
   }
   async function saveArticle() {
-    if (!editState.path || !studioEditor) return;
+    if (!studioEditor) return;
     if (editState.saving) return;
+    if (!editState.path && editState.mode !== "share") return;
     const body = studioEditor.getMarkdown();
     if (!body.trim()) {
       saveMachine.failed();
       setSaveStatus("\u6B63\u6587\u4E3A\u7A7A\uFF0C\u672A\u4FDD\u5B58", "failed");
       return;
     }
+    if (editState.mode === "share" && !editState.path) {
+      const fields = readShareFmForm();
+      if (!fields.title || !fields.author) {
+        saveMachine.failed();
+        setSaveStatus("\u6807\u9898\u4E0E\u4F5C\u8005\u4E0D\u80FD\u4E3A\u7A7A\uFF0C\u672A\u4FDD\u5B58", "failed");
+        return;
+      }
+      editState.saving = true;
+      saveMachine.saving();
+      setSaveStatus("\u6B63\u5728\u521B\u5EFA\u2026", "saving");
+      try {
+        const created = await api("/api/share/item/new", {
+          title: fields.title,
+          author: fields.author,
+          shareKind: fields.shareKind,
+          rightsMode: fields.rightsMode
+        });
+        editState.path = created.share.path;
+        editState.shareUrl = created.share.slug ? `/${created.share.slug}/` : "";
+      } catch (error) {
+        saveMachine.failed();
+        setSaveStatus("\u521B\u5EFA\u5931\u8D25", "failed");
+        showError($("#editError"), error.message);
+        editState.saving = false;
+        return;
+      }
+      editState.saving = false;
+    }
     editState.saving = true;
     editState.saveVersion = studioEditor.version();
     saveMachine.saving();
     setSaveStatus("\u6B63\u5728\u4FDD\u5B58", "saving");
     try {
-      const payload = await api("/api/article/save", {
+      const share = editState.mode === "share";
+      const payload = await api(share ? "/api/share/item/save" : "/api/article/save", {
         path: editState.path,
-        frontMatter: readFmForm(),
+        frontMatter: share ? readShareFmForm() : readFmForm(),
         body
       });
       if (editState.saveVersion !== studioEditor.version()) {
@@ -657,19 +774,40 @@
       studioEditor.replaceDocKeepCursor(payload.body);
       editState.dirty = false;
       clearLocalDraft();
-      $("#editDraftBadge").classList.toggle("hidden", !payload.article.draft);
-      $("#fmArticleRevision").textContent = payload.article.articleRevision || "\u2014";
-      saveMachine.saved();
-      if (saveMachine.status === "dirty") {
-        setSaveStatus("\u6709\u672A\u4FDD\u5B58\u4FEE\u6539", "");
-        scheduleAutosave();
+      if (share) {
+        const fm = payload.share;
+        $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
+        $("#editTitle").textContent = fm.title || "\uFF08\u672A\u547D\u540D\uFF09";
+        $("#shareMetaId").textContent = fm.shareId || "\u2014";
+        $("#shareMetaRevision").textContent = fm.shareRevision || "\u2014";
+        $("#shareMetaHash").textContent = fm.shareRevision ? String(fm.shareRevision).split("@")[1] || "\u2014" : "\u2014";
+        $("#shareMetaUrl").textContent = fm.slug ? `/${fm.slug}/` : "\u2014";
+        editState.shareUrl = fm.slug ? `/${fm.slug}/` : "";
+        saveMachine.saved();
+        if (saveMachine.status === "dirty") {
+          setSaveStatus("\u6709\u672A\u4FDD\u5B58\u4FEE\u6539", "");
+          scheduleAutosave();
+        } else {
+          setSaveStatus(payload.anchorsStripped ? "\u5DF2\u4FDD\u5B58\uFF08\u5DF2\u5265\u79BB\u6BB5\u8BC4\u951A\u70B9\uFF09" : "\u5DF2\u4FDD\u5B58\uFF08\u65E0\u6BB5\u8BC4\u951A\u70B9\uFF09", "saved");
+        }
       } else {
-        setSaveStatus(
-          `\u5DF2\u4FDD\u5B58\uFF08\u65B0\u589E\u951A\u70B9 ${payload.anchors.created} \u4E2A\uFF0C\u4FDD\u7559 ${payload.anchors.retained} \u4E2A\uFF09`,
-          "saved"
-        );
+        studioEditor.replaceDocKeepCursor(payload.body);
+        editState.dirty = false;
+        clearLocalDraft();
+        $("#editDraftBadge").classList.toggle("hidden", !payload.article.draft);
+        $("#fmArticleRevision").textContent = payload.article.articleRevision || "\u2014";
+        saveMachine.saved();
+        if (saveMachine.status === "dirty") {
+          setSaveStatus("\u6709\u672A\u4FDD\u5B58\u4FEE\u6539", "");
+          scheduleAutosave();
+        } else {
+          setSaveStatus(
+            `\u5DF2\u4FDD\u5B58\uFF08\u65B0\u589E\u951A\u70B9 ${payload.anchors.created} \u4E2A\uFF0C\u4FDD\u7559 ${payload.anchors.retained} \u4E2A\uFF09`,
+            "saved"
+          );
+        }
+        refreshPublishStatus();
       }
-      refreshPublishStatus();
     } catch (error) {
       saveMachine.failed();
       setSaveStatus("\u4FDD\u5B58\u5931\u8D25", "failed");
@@ -734,7 +872,7 @@
       preview.textContent = `\u9884\u89C8\u6E32\u67D3\u5931\u8D25\uFF1A${error.message}`;
     }
   }, 300);
-  async function openEditor(path) {
+  async function openEditor(path, mode = "work") {
     hideError($("#editError"));
     $("#draftBar").classList.add("hidden");
     pendingDraft = "";
@@ -742,29 +880,53 @@
     editState.path = "";
     editState.articleId = "";
     editState.dirty = false;
+    editState.shareUrl = "";
     clearTimeout(editState.autosaveTimer);
     clearTimeout(editState.draftTimer);
+    setEditMode(mode);
     try {
-      const payload = await apiGet(`/api/article?path=${encodeURIComponent(path)}`);
-      const article = payload.article;
-      editState.path = article.path;
-      editState.articleId = article.frontMatter.articleId || "";
+      const share = mode === "share";
+      const payload = await apiGet(
+        share ? `/api/share/item?path=${encodeURIComponent(path)}` : `/api/article?path=${encodeURIComponent(path)}`
+      );
       const editor = ensureEditor();
-      editor.setMarkdown(article.body);
-      editState.dirty = false;
-      saveMachine.reset();
-      setSaveStatus("\u5DF2\u4FDD\u5B58", "saved");
-      const fm = article.frontMatter;
-      $("#editTitle").textContent = fm.subtitle ? `${fm.title} \xB7 ${fm.subtitle}` : fm.title || "\uFF08\u672A\u547D\u540D\uFF09";
-      $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
-      fillFmForm(fm);
-      showEditorMode("edit");
-      updateWordCount();
-      updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
-      loadNotes();
-      refreshPublishStatus();
-      maybeOfferDraft(article.body);
-      editor.focus();
+      if (share) {
+        const item = payload.share;
+        editState.path = item.path;
+        editState.shareUrl = item.url;
+        editor.setMarkdown(item.body);
+        editState.dirty = false;
+        saveMachine.reset();
+        setSaveStatus("\u5DF2\u4FDD\u5B58", "saved");
+        const fm = item.frontMatter;
+        $("#editTitle").textContent = fm.title || "\uFF08\u672A\u547D\u540D\uFF09";
+        $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
+        fillShareFmForm(fm);
+        showEditorMode("edit");
+        updateWordCount();
+        updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
+        maybeOfferDraft(item.body);
+        editor.focus();
+      } else {
+        const article = payload.article;
+        editState.path = article.path;
+        editState.articleId = article.frontMatter.articleId || "";
+        editor.setMarkdown(article.body);
+        editState.dirty = false;
+        saveMachine.reset();
+        setSaveStatus("\u5DF2\u4FDD\u5B58", "saved");
+        const fm = article.frontMatter;
+        $("#editTitle").textContent = fm.subtitle ? `${fm.title} \xB7 ${fm.subtitle}` : fm.title || "\uFF08\u672A\u547D\u540D\uFF09";
+        $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
+        fillFmForm(fm);
+        showEditorMode("edit");
+        updateWordCount();
+        updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
+        loadNotes();
+        refreshPublishStatus();
+        maybeOfferDraft(article.body);
+        editor.focus();
+      }
     } catch (error) {
       editState.path = "";
       showError($("#editError"), error.message);
@@ -888,6 +1050,16 @@
     $("#draftBar").classList.add("hidden");
   });
   $("#fmForm").addEventListener("input", markDirty);
+  $("#shareFmForm").addEventListener("input", markDirty);
+  $("#shareQqSummary").addEventListener("input", () => {
+    markDirty();
+    updateShareChars();
+  });
+  $("#shareFmForm").addEventListener("change", (event) => {
+    if (event.target.name === "rightsMode") {
+      $("#shareRightsHint").textContent = shareRightsHint(event.target.value);
+    }
+  });
   $("#editSave").addEventListener("click", async () => {
     hideError($("#editError"));
     await saveArticle();
@@ -901,6 +1073,11 @@
     status.textContent = "\u6B63\u5728\u6253\u5F00 Hugo \u9884\u89C8\u2026";
     status.classList.remove("saved", "failed", "saving");
     try {
+      if (editState.mode === "share") {
+        await api("/api/share/preview", { action: "start" });
+        status.textContent = "\u5DF2\u6253\u5F00\u5206\u4EAB\u7AD9\u9884\u89C8\uFF081314 \u7AEF\u53E3\uFF0C\u542B\u8349\u7A3F\uFF09\u3002";
+        return;
+      }
       await api("/api/article/open-page", { path: editState.path });
       status.textContent = editState.dirty ? "\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00\uFF08\u672A\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u4F1A\u51FA\u73B0\u5728\u9884\u89C8\u4E2D\uFF09" : "\u5DF2\u5728\u6D4F\u89C8\u5668\u6253\u5F00\u3002";
     } catch (error) {
@@ -2790,6 +2967,372 @@
     }
   });
 
+  // studio/app/share.mjs
+  var SHARE_KIND_LABELS = {
+    "original-writing": "\u6211\u7684\u6587\u7AE0",
+    fiction: "\u5C0F\u8BF4",
+    news: "\u65B0\u95FB",
+    paper: "\u8BBA\u6587",
+    "public-domain-work": "\u516C\u5171\u9886\u57DF\u4F5C\u54C1",
+    other: "\u5176\u4ED6"
+  };
+  var SHARE_RIGHTS_LABELS = {
+    original: "\u539F\u521B",
+    "public-domain": "\u516C\u5171\u9886\u57DF",
+    licensed: "\u5DF2\u83B7\u6388\u6743",
+    cc: "CC\u8BB8\u53EF",
+    excerpt: "\u6458\u5F55",
+    "link-only": "\u4EC5\u94FE\u63A5"
+  };
+  var QQ_TEXT_MAX2 = 2e3;
+  var shareState = {
+    items: [],
+    publications: [],
+    baseUrl: "",
+    qzoneEnabled: false,
+    qzoneConfigured: false,
+    pendingHash: ""
+  };
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[ch]);
+  }
+  function renderShareGroups() {
+    const container = $("#shareGroups");
+    container.innerHTML = "";
+    const filter = ($("#shareFilter").value || "").trim().toLowerCase();
+    const visible = shareState.items.filter(
+      (item) => !filter || item.title.toLowerCase().includes(filter) || (item.author || "").toLowerCase().includes(filter)
+    );
+    const publishedIds = new Set(
+      shareState.publications.filter((pub) => pub.shareDraft === false).map((pub) => pub.share_id)
+    );
+    const groups = [
+      { key: "draft", title: "\u8349\u7A3F", items: visible.filter((item) => item.draft) },
+      { key: "pending", title: "\u5F85\u53D1\u5E03", items: visible.filter((item) => !item.draft && !publishedIds.has(item.shareId)) },
+      { key: "published", title: "\u5DF2\u53D1\u5E03", items: visible.filter((item) => !item.draft && publishedIds.has(item.shareId)) }
+    ];
+    for (const group of groups) {
+      const section = document.createElement("section");
+      section.className = "share-group";
+      const heading = document.createElement("h2");
+      heading.className = "group-title";
+      heading.textContent = `${group.title}\uFF08${group.items.length}\uFF09`;
+      section.appendChild(heading);
+      if (!group.items.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "\u6CA1\u6709\u5185\u5BB9\u3002";
+        section.appendChild(empty);
+      }
+      for (const item of group.items) {
+        const row = document.createElement("div");
+        row.className = "share-row";
+        const link = document.createElement("a");
+        link.href = `#/share-edit?path=${encodeURIComponent(item.path)}`;
+        const title = document.createElement("span");
+        title.className = "share-row-title";
+        title.textContent = item.title;
+        const meta = document.createElement("span");
+        meta.className = "share-row-meta";
+        meta.textContent = `${SHARE_KIND_LABELS[item.shareKind] || item.shareKind} \xB7 ${SHARE_RIGHTS_LABELS[item.rightsMode] || item.rightsMode} \xB7 ${item.author || "\u4F5A\u540D"} \xB7 ${String(item.date || "").slice(0, 10)} \xB7 ${item.wordCount} \u5B57`;
+        link.append(title, meta);
+        row.appendChild(link);
+        section.appendChild(row);
+      }
+      container.appendChild(section);
+    }
+  }
+  function renderPublications() {
+    const box = $("#sharePublications");
+    box.innerHTML = "";
+    if (!shareState.publications.length) {
+      box.textContent = "\uFF08\u8FD8\u6CA1\u6709\u53D1\u5E03\u4EFB\u52A1\uFF09";
+      return;
+    }
+    const table = document.createElement("table");
+    table.className = "data-table";
+    const head = document.createElement("thead");
+    head.innerHTML = "<tr><th>\u4EFB\u52A1</th><th>\u5206\u4EAB</th><th>\u7F51\u9875</th><th>\u72B6\u6001</th><th>\u53D1\u5E03\u65F6\u95F4</th><th>\u64CD\u4F5C</th></tr>";
+    table.appendChild(head);
+    const tbody = document.createElement("tbody");
+    const webText = (pub) => pub.web_status === "verified" ? "\u5DF2\u53D1\u5E03" : pub.web_status === "failed" ? "\u7F51\u9875\u5931\u8D25" : pub.web_status === "building" ? "\u6784\u5EFA\u4E2D" : "\u5F85\u6784\u5EFA";
+    const qzoneText = (pub) => ({
+      scheduled: "\u5F85\u53D1\u5E03",
+      publishing: "\u53D1\u5E03\u4E2D",
+      submitted_unverified: "\u5DF2\u63D0\u4EA4\uFF0C\u5F85\u53CD\u67E5",
+      published: "\u5DF2\u53D1\u5E03",
+      failed: "\u5931\u8D25",
+      cancelled: "\u5DF2\u53D6\u6D88",
+      skipped: "QQ \u672A\u542F\u7528"
+    })[pub.qzone_status] || pub.qzone_status;
+    for (const pub of shareState.publications) {
+      const tr = document.createElement("tr");
+      const canCancel = ["scheduled", "publishing"].includes(pub.qzone_status);
+      tr.innerHTML = `
+      <td><code>${pub.publication_id}</code></td>
+      <td>${pub.shareTitle || pub.share_id}<br><small>${pub.share_revision}</small></td>
+      <td>${pub.canonical_url || "\u2014"}${pub.error_code ? `<br><small class="danger-text">${pub.error_code}</small>` : ""}</td>
+      <td>${webText(pub)} / ${qzoneText(pub)}${pub.error_message ? `<br><small title="${escapeHtml(pub.error_message)}">${escapeHtml(String(pub.error_message).slice(0, 50))}</small>` : ""}</td>
+      <td>${String(pub.scheduled_at).replace("T", " ").slice(0, 16)}</td>
+      <td>${canCancel ? `<button class="secondary small" data-cancel="${pub.publication_id}" type="button">\u53D6\u6D88\u4EFB\u52A1</button>` : ""}</td>`;
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    box.appendChild(table);
+    box.querySelectorAll("[data-cancel]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await api("/api/share/publication/cancel", { publicationId: button.dataset.cancel });
+          loadShareHome();
+        } catch (error) {
+          showError($("#shareError"), error.message);
+        }
+      });
+    });
+  }
+  async function loadShareHome() {
+    hideError($("#shareError"));
+    try {
+      const [items, publications, status] = await Promise.all([
+        apiGet("/api/share/items"),
+        apiGet("/api/share/publications"),
+        apiGet("/api/share/publish-status")
+      ]);
+      shareState.items = items.items;
+      shareState.publications = publications.publications;
+      shareState.baseUrl = status.status.baseUrl;
+      shareState.qzoneEnabled = status.status.qzoneEnabled;
+      shareState.qzoneConfigured = status.status.qzoneConfigured;
+      window.shareBaseUrl = shareState.baseUrl;
+      const note = shareState.qzoneEnabled ? shareState.qzoneConfigured ? "QQ \u81EA\u52A8\u53D1\u5E03\uFF1A\u5DF2\u542F\u7528" : "QQ \u81EA\u52A8\u53D1\u5E03\uFF1A\u5DF2\u542F\u7528\u4F46\u672A\u914D\u7F6E\u8D26\u53F7" : "QQ \u81EA\u52A8\u53D1\u5E03\uFF1A\u672A\u542F\u7528";
+      $("#sharePublishNote").textContent = note;
+      renderShareGroups();
+      renderPublications();
+    } catch (error) {
+      showError($("#shareError"), error.message);
+    }
+    refreshSharePreviewStatus();
+  }
+  async function refreshSharePreviewStatus() {
+    try {
+      const payload = await apiGet("/api/share/preview-status");
+      const status = $("#sharePreviewStatus");
+      status.textContent = payload.preview.running ? `\u5206\u4EAB\u7AD9\u9884\u89C8\u8FD0\u884C\u4E2D\uFF1A${payload.preview.url}` : "";
+    } catch (error) {
+      $("#sharePreviewStatus").textContent = "";
+    }
+  }
+  function startSharePreview() {
+    const status = $("#sharePreviewStatus");
+    status.textContent = "\u6B63\u5728\u542F\u52A8\u2026";
+    api("/api/share/preview", { action: "start" }).then((payload) => {
+      status.textContent = payload.preview.running ? `\u5206\u4EAB\u7AD9\u9884\u89C8\u8FD0\u884C\u4E2D\uFF1A${payload.preview.url}` : "\u9884\u89C8\u8FDB\u7A0B\u5DF2\u9000\u51FA\uFF0C\u8BF7\u68C0\u67E5 1314 \u7AEF\u53E3\u3002";
+    }).catch((error) => {
+      status.textContent = error.message;
+    });
+  }
+  $("#shareFilter").addEventListener("input", renderShareGroups);
+  $("#sharePreviewBtn").addEventListener("click", startSharePreview);
+  async function openShareEditor(path) {
+    await openEditor(path, "share");
+  }
+  function prepareShareNew() {
+    editState.path = "";
+    editState.articleId = "";
+    editState.dirty = false;
+    editState.shareUrl = "";
+    setEditMode("share");
+    $("#editTitle").textContent = "\uFF08\u65B0\u5EFA\u5206\u4EAB\uFF09";
+    $("#editDraftBadge").classList.add("hidden");
+    resetShareForm();
+    ensureEditor().setMarkdown("");
+    $("#editSaveStatus").textContent = "";
+    $("#editWordCount").textContent = "";
+    $("#draftBar").classList.add("hidden");
+    hideError($("#editError"));
+    showEditorModeForShare();
+    if (studioEditor) studioEditor.focus();
+  }
+  function showEditorModeForShare() {
+    const host = $("#editorHost");
+    if (host) host.classList.remove("hidden");
+    $("#editorPreviewWrap").classList.add("hidden");
+    $("#editorSourceWrap").classList.add("hidden");
+  }
+  async function saveShareEditor(showStatus = true) {
+    hideError($("#editError"));
+    const fields = readShareFmFormForSave();
+    if (!fields.title || !fields.author) {
+      showError($("#editError"), "\u6807\u9898\u4E0E\u4F5C\u8005\u4E0D\u80FD\u4E3A\u7A7A\u3002");
+      return false;
+    }
+    if (!editState.path) {
+      const status = $("#editSaveStatus");
+      status.textContent = "\u6B63\u5728\u521B\u5EFA\u2026";
+      try {
+        const created = await api("/api/share/item/new", {
+          title: fields.title,
+          author: fields.author,
+          shareKind: fields.shareKind,
+          rightsMode: fields.rightsMode
+        });
+        editState.path = created.share.path;
+        editState.shareUrl = created.share.slug ? `/${created.share.slug}/` : "";
+      } catch (error) {
+        status.textContent = "\u521B\u5EFA\u5931\u8D25";
+        showError($("#editError"), error.message);
+        return false;
+      }
+    }
+    const ok = await saveArticle();
+    return ok;
+  }
+  function readShareFmFormForSave() {
+    const form2 = $("#shareFmForm");
+    return {
+      title: form2.title.value.trim(),
+      author: form2.author.value.trim(),
+      sourceName: form2.sourceName.value.trim(),
+      sourceUrl: form2.sourceUrl.value.trim(),
+      shareKind: form2.shareKind.value,
+      rightsMode: form2.rightsMode.value,
+      description: form2.description.value.trim(),
+      categories: form2.categories.value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+      qqSummary: $("#shareQqSummary").value
+    };
+  }
+  $("#editSave").addEventListener("click", async () => {
+    if (editState.mode !== "share") return;
+    hideError($("#editError"));
+    await saveShareEditor();
+  });
+  $("#editBack").addEventListener("click", () => {
+    editState.pendingHash = "";
+  });
+  $("#shareEditPreview").addEventListener("click", async () => {
+    const status = $("#editSaveStatus");
+    if (editState.dirty || !editState.path) {
+      status.textContent = "\u8BF7\u5148\u4FDD\u5B58\uFF0C\u518D\u6253\u5F00\u7F51\u9875\u9884\u89C8\u3002";
+      return;
+    }
+    status.textContent = "\u6B63\u5728\u6253\u5F00\u5206\u4EAB\u7AD9\u9884\u89C8\u2026";
+    try {
+      const payload = await api("/api/share/preview", { action: "start" });
+      status.textContent = payload.preview.running ? `\u5DF2\u6253\u5F00\uFF1A${payload.preview.url}\uFF081314 \u7AEF\u53E3\uFF0C\u542B\u8349\u7A3F\uFF09` : "\u9884\u89C8\u8FDB\u7A0B\u5DF2\u9000\u51FA\uFF0C\u8BF7\u68C0\u67E5 1314 \u7AEF\u53E3\u3002";
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+  async function prepareShareConfirm() {
+    hideError($("#shareConfirmError"));
+    const status = $("#editSaveStatus");
+    if (!editState.path || editState.dirty) {
+      status.textContent = "\u6B63\u5728\u4FDD\u5B58\u2026";
+      const saved = await saveShareEditor(false);
+      if (!saved) return;
+    }
+    try {
+      const publishStatus = await apiGet("/api/share/publish-status");
+      shareState.baseUrl = publishStatus.status.baseUrl;
+      shareState.qzoneEnabled = publishStatus.status.qzoneEnabled;
+      shareState.qzoneConfigured = publishStatus.status.qzoneConfigured;
+      window.shareBaseUrl = shareState.baseUrl;
+    } catch (error) {
+      showError($("#editError"), error.message);
+      return;
+    }
+    const item = await apiGet(`/api/share/item?path=${encodeURIComponent(editState.path)}`);
+    const fm = item.share.frontMatter;
+    editState.shareUrl = item.share.url;
+    const base = (shareState.baseUrl || "http://localhost:1314/").replace(/\/$/, "");
+    $("#shareConfirmUrl").textContent = `${base}${editState.shareUrl}`;
+    $("#shareConfirmText").dataset.touched = "";
+    updateShareChars();
+    const enabledNote = $("#shareQqEnabledNote");
+    enabledNote.textContent = shareState.qzoneEnabled ? shareState.qzoneConfigured ? "QQ \u81EA\u52A8\u53D1\u5E03\uFF1A\u5DF2\u542F\u7528\u3002\u5230\u65F6\u95F4\u540E\u53D1\u5E03\u5668\u4F1A\u81EA\u52A8\u53D1\u9001\uFF0C\u5E76\u8BB0\u5F55\u7ED3\u679C\u3002" : "QQ \u81EA\u52A8\u53D1\u5E03\u5DF2\u542F\u7528\uFF0C\u4F46 NapCat \u5730\u5740/QQ \u8D26\u53F7\u672A\u914D\u7F6E\uFF0CQQ \u9636\u6BB5\u4F1A\u6807\u8BB0\u5931\u8D25\u3002" : "QQ \u81EA\u52A8\u53D1\u5E03\uFF1A\u672A\u542F\u7528\u3002\u786E\u8BA4\u540E\u53EA\u751F\u6210\u7F51\u9875\u5019\u9009\u5E76\u8BB0\u5F55\u4EFB\u52A1\uFF1BQQ \u9636\u6BB5\u4F1A\u6807\u8BB0\u300C\u672A\u542F\u7528\u300D\uFF0C\u4E0D\u4F1A\u5411\u4EFB\u4F55 QQ \u53F7\u53D1\u9001\u5185\u5BB9\u3002";
+    enabledNote.classList.toggle("danger-text", shareState.qzoneEnabled && !shareState.qzoneConfigured);
+    const draftNotice = $("#shareConfirmDraftNote");
+    if (draftNotice) {
+      draftNotice.textContent = fm.draft ? "\u63D0\u793A\uFF1A\u786E\u8BA4\u53D1\u5E03\u65F6\u8BE5\u5206\u4EAB\u4F1A\u8F6C\u4E3A\u6B63\u5F0F\uFF08\u975E\u8349\u7A3F\uFF09\u5E76\u51FA\u73B0\u5728\u5206\u4EAB\u7AD9\u9996\u9875\u3002" : "";
+    }
+    $("#shareConfirmLog").classList.add("hidden");
+    $("#shareConfirmStatus").textContent = "";
+    $("#shareConfirmBtn").disabled = false;
+    routeShareConfirm();
+  }
+  function routeShareConfirm() {
+    showView("share-confirm");
+  }
+  $("#shareEditPrepare").addEventListener("click", prepareShareConfirm);
+  $("#shareConfirmBack").addEventListener("click", () => {
+    showView("edit");
+    $("#editSaveStatus").textContent = editState.dirty ? "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539" : "";
+  });
+  $("#shareConfirmText").addEventListener("input", () => {
+    $("#shareConfirmText").dataset.touched = "1";
+    const length = [...$("#shareConfirmText").value].length;
+    $("#shareConfirmTextInfo").textContent = `\u6700\u7EC8\u6587\u6848\u7EA6 ${length} \u5B57\uFF08\u4E0A\u9650\u7EA6 ${QQ_TEXT_MAX2} \u5B57\uFF0C\u6700\u7EC8\u4EE5 QQ \u63A5\u53E3\u4E3A\u51C6\uFF09`;
+    $("#shareConfirmTextInfo").classList.toggle("danger-text", length > 1900);
+  });
+  $("#shareConfirmBtn").addEventListener("click", async () => {
+    hideError($("#shareConfirmError"));
+    const status = $("#shareConfirmStatus");
+    const button = $("#shareConfirmBtn");
+    const finalText = $("#shareConfirmText").value.trim();
+    if (!finalText) {
+      showError($("#shareConfirmError"), "QQ \u7A7A\u95F4\u6700\u7EC8\u6587\u6848\u4E0D\u80FD\u4E3A\u7A7A\u3002");
+      return;
+    }
+    const when = document.querySelector('input[name="shareWhen"]:checked').value;
+    let scheduledAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (when === "scheduled") {
+      const value = $("#shareWhenAt").value;
+      if (!value) {
+        showError($("#shareConfirmError"), "\u8BF7\u9009\u62E9\u5B9A\u65F6\u53D1\u5E03\u65F6\u95F4\u3002");
+        return;
+      }
+      scheduledAt = new Date(value).toISOString();
+    }
+    button.disabled = true;
+    status.textContent = "\u6B63\u5728\u521B\u5EFA\u53D1\u5E03\u4EFB\u52A1\u5E76\u6784\u5EFA\u5206\u4EAB\u7AD9\u5019\u9009\uFF08\u53EF\u80FD\u9700\u8981 1\u20132 \u5206\u949F\uFF09\u2026";
+    $("#shareConfirmLog").classList.add("hidden");
+    try {
+      const payload = await api("/api/share/publication", {
+        path: editState.path,
+        finalText,
+        scheduledAt
+      });
+      const log = $("#shareConfirmLog");
+      log.textContent = payload.webStage && payload.webStage.message ? `\u7F51\u9875\u9636\u6BB5\uFF1A${payload.webStage.message}` : "";
+      log.classList.remove("hidden");
+      const pub = payload.publication;
+      if (payload.webStage && payload.webStage.stage === "verified") {
+        status.textContent = `\u5DF2\u52A0\u5165\u53D1\u5E03\u961F\u5217\uFF08${pub.publication_id}\uFF09` + (when === "scheduled" ? "\uFF0C\u5230\u65F6\u95F4\u540E\u81EA\u52A8\u53D1\u5E03\u3002" : "\uFF0C\u5DF2\u52A0\u5165\u7ACB\u5373\u53D1\u5E03\u961F\u5217\u3002");
+      } else {
+        status.textContent = "\u4EFB\u52A1\u5DF2\u5EFA\u7ACB\uFF0C\u4F46\u7F51\u9875\u9636\u6BB5\u672A\u5B8C\u6210\uFF08\u8BE6\u89C1\u53D1\u5E03\u8BB0\u5F55\uFF09\uFF1BQQ \u9636\u6BB5\u4ECD\u4F1A\u6309\u65F6\u95F4\u6267\u884C\u3002";
+      }
+      setTimeout(() => {
+        location.hash = "#/share";
+        loadShareHome();
+      }, 1800);
+    } catch (error) {
+      status.textContent = "\u521B\u5EFA\u5931\u8D25";
+      showError($("#shareConfirmError"), error.message);
+      button.disabled = false;
+    }
+  });
+  if (document.querySelector("[data-nav='share']")) {
+    document.querySelector("[data-nav='share']").addEventListener("click", () => {
+      editState.pendingHash = "";
+    });
+  }
+
   // studio/app/router.mjs
   var revertHash = "";
   function currentRoute() {
@@ -2806,10 +3349,14 @@
     globalError("");
     window.scrollTo({ top: 0 });
   }
+  function editBackHash() {
+    return editState.mode === "share" ? `#/share-edit?path=${encodeURIComponent(editState.path)}` : `#/edit?path=${encodeURIComponent(editState.path)}`;
+  }
   async function route() {
     const target = currentRoute();
-    if (editState.dirty && !target.path.startsWith("/edit") && editState.path) {
-      revertHash = `#/edit?path=${encodeURIComponent(editState.path)}`;
+    const editing = editState.dirty && editState.path;
+    if (editing && !target.path.startsWith("/edit") && !target.path.startsWith("/share-edit") && !target.path.startsWith("/share-confirm")) {
+      revertHash = editBackHash();
       location.hash = revertHash;
       $("#dirtyBar").classList.remove("hidden");
       return;
@@ -2819,8 +3366,21 @@
       const path = target.params.get("path") || "";
       showView("edit");
       if (path && path !== editState.path) {
-        await openEditor(path);
+        await openEditor(path, "work");
       }
+    } else if (target.path.startsWith("/share-edit")) {
+      const path = target.params.get("path") || "";
+      showView("edit");
+      if (!path) {
+        prepareShareNew();
+      } else if (path !== editState.path || editState.mode !== "share") {
+        await openShareEditor(path);
+      }
+    } else if (target.path === "/share-confirm") {
+      showView("share-confirm");
+    } else if (target.path === "/share") {
+      showView("share");
+      loadShareHome();
     } else if (target.path === "/new") {
       showView("new");
       prepareNewForm();
@@ -2865,7 +3425,7 @@
   $("#dirtyLeave").addEventListener("click", () => {
     editState.dirty = false;
     $("#dirtyBar").classList.add("hidden");
-    location.hash = "#/";
+    location.hash = editState.mode === "share" ? "#/share" : "#/";
   });
 
   // studio/app/import-wizard.mjs

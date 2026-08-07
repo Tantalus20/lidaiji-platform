@@ -10,6 +10,7 @@ import "./publish.mjs";
 import "./media.mjs";
 import "./feedback.mjs";
 import "./notes.mjs";
+import "./share.mjs";
 
 initTheme();
 route();

@@ -757,8 +757,40 @@ function buildEditorPlugins() {
 
 export function createStudioEditor(host, options = {}) {
   const { onUpdate, onSelection } = options;
+  /* 锚点政策：work=保留/分配 paragraph-id；share=不生成、不保留段评锚点。 */
+  let anchorPolicy = options.anchorPolicy === "share" ? "share" : "work";
   let version = 0;
   let replacing = false;
+
+  const markdownOf = (doc) =>
+    serializeMarkdown(pmToJson(doc), { stripPid: anchorPolicy === "share" });
+
+  /* 分享模式下从解析结果中剥离 pid，避免段落身份残留进编辑器文档。 */
+  const stripPids = (doc) => ({
+    ...doc,
+    content: (doc.content || []).map((block) => {
+      const cleaned = { ...block };
+      if (Object.prototype.hasOwnProperty.call(cleaned, "pid")) {
+        cleaned.pid = null;
+      }
+      if (Array.isArray(cleaned.content)) {
+        cleaned.content = (cleaned.content || []).map((child) => {
+          if (child && Array.isArray(child.content)) {
+            return { ...child, content: stripInlinePids(child.content) };
+          }
+          return child;
+        });
+      }
+      return cleaned;
+    }),
+  });
+  const stripInlinePids = (blocks) =>
+    (blocks || []).map((child) => {
+      if (child && Array.isArray(child.content)) {
+        return { ...child, content: stripInlinePids(child.content) };
+      }
+      return child;
+    });
 
   const listenerPlugin = new Plugin({
     view: () => ({
@@ -766,7 +798,7 @@ export function createStudioEditor(host, options = {}) {
         const docChanged = !view.state.doc.eq(prevState.doc);
         if (docChanged && !replacing) {
           version += 1;
-          if (onUpdate) onUpdate({ version, markdown: serializeMarkdown(pmToJson(view.state.doc)) });
+          if (onUpdate) onUpdate({ version, markdown: markdownOf(view.state.doc) });
         }
         if (onSelection) onSelection(selectionInfo(view.state));
       },
@@ -794,11 +826,16 @@ export function createStudioEditor(host, options = {}) {
     view,
 
     getMarkdown() {
-      return serializeMarkdown(pmToJson(view.state.doc));
+      return markdownOf(view.state.doc);
+    },
+
+    setAnchorPolicy(policy) {
+      anchorPolicy = policy === "share" ? "share" : "work";
     },
 
     setMarkdown(markdown) {
-      const doc = jsonToPm(parseMarkdown(markdown));
+      const parsed = parseMarkdown(markdown);
+      const doc = jsonToPm(anchorPolicy === "share" ? stripPids(parsed) : parsed);
       // 注意：replace 需要 Slice；用 replaceWith 传入 Fragment（等价 open 0/0 的 Slice）
       dispatchReplace(view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content));
     },

@@ -1,5 +1,36 @@
 # 更新日志
 
+## Studio v0.2.7（2026-08-07，长文分享 V0.1 代码候选）
+
+- 新增「长文分享」：与正式作品站完全隔离的分享内容空间（独立 shareId/
+  shareRevision、私有内容根 LIDAIJI_SHARE_CONTENT_ROOT、rightsMode 防呆）。
+- 编辑器新增文档模式（anchor policy）：work 模式保留段评锚点分配；
+  share 模式序列化剥离锚点（stripPid），分享保存 API 绝不调用 assign_ids，
+  正文中既有的段评锚点在保存时防御性剥离。
+- 分享编辑复用同一 ProseMirror 内核与同一编辑页（同一 EditorView、
+  同一工具栏、同一保存状态机），不复制 schema/parser/serializer。
+- 独立分享站工程 share-site/（Hugo）：首页/文章页/目录/上下篇/分类/RSS、
+  字号/深浅主题/阅读位置（localStorage，独立键）/回到顶部；摘录与仅链接
+  分享全文不渲染；输出零评论、零 paragraph-id。
+- 发布确认页：网页地址 + 可编辑 QQ 文案 + 立即/定时 + QQ 未启用明示。
+- share_publisher：SQLite 调度（web/qzone 双状态机、原子认领、幂等键、
+  崩溃残留恢复绝不重发）、分享站候选构建（逐文件 SHA-256 + 可重现
+  candidateId + 复用敏感扫描）、QZone 适配器（NapCat 动态 Cookie、
+  纯文字说说、日志脱敏；协议参考 MIT 许可 QzoneTools，见
+  THIRD_PARTY_NOTICES.md），QZONE_PUBLISH_ENABLED 默认 false。
+- systemd 候选（oneshot + timer，未启用）；本轮不部署生产、不发送 QQ。
+- 测试：内容模型 16 项、发布器 27 项、Studio 路由 11 项、编辑器 share
+  锚点政策断言、分享站临时完整构建 + 契约检查、Chrome 冒烟 61 项、
+  Safari 冒烟 30 项；正式作品回归全绿。
+
+## Studio v0.2.6（2026-08-07，编辑器工具栏与保存状态收口）
+
+- 编辑器工具栏五分组与状态反馈（v0.2.6 主提交 a3e9daf）：段落类型下拉、
+  文字格式、对齐、插入、历史操作分组；active/enabled 双状态。
+- 保存状态机收口（3f8c0e5）：恢复保存中 UI 状态；Safari 验收暴露的三处
+  编辑器真实缺陷修复（88f7812）。
+- 备份监控时间夹具确定性化（40e9f5c）。
+
 ## Studio v0.2.5（2026-08-06，文章级隔离发布收尾）
 
 - 候选 manifest：隔离候选逐文件 SHA-256 清单 + 分类（target-article /

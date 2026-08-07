@@ -7,6 +7,12 @@ import { loadVersions, loadHistory } from "./versions.mjs";
 import { loadPublish } from "./publish.mjs";
 import { loadMedia } from "./media.mjs";
 import { loadFeedback } from "./feedback.mjs";
+import {
+  loadShareHome,
+  openShareEditor,
+  prepareShareNew,
+  routeShareConfirm,
+} from "./share.mjs";
 
 /* ---------------- hash 路由 ---------------- */
 
@@ -28,11 +34,18 @@ function showView(name) {
   window.scrollTo({ top: 0 });
 }
 
+function editBackHash() {
+  return editState.mode === "share"
+    ? `#/share-edit?path=${encodeURIComponent(editState.path)}`
+    : `#/edit?path=${encodeURIComponent(editState.path)}`;
+}
+
 async function route() {
   const target = currentRoute();
   // 未保存修改的页内拦截：先退回编辑页，等作者在拦截条里决定
-  if (editState.dirty && !target.path.startsWith("/edit") && editState.path) {
-    revertHash = `#/edit?path=${encodeURIComponent(editState.path)}`;
+  const editing = editState.dirty && editState.path;
+  if (editing && !target.path.startsWith("/edit") && !target.path.startsWith("/share-edit") && !target.path.startsWith("/share-confirm")) {
+    revertHash = editBackHash();
     location.hash = revertHash;
     $("#dirtyBar").classList.remove("hidden");
     return;
@@ -42,8 +55,21 @@ async function route() {
     const path = target.params.get("path") || "";
     showView("edit");
     if (path && path !== editState.path) {
-      await openEditor(path);
+      await openEditor(path, "work");
     }
+  } else if (target.path.startsWith("/share-edit")) {
+    const path = target.params.get("path") || "";
+    showView("edit");
+    if (!path) {
+      prepareShareNew();
+    } else if (path !== editState.path || editState.mode !== "share") {
+      await openShareEditor(path);
+    }
+  } else if (target.path === "/share-confirm") {
+    showView("share-confirm");
+  } else if (target.path === "/share") {
+    showView("share");
+    loadShareHome();
   } else if (target.path === "/new") {
     showView("new");
     prepareNewForm();
@@ -91,8 +117,7 @@ $("#dirtyStay").addEventListener("click", () => $("#dirtyBar").classList.add("hi
 $("#dirtyLeave").addEventListener("click", () => {
   editState.dirty = false;
   $("#dirtyBar").classList.add("hidden");
-  location.hash = "#/";
+  location.hash = editState.mode === "share" ? "#/share" : "#/";
 });
 
 export { route, showView };
-

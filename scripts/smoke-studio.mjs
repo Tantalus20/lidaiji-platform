@@ -6,7 +6,7 @@
  * 覆盖：首页渲染文章卡片、编辑页编辑器加载正文、工具栏按钮、无未捕获异常。
  * 注意：auto 模式会重置并写入演示工作区（.cache/studio-demo-workspace）。 */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,15 +28,21 @@ if (base === "auto" && !fs.existsSync(CHROME)) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let studioProc = null;
+let shareRoot = "";
 if (base === "auto") {
   const port = 4176;
   fs.rmSync(path.join(root, ".cache", "studio-demo-workspace"), { recursive: true, force: true });
   const python = path.join(root, ".venv-importer", "bin", "python3");
+  /* 演示分享私有根：位于仓库外（fail-closed 要求内容根不得在仓库内部） */
+  shareRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-share-demo-"));
+  spawnSync(python, [path.join(root, "scripts", "create-share-demo-content.py"), "--root", shareRoot], {
+    stdio: "ignore",
+  });
   studioProc = spawn(
     python,
     ["-m", "studio", "--project-root", root, "--port", String(port), "--no-browser"],
     {
-      env: { ...process.env, LIDAIJI_WORKSPACE_MODE: "demo" },
+      env: { ...process.env, LIDAIJI_WORKSPACE_MODE: "demo", LIDAIJI_SHARE_CONTENT_ROOT: shareRoot },
       stdio: "ignore",
     },
   );
@@ -91,7 +97,9 @@ class CDP {
           if (data.error) reject(new Error(data.error.message));
           else resolve(data.result);
         } else if (data.method === "Runtime.exceptionThrown") {
-          this.errors.push(data.params.exceptionDetails.text || "exception");
+          const details = data.params.exceptionDetails || {};
+          const desc = (details.exception && details.exception.description) || "";
+          this.errors.push(`${details.text || "exception"} :: ${desc.slice(0, 200)}`);
         } else if (data.method === "Log.entryAdded" && data.params.entry.level === "error") {
           this.errors.push(`${data.params.entry.text} @${data.params.entry.url || ""}`);
         }
@@ -365,6 +373,110 @@ async function runSaveStateAcceptance(cdp, editPath) {
   check("S5 最终已保存", (await status()).includes("已保存"), await status());
 }
 
+/* 长文分享验收（v0.1）：列表、新建、编辑保存（无段评锚点）、QQ 摘要、
+ * 准备发布确认（QQ 默认未启用）。全部使用演示分享私有根（仓库外）。 */
+async function runShareAcceptance(cdp) {
+  const readShare = async () =>
+    JSON.parse(
+      (await cdp.evaluate(
+        `JSON.stringify({
+          nav: !!document.querySelector("[data-nav='share']"),
+          newBtn: !!document.querySelector("#view-share a[href='#/share-edit']"),
+          groups: document.querySelectorAll("#shareGroups .share-group").length,
+          pubPanel: !!document.querySelector("#sharePublications"),
+          qqNote: (document.querySelector("#sharePublishNote")||{}).textContent || '',
+          fmVisible: !document.querySelector("#shareFmPanel").classList.contains("hidden"),
+          fmHidden: document.querySelector("#fmPanel").classList.contains("hidden"),
+          notesHidden: (document.querySelector("#notesPanel")||{}).classList ? document.querySelector("#notesPanel").classList.contains("hidden") : true,
+          prepareVisible: !document.querySelector("#shareEditPrepare").classList.contains("hidden"),
+          saveStatus: (document.querySelector("#editSaveStatus")||{}).textContent || '',
+          metaId: (document.querySelector("#shareMetaId")||{}).textContent || '',
+          qqChars: (document.querySelector("#shareQqChars")||{}).textContent || '',
+          confirmUrl: (document.querySelector("#shareConfirmUrl")||{}).textContent || '',
+          qqEnabledNote: (document.querySelector("#shareQqEnabledNote")||{}).textContent || '',
+          sourceText: (document.querySelector("#editorSource")||{}).textContent || '',
+          confirmView: !document.querySelector("#view-share-confirm").classList.contains("hidden"),
+        })`,
+      )) || "{}",
+    );
+
+  /* 分享首页 */
+  await cdp.send("Page.navigate", { url: `${base}/#/share` });
+  await sleep(2500);
+  let ui = await readShare();
+  check("分享首页导航存在", ui.nav, "缺少长文分享导航");
+  check("分享首页新建按钮存在", ui.newBtn, "缺少新建分享按钮");
+  check("分享首页按状态分组渲染", ui.groups >= 1, `groups=${ui.groups}`);
+  check("分享首页发布任务面板存在", ui.pubPanel, "缺少发布任务面板");
+  check("QQ 自动发布状态显示未启用", ui.qqNote.includes("未启用"), ui.qqNote);
+
+  /* 新建分享 → 编辑页（分享模式） */
+  await cdp.send("Page.navigate", { url: `${base}/#/share-edit` });
+  await sleep(2500);
+  ui = await readShare();
+  check("新建分享进入分享编辑模式（表单/隐藏作品面板）", ui.fmVisible && ui.fmHidden && ui.notesHidden, `fm=${ui.fmVisible} notesHidden=${ui.notesHidden}`);
+  check("分享编辑页显示准备发布按钮", ui.prepareVisible, "缺少准备发布按钮");
+
+  /* 填表 + 正文 + QQ 摘要 */
+  await cdp.evaluate(`(() => {
+    const f = document.querySelector("#shareFmForm");
+    f.title.value = "冒烟测试分享";
+    f.author.value = "冒烟作者";
+    f.title.dispatchEvent(new Event("input"));
+    f.author.dispatchEvent(new Event("input"));
+    document.querySelector("#shareQqSummary").value = "这是冒烟测试的 QQ 摘要。";
+    document.querySelector("#shareQqSummary").dispatchEvent(new Event("input"));
+  })()`);
+  await cdp.evaluate(`document.querySelector("#editorHost .ProseMirror").focus()`);
+  await cdp.send("Input.insertText", { text: "冒烟测试分享正文段落。" });
+  await sleep(600);
+  ui = await readShare();
+  check("分享正文输入后显示未保存修改", ui.saveStatus.includes("未保存"), ui.saveStatus);
+  check("QQ 摘要字符统计更新且含阅读全文", ui.qqChars.includes("最终 QQ 文案") && ui.qqChars.includes("阅读全文"), ui.qqChars);
+
+  /* 保存：不得出现段评锚点，shareId 生成 */
+  await cdp.evaluate(`document.querySelector("#editSave").click()`);
+  let saved = false;
+  for (let i = 0; i < 20 && !saved; i += 1) {
+    await sleep(500);
+    ui = await readShare();
+    saved = ui.saveStatus.includes("已保存");
+  }
+  check("分享保存成功", saved, ui.saveStatus);
+  check("分享保存后 shareId 已生成", /^sh-/.test(ui.metaId), ui.metaId);
+
+  /* Markdown 源码无段评锚点 */
+  await cdp.evaluate(`document.querySelector("#tbSource").click()`);
+  await sleep(600);
+  ui = await readShare();
+  check("分享 Markdown 源码不含 paragraph-id", !ui.sourceText.includes("paragraph-id"), "源码出现段评锚点");
+  check("分享 Markdown 源码正文完整", ui.sourceText.includes("冒烟测试分享正文段落"), "正文缺失");
+  await cdp.evaluate(`document.querySelector("#editorSourceBack").click()`);
+  await sleep(400);
+
+  /* 准备发布 → 确认页 */
+  await cdp.evaluate(`document.querySelector("#shareEditPrepare").click()`);
+  await sleep(2500);
+  ui = await readShare();
+  check("发布确认页显示网页地址", /^https?:\/\//.test(ui.confirmUrl), ui.confirmUrl);
+  check("发布确认页显示 QQ 未启用说明", ui.qqEnabledNote.includes("未启用"), ui.qqEnabledNote);
+  const confirmText = await cdp.evaluate(`(document.querySelector("#shareConfirmText")||{}).value || ""`);
+  check("发布确认页 QQ 文案含阅读全文", confirmText.includes("阅读全文"), "缺少阅读全文链接");
+  const whenNow = await cdp.evaluate(`document.querySelector('input[name="shareWhen"]:checked').value`);
+  check("发布时间默认现在发布", whenNow === "now", whenNow);
+  /* 返回修改 */
+  await cdp.evaluate(`document.querySelector("#shareConfirmBack").click()`);
+  await sleep(1500);
+  ui = await readShare();
+  check("返回修改回到分享编辑页", ui.fmVisible && !ui.confirmView, `confirmView=${ui.confirmView}`);
+
+  /* 演示分享页在分享首页分组中可见（已保存 → 草稿组） */
+  await cdp.send("Page.navigate", { url: `${base}/#/share` });
+  await sleep(2500);
+  const draftCount = await cdp.evaluate(`document.querySelectorAll("#shareGroups .share-row-title").length`);
+  check("分享首页列出新建分享", draftCount >= 1, `rows=${draftCount}`);
+}
+
 const chrome = spawn(
   CHROME,
   [
@@ -445,13 +557,16 @@ try {
 
     await runEditorUiAcceptance(cdp, editPath);
     await runSaveStateAcceptance(cdp, editPath);
+    if (shareRoot) {
+      await runShareAcceptance(cdp);
+    }
   }
 
   await sleep(500);
   const runtimeErrors = cdp.errors.filter(
     (text) => !/favicon|GCM|gpu|SharedImage|Failed to load resource/i.test(text),
   );
-  check("无未捕获 JS 异常", runtimeErrors.length === 0, runtimeErrors.slice(0, 3).join(" | "));} catch (error) {
+  check("无未捕获 JS 异常", runtimeErrors.length === 0, JSON.stringify(runtimeErrors.slice(0, 3)));} catch (error) {
   failures += 1;
   console.error(`失败：冒烟流程异常（${error.message}）`);
 } finally {

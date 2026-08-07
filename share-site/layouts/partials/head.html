@@ -1,0 +1,28 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f5f1e8">
+{{ $metaOnly := or (eq .Params.rightsMode "excerpt") (eq .Params.rightsMode "link-only") }}
+{{ $description := .Description }}
+{{ if not $description }}
+  {{ $description = or .Params.qqSummary .Site.Params.siteDescription }}
+{{ end }}
+<title>{{ if .IsHome }}{{ .Site.Params.siteName }} · {{ .Site.Params.siteSubtitle }}{{ else }}{{ .Title }} · {{ .Site.Params.siteName }}{{ end }}</title>
+<meta name="description" content="{{ $description | plainify | htmlEscape }}">
+<link rel="canonical" href="{{ .Permalink }}">
+<link rel="alternate" type="application/rss+xml" title="{{ .Site.Params.siteName }} RSS" href="{{ "index.xml" | absURL }}">
+{{ with resources.Get "css/site.css" }}
+  {{ with . | minify | fingerprint "sha384" }}
+    <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}">
+  {{ end }}
+{{ end }}
+{{ with resources.Get "js/site.js" }}
+  {{ with . | minify | fingerprint "sha384" }}
+    <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
+  {{ end }}
+{{ end }}
+<meta property="og:type" content="{{ if .IsPage }}article{{ else }}website{{ end }}">
+<meta property="og:title" content="{{ .Title | default .Site.Params.siteName }}">
+<meta property="og:description" content="{{ $description | plainify | htmlEscape }}">
+<meta property="og:url" content="{{ .Permalink }}">
+<meta property="og:site_name" content="{{ .Site.Params.siteName }}">

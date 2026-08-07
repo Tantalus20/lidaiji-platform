@@ -1,0 +1,105 @@
+{{ define "main" }}
+<article class="reading-layout">
+  <div class="article-main">
+    <header class="article-header">
+      <p class="eyebrow">{{ partial "kind-label.html" . }}<span class="header-kind"> {{ with .Params.rightsMode }}· {{ partial "rights-label.html" . }}{{ end }}</span></p>
+      <h1>{{ .Title }}</h1>
+      {{ with .Params.author }}
+      <p class="article-author">{{ . }}</p>
+      {{ end }}
+      {{ if not .Params.hideDescription }}
+        {{ with .Description }}<p class="article-description">{{ . }}</p>{{ end }}
+      {{ end }}
+      <p class="article-byline">
+        <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006年1月2日" }}</time>
+        · 全文 {{ .WordCount }} 字 · 约 {{ .ReadingTime }} 分钟
+      </p>
+      <div class="reader-tools" hidden>
+        <span class="reader-tools-label" id="reader-font-label">字号</span>
+        <div class="reader-font-group" role="group" aria-labelledby="reader-font-label">
+          <button type="button" data-reader-font="small" aria-pressed="false">小</button>
+          <button type="button" data-reader-font="standard" aria-pressed="true">标准</button>
+          <button type="button" data-reader-font="large" aria-pressed="false">大</button>
+        </div>
+      </div>
+    </header>
+
+    {{ $hasToc := gt (len .Fragments.Headings) 0 }}
+    {{ $metaOnly := or (eq .Params.rightsMode "excerpt") (eq .Params.rightsMode "link-only") }}
+
+    {{ if and (not $metaOnly) (gt .WordCount 300) $hasToc }}
+    <details class="mobile-toc">
+      <summary>文章目录</summary>
+      {{ .TableOfContents | replaceRE `<nav id="TableOfContents">` `<nav id="TableOfContents-mobile" aria-label="文章目录（移动端）">` | safeHTML }}
+    </details>
+    {{ end }}
+
+    <div class="article-content">
+      {{ if $metaOnly }}
+        <p class="meta-only-note">
+          {{ if eq .Params.rightsMode "link-only" }}本篇为「仅链接」分享：本站不保存第三方完整正文，只提供介绍与原链接。{{ else }}本篇为「摘录」分享：这里只展示介绍与摘录，完整正文请通过原文链接阅读。{{ end }}
+        </p>
+        {{ with .Description }}<p class="share-excerpt">{{ . }}</p>{{ end }}
+        {{ with .Params.qqSummary }}<p class="share-excerpt">摘录：{{ . }}</p>{{ end }}
+      {{ else }}
+        {{ .Content }}
+      {{ end }}
+    </div>
+
+    <footer class="article-footer">
+      {{ if or .Params.sourceName .Params.sourceUrl .Params.rightsMode }}
+      <section class="share-source">
+        <h2>来源与版权</h2>
+        <dl>
+          <div><dt>版权方式</dt><dd>{{ partial "rights-label.html" .Params.rightsMode }}</dd></div>
+          {{ with .Params.sourceName }}<div><dt>来源</dt><dd>{{ . }}</dd></div>{{ end }}
+          {{ with .Params.sourceUrl }}
+          <div><dt>原文链接</dt><dd><a href="{{ . }}" rel="noopener noreferrer">{{ . }}</a></dd></div>
+          {{ end }}
+          {{ if eq .Params.rightsMode "cc" }}<div><dt>许可</dt><dd>CC 许可内容，转载与使用请遵守原作者许可条款。</dd></div>{{ end }}
+        </dl>
+      </section>
+      {{ end }}
+      <div class="article-taxonomies">
+        {{ with .GetTerms "categories" }}<div><strong>分类</strong>{{ range . }}<a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ end }}</div>{{ end }}
+      </div>
+      {{ $ordered := where site.RegularPages "Draft" false }}
+      {{ $ordered = $ordered.ByDate.Reverse }}
+      {{ $currentIndex := -1 }}
+      {{ range $index, $page := $ordered }}
+        {{ if eq $page.RelPermalink $.RelPermalink }}{{ $currentIndex = $index }}{{ end }}
+      {{ end }}
+      {{ if ge $currentIndex 0 }}
+        <nav class="article-pager" aria-label="文章前后篇">
+          {{ if lt (add $currentIndex 1) (len $ordered) }}
+            {{ $previous := index $ordered (add $currentIndex 1) }}
+            <a rel="prev" href="{{ $previous.RelPermalink }}"><small>上一篇</small><span>{{ $previous.Title }}</span></a>
+          {{ end }}
+          {{ if gt $currentIndex 0 }}
+            {{ $next := index $ordered (sub $currentIndex 1) }}
+            <a rel="next" href="{{ $next.RelPermalink }}"><small>下一篇</small><span>{{ $next.Title }}</span></a>
+          {{ end }}
+        </nav>
+      {{ end }}
+      {{ $sameKind := where site.RegularPages "Params.shareKind" .Params.shareKind }}
+      {{ if gt (len $sameKind) 1 }}
+        <section class="same-kind" aria-labelledby="same-kind-heading">
+          <h2 id="same-kind-heading">同类型文章</h2>
+          <ul>
+            {{ range $sameKind.ByDate.Reverse }}
+              {{ if ne .RelPermalink $.RelPermalink }}<li><a href="{{ .RelPermalink }}">{{ .Title }}</a></li>{{ end }}
+            {{ end }}
+          </ul>
+        </section>
+      {{ end }}
+      <p class="back-home"><a href="{{ "/" | relURL }}">← 返回长文分享首页</a></p>
+    </footer>
+  </div>
+  {{ if and (not $metaOnly) (gt .WordCount 300) $hasToc }}
+  <aside class="desktop-toc" aria-label="文章目录">
+    <p aria-hidden="true">文章目录</p>
+    {{ .TableOfContents | replaceRE `<nav id="TableOfContents">` `<nav aria-label="文章目录（桌面端）">` | safeHTML }}
+  </aside>
+  {{ end }}
+</article>
+{{ end }}

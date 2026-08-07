@@ -55,7 +55,11 @@ from import_api import document_info  # noqa: E402
 
 from studio import articles  # noqa: E402
 from studio import credentials, feedback, media, notes, publish_article, publish_center, versions  # noqa: E402
+from studio import share as share_articles  # noqa: E402
+from studio import share_preview  # noqa: E402
 from studio.preview_render import render_markdown  # noqa: E402
+
+from share_publisher import api as share_api  # noqa: E402
 
 DEFAULT_PORT = 4173
 AUTH_MODES = ("local-bootstrap", "password")
@@ -198,6 +202,7 @@ class StudioState:
     preflight_ok_at: float = 0.0  # 本会话最近一次成功发布前检查的时间戳
     feedback_session: dict | None = None  # 评论服务管理会话（仅内存）
     comments_process: subprocess.Popen | None = None  # 本工作台启动的评论服务
+    share_preview_process: subprocess.Popen | None = None  # 分享站预览进程（1314 端口）
     auth_mode: str = "local-bootstrap"
     studio_session_token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     studio_csrf_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
@@ -227,6 +232,7 @@ class StudioState:
             self.drop_session(token)
         sweep_cache(self.cache_root)
         self.stop_preview()
+        share_preview.stop_share_preview(self)
         feedback.stop_service(self)
 
     def stop_preview(self) -> None:
@@ -654,6 +660,16 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.handle_notes_summary()
             elif path == "/api/notes/paragraphs":
                 self.handle_notes_paragraphs()
+            elif path == "/api/share/items":
+                self.handle_share_items()
+            elif path == "/api/share/item":
+                self.handle_share_item()
+            elif path == "/api/share/publications":
+                self.handle_share_publications()
+            elif path == "/api/share/publish-status":
+                self.handle_share_publish_status()
+            elif path == "/api/share/preview-status":
+                self.handle_share_preview_status()
             elif path in STATIC_FILES:
                 self.serve_static(path)
             else:
@@ -665,6 +681,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         except publish_article.ArticlePublishError as error:
             self.send_error_json(error.code, error.message, fields=error.fields or None)
         except (feedback.FeedbackFailure, notes.NoteFailure) as error:
+            self.send_error_json(error.code, error.message)
+        except (share_api.SharePublishError, share_preview.SharePreviewError) as error:
             self.send_error_json(error.code, error.message)
         except BrokenPipeError:
             pass
@@ -708,6 +726,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             "/api/feedback/open-location": self.handle_feedback_open_location,
             "/api/notes/save": self.handle_notes_save,
             "/api/notes/delete": self.handle_notes_delete,
+            "/api/share/item/new": self.handle_share_new,
+            "/api/share/item/save": self.handle_share_save,
+            "/api/share/preview": self.handle_share_preview,
+            "/api/share/publication": self.handle_share_publication_create,
+            "/api/share/publication/cancel": self.handle_share_publication_cancel,
         }
         handler = handlers.get(path)
         if handler is None:
@@ -722,6 +745,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         except publish_article.ArticlePublishError as error:
             self.send_error_json(error.code, error.message, fields=error.fields or None)
         except (feedback.FeedbackFailure, notes.NoteFailure) as error:
+            self.send_error_json(error.code, error.message)
+        except (share_api.SharePublishError, share_preview.SharePreviewError) as error:
             self.send_error_json(error.code, error.message)
         except import_stages.ImportFailure as error:
             self.send_error_json(error.code, str(error))
@@ -1248,6 +1273,81 @@ class StudioHandler(BaseHTTPRequestHandler):
             raise StudioError("confirmation-required", "删除批注必须显式确认（confirm: true）。")
         remaining = notes.delete_note(self.state.project_root, str(data.get("path") or ""), str(data.get("id") or ""))
         self.send_json({"ok": True, "notes": remaining})
+
+    # -- 长文分享 API -------------------------------------------------------
+
+    def _share_service(self) -> share_api.SharePublicationService:
+        return share_api.SharePublicationService(self.state.project_root)
+
+    def handle_share_items(self) -> None:
+        self.send_json({"ok": True, "items": share_articles.scan_shares(self.state.project_root)})
+
+    def handle_share_item(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        rel_path = (query.get("path") or [""])[0]
+        self.send_json({"ok": True, "share": share_articles.read_share(self.state.project_root, rel_path)})
+
+    def handle_share_new(self) -> None:
+        data = self.read_json_body()
+        allowed = {"title", "author", "shareKind", "rightsMode"}
+        unknown = set(data) - allowed
+        if unknown:
+            raise StudioError("validation-failed", f"不支持的字段：{'、'.join(sorted(unknown))}")
+        entry = share_articles.new_share(self.state.project_root, data)
+        self.send_json({"ok": True, "share": entry})
+
+    def handle_share_save(self) -> None:
+        data = self.read_json_body(MAX_RENDER_BYTES)
+        result = share_articles.save_share(
+            self.state.project_root,
+            str(data.get("path") or ""),
+            data.get("frontMatter") or {},
+            data.get("body") if isinstance(data.get("body"), str) else "",
+        )
+        self.send_json({
+            "ok": True,
+            "share": result["share"],
+            "anchorsStripped": result["anchorsStripped"],
+            "body": result["body"],
+        })
+
+    def handle_share_preview(self) -> None:
+        data = self.read_json_body()
+        action = str(data.get("action") or "")
+        if action == "start":
+            share_preview.ensure_share_preview(self.state)
+        elif action == "stop":
+            share_preview.stop_share_preview(self.state)
+        else:
+            raise StudioError("bad-request", "action 只能是 start 或 stop。")
+        self.send_json({"ok": True, "preview": share_preview.share_preview_status(self.state)})
+
+    def handle_share_preview_status(self) -> None:
+        self.send_json({"ok": True, "preview": share_preview.share_preview_status(self.state)})
+
+    def handle_share_publish_status(self) -> None:
+        with self._share_service() as service:
+            self.send_json({"ok": True, "status": service.status()})
+
+    def handle_share_publications(self) -> None:
+        with self._share_service() as service:
+            self.send_json({"ok": True, "publications": service.list_publications()})
+
+    def handle_share_publication_create(self) -> None:
+        data = self.read_json_body(MAX_RENDER_BYTES)
+        path = str(data.get("path") or "")
+        final_text = data.get("finalText") if isinstance(data.get("finalText"), str) else ""
+        scheduled_at = str(data.get("scheduledAt") or "")
+        with self._share_service() as service:
+            result = service.create(path, final_text, scheduled_at)
+            self.send_json({"ok": True, **result})
+
+    def handle_share_publication_cancel(self) -> None:
+        data = self.read_json_body()
+        publication_id = str(data.get("publicationId") or "")
+        with self._share_service() as service:
+            service.cancel(publication_id)
+            self.send_json({"ok": True})
 
     # -- 系统 API ----------------------------------------------------------
 

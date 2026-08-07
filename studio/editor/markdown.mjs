@@ -527,8 +527,9 @@ function serializeBlock(block, options = {}) {
   }
 }
 
-function serializeMarkdown(jsonDoc) {
-  const parts = (jsonDoc?.content || []).map(serializeBlock).filter((part) => part !== "");
+function serializeMarkdown(jsonDoc, options = {}) {
+  /* options.stripPid=true 时段落不输出段评锚点注释（分享文档模式）。 */
+  const parts = (jsonDoc?.content || []).map((block) => serializeBlock(block, options)).filter((part) => part !== "");
   return parts.length ? parts.join("\n\n") + "\n" : "";
 }
 
