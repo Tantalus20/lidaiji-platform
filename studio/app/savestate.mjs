@@ -47,9 +47,12 @@ export function createSaveStateMachine() {
       return status;
     },
 
-    /* 发起保存请求。重复调用（并发防护）不改变状态、不重复通知。 */
+    /* 发起保存请求：总是开启一个新的保存周期（清除上一周期遗留的
+     * dirtyDuringSave）。真正的并发写防护在调用方（editState.saving 守卫），
+     * 机器层不做幂等短路——否则"保存期间内容变化→版本不匹配"分支会把机器
+     * 留在 saving 状态，陈旧 dirtyDuringSave 会污染下一周期的 saved() 判定
+     * （表现为多一轮不必要的自动重试）。 */
     saving() {
-      if (status === "saving") return status;
       dirtyDuringSave = false;
       status = "saving";
       emit(status);

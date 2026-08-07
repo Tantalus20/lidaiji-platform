@@ -196,6 +196,48 @@ try {
 
   /* 无未捕获异常（WebDriver 层粗略检查） */
   check("Safari 页面无致命错误", true, "");
+
+  /* 保存状态专项冒烟：有未保存修改 → 正在保存 → 已保存 / 保存失败 */
+  const saveStatus = () => exec(`(document.querySelector('#editSaveStatus')||{}).textContent || ''`);
+  /* 延迟 1200ms 的保存（包裹 fetch，不改服务端） */
+  await exec(`(() => {
+    const orig = window.fetch;
+    window.__origFetch = orig;
+    window.fetch = (url, opts) => {
+      if (String(url).includes('/api/article/save')) {
+        return new Promise((resolve, reject) => setTimeout(() => orig(url, opts).then(resolve, reject), 1200));
+      }
+      return orig(url, opts);
+    };
+  })()`);
+  await exec(`document.querySelector('#editorHost .ProseMirror').focus()`);
+  await exec(`document.querySelector('.ProseMirror').focus()`);
+  /* WebDriver 键盘输入一个字符（真实输入事件） */
+  await webdriver("POST", "/actions", { actions: [{ type: "key", id: "k2", actions: [ { type: "keyDown", value: "更" }, { type: "keyUp", value: "更" } ] }] });
+  await sleep(600);
+  check("Safari 修改后显示有未保存修改", ((await saveStatus()) || "").includes("未保存"), await saveStatus());
+  await exec(`document.querySelector('#editSave').click()`);
+  await sleep(400);
+  check("Safari pending 期间显示正在保存", ((await saveStatus()) || "").includes("正在保存"), await saveStatus());
+  await sleep(1400);
+  check("Safari 放行后显示已保存", ((await saveStatus()) || "").includes("已保存"), await saveStatus());
+  await exec(`window.fetch = window.__origFetch;`);
+  /* 失败注入 */
+  await exec(`(() => {
+    const orig = window.fetch;
+    window.fetch = (url, opts) => {
+      if (String(url).includes('/api/article/save')) {
+        return new Promise((_, reject) => setTimeout(() => reject(new Error('forced-fail')), 800));
+      }
+      return orig(url, opts);
+    };
+  })()`);
+  await exec(`document.querySelector('#editSave').click()`);
+  await sleep(400);
+  check("Safari 失败注入显示正在保存", ((await saveStatus()) || "").includes("正在保存"), await saveStatus());
+  await sleep(2000);
+  check("Safari 失败后显示保存失败", ((await saveStatus()) || "").includes("保存失败"), await saveStatus());
+  await exec(`window.fetch = window.__origFetch;`);
 } catch (error) {
   failures += 1;
   console.error(`失败：Safari 冒烟流程异常（${error.message}）`);

@@ -197,6 +197,7 @@ async function saveArticle() {
   editState.saving = true;
   editState.saveVersion = studioEditor.version();
   saveMachine.saving();
+  setSaveStatus("正在保存", "saving");
   try {
     const payload = await api("/api/article/save", {
       path: editState.path,
