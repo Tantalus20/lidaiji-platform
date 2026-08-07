@@ -216,6 +216,24 @@ def cmd_cancel(project_root: Path, publication_id: str) -> int:
         return 1
 
 
+def cmd_confirm(project_root: Path, publication_id: str) -> int:
+    """人工确认：只在 submitted_unverified 时转 published（幂等）。"""
+    _share, _dist, _base, db_path = resolve_paths(project_root)
+    with pubdb.PublisherDB(db_path) as db:
+        ok, state = db.confirm_publication(publication_id, confirmed_by="cli-manual")
+        if not ok:
+            print(f"无法确认：{state}", file=sys.stderr)
+            return 1
+        record = db.get(publication_id)
+        if state == "already-published":
+            print(f"该任务已是 published（幂等，未重复确认）：{publication_id}")
+        else:
+            print(f"已人工确认并标记 published：{publication_id}")
+            print(f"确认时间：{record['confirmed_at']}（确认人：cli-manual）")
+            print(f"说说标识：{record['qzone_post_id'] or '—'}")
+    return 0
+
+
 def cmd_create(project_root: Path, share_id: str, summary: str, scheduled_at: str) -> int:
     share_root, _dist, base_url, db_path = resolve_paths(project_root)
     if not summary.strip():
@@ -268,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="列出全部发布记录")
     cancel = sub.add_parser("cancel", help="取消任务（网页结果不回滚）")
     cancel.add_argument("publication_id")
+    confirm = sub.add_parser("confirm", help="人工确认说说真实存在（submitted_unverified → published）")
+    confirm.add_argument("publication_id")
     create = sub.add_parser("create", help="创建发布任务")
     create.add_argument("share_id")
     create.add_argument("--summary", required=True, help="QQ 空间摘要正文")
@@ -285,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status(project_root)
     if args.command == "cancel":
         return cmd_cancel(project_root, args.publication_id)
+    if args.command == "confirm":
+        return cmd_confirm(project_root, args.publication_id)
     if args.command == "create":
         scheduled = pubdb.to_utc_iso(pubdb.utcnow()) if args.at == "now" else args.at
         return cmd_create(project_root, args.share_id, args.summary, scheduled)

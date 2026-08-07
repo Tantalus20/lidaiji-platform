@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS publications (
   qzone_post_id TEXT,
   error_code TEXT,
   error_message TEXT,
-  metadata_json TEXT NOT NULL DEFAULT '{}'
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  confirmed_at TEXT,
+  confirmed_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_publications_due
   ON publications (qzone_status, scheduled_at);
@@ -184,6 +186,11 @@ class PublisherDB:
         # executescript 会隐式提交；因此只在文件锁内直接执行，不套事务
         with self._lock():
             self.conn.executescript(SCHEMA)
+            # 轻量列迁移：既有数据库补 confirmed_at/confirmed_by（人工确认审计）
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(publications)")}
+            for name in ("confirmed_at", "confirmed_by"):
+                if name not in columns:
+                    self.conn.execute(f"ALTER TABLE publications ADD COLUMN {name} TEXT")
 
     # -- 查询 ------------------------------------------------------------
 
@@ -356,6 +363,36 @@ class PublisherDB:
                     "WHERE publication_id = ?",
                     (QZ_PUBLISHED, post_id, utcnow(), publication_id),
                 )
+
+    def confirm_publication(self, publication_id: str, confirmed_by: str = "manual") -> tuple[bool, str]:
+        """人工确认说说真实存在：submitted_unverified → published。
+
+        - 只允许从 submitted_unverified 进入 published（绝不从 scheduled/failed
+          伪造成功）；
+        - 重复 confirm 幂等（已 published 直接成功）；
+        - 记录确认时间与确认人（审计）。
+        """
+        with self._lock():
+            with self._transaction():
+                row = self.conn.execute(
+                    "SELECT qzone_status FROM publications WHERE publication_id = ?",
+                    (publication_id,),
+                ).fetchone()
+                if row is None:
+                    return False, "not-found"
+                status = row[0]
+                if status == QZ_PUBLISHED:
+                    return True, "already-published"
+                if status != QZ_SUBMITTED:
+                    return False, f"invalid-state:{status}"
+                now = utcnow()
+                self.conn.execute(
+                    "UPDATE publications SET qzone_status = ?, finished_at = ?, "
+                    "confirmed_at = ?, confirmed_by = ?, error_code = '', error_message = '' "
+                    "WHERE publication_id = ?",
+                    (QZ_PUBLISHED, now, now, confirmed_by, publication_id),
+                )
+                return True, "confirmed"
 
     def mark_skipped(self, publication_id: str, code: str, message: str) -> None:
         """QQ 自动发布未启用/未配置：记录 skipped，绝不伪造发布。"""

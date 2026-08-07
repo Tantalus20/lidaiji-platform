@@ -128,6 +128,36 @@ class PublisherDBTestCase(unittest.TestCase):
         self.assertNotEqual(first["publication_id"], second["publication_id"])
         self.assertNotEqual(first["idempotency_key"], second["idempotency_key"])
 
+    def test_confirm_publication_manual(self):
+        """人工确认：submitted_unverified → published，带审计时间；重复确认幂等。"""
+        record = self.create()
+        # 未提交状态不可确认
+        ok, state = self.db.confirm_publication(record["publication_id"])
+        self.assertFalse(ok)
+        self.assertIn("invalid-state", state)
+        self.db.mark_web_verified(record["publication_id"], "https://read.example.com/x/")
+        self.db.claim_qzone(record["publication_id"])
+        self.db.mark_submitted(record["publication_id"], post_id="55555", code="")
+        ok, state = self.db.confirm_publication(record["publication_id"], confirmed_by="cli-manual")
+        self.assertTrue(ok)
+        self.assertEqual(state, "confirmed")
+        after = self.db.get(record["publication_id"])
+        self.assertEqual(after["qzone_status"], pubdb.QZ_PUBLISHED)
+        self.assertEqual(after["qzone_post_id"], "55555")
+        self.assertIsNotNone(after["confirmed_at"])
+        self.assertEqual(after["confirmed_by"], "cli-manual")
+        # 幂等：再次确认仍 published，不改变审计时间
+        first_at = after["confirmed_at"]
+        ok, state = self.db.confirm_publication(record["publication_id"])
+        self.assertTrue(ok)
+        self.assertEqual(state, "already-published")
+        self.assertEqual(self.db.get(record["publication_id"])["confirmed_at"], first_at)
+
+    def test_confirm_missing_rejected(self):
+        ok, state = self.db.confirm_publication("pub-000000000000")
+        self.assertFalse(ok)
+        self.assertEqual(state, "not-found")
+
     def test_stale_claim_recovery_never_republishes(self):
         record = self.create()
         self.db.mark_web_verified(record["publication_id"], "https://read.example.com/x/")
