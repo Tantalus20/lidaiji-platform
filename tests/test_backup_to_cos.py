@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -697,13 +698,50 @@ class TestMonitorConsumer(unittest.TestCase):
         self.assertFalse(rec["success"])
         self.assertEqual(rec["errorCode"], "backup_no_success_record")
 
+    def _last_success_at(self, delta: timedelta) -> str:
+        """按统一 now 生成相对 backup-last-success 时间戳（测试不依赖真实墙钟流逝）。"""
+        now = datetime.now().astimezone()
+        return (now - delta).strftime("%Y-%m-%dT%H:%M:%S%z")
+
     def test_monitor_validate_only_does_not_refresh_success_threshold(self):
-        # 旧的正式成功时间保持 → 监控按旧时间判定（validate-only 不刷新）
-        (self.tmp / "backup-last-success").write_text(
-            "2026-08-06T04:30:53+08:00", encoding="utf-8")
+        # 旧的正式成功时间保持 → 监控按旧时间判定（validate-only 不刷新）。
+        # 夹具使用相对时间（now - 1 小时），避免固定时间随墙钟越过 26 小时阈值后
+        # 确定性失败（回归：2026-08-06T04:30:53 固定夹具在 08-07 06:30 后必然失败）。
+        fresh = self._last_success_at(timedelta(hours=1))
+        (self.tmp / "backup-last-success").write_text(fresh, encoding="utf-8")
         rec = self.monitor.check_backup(self.cfg)
         self.assertTrue(rec["success"])
-        self.assertIn("04:30:53", rec["errorCode"])
+        self.assertIn(fresh, rec["errorCode"])
+
+    def test_monitor_fresh_backup_is_success(self):
+        # 正常新鲜备份（1 小时前）：不报警
+        (self.tmp / "backup-last-success").write_text(
+            self._last_success_at(timedelta(hours=1)), encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertTrue(rec["success"])
+
+    def test_monitor_stale_backup_alerts(self):
+        # 明确过期（27 小时前，超过 26 小时阈值）：报警
+        (self.tmp / "backup-last-success").write_text(
+            self._last_success_at(timedelta(hours=27)), encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertFalse(rec["success"])
+        self.assertIn("backup_stale", rec["errorCode"])
+
+    def test_monitor_age_threshold_boundary(self):
+        # 阈值语义（lidaiji_monitor.py:382 为严格 age_hours > 26）：
+        # 略低于 26 小时 → 不报警；略高于 26 小时 → 报警。
+        # 预留 30 秒安全余量，避免与监控内部 datetime.now() 的毫秒级漂移竞争。
+        just_below = self._last_success_at(timedelta(hours=26) - timedelta(seconds=30))
+        (self.tmp / "backup-last-success").write_text(just_below, encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertTrue(rec["success"], "略低于 26h 不得报警")
+
+        just_above = self._last_success_at(timedelta(hours=26) + timedelta(seconds=30))
+        (self.tmp / "backup-last-success").write_text(just_above, encoding="utf-8")
+        rec = self.monitor.check_backup(self.cfg)
+        self.assertFalse(rec["success"], "略高于 26h 必须报警")
+        self.assertIn("backup_stale", rec["errorCode"])
 
     def test_monitor_failure_marker_with_mode_fields(self):
         (self.tmp / "backup-failure.marker").write_text(json.dumps({

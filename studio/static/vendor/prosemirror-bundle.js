@@ -14137,6 +14137,8 @@ var LidaijiEditor = (() => {
             if (block.type === "paragraph") {
               block.align = align;
               content.push(block);
+            } else if (block.type === "image") {
+              content.push({ type: "paragraph", align, content: [block] });
             } else {
               content.push(block);
             }
@@ -14465,7 +14467,8 @@ ${inner}
         parseDOM: [{ tag: "div.poetry-block" }],
         toDOM: () => ["div", { class: "poetry-block" }, 0]
       },
-      /* 尾注块：右对齐、小字号（CSS .end-note 控制） */
+      /* 附记块（endnote_block，界面文案为“附记”）：右对齐、小字号（CSS .end-note 控制）。
+      * 注意：附记是无编号的补充说明块，不是真正的脚注或尾注系统。 */
       endnote_block: {
         content: "block+",
         group: "block",
@@ -14699,7 +14702,9 @@ ${inner}
         return schema.nodes.table.create(null, rows);
       }
       case "image":
-        return schema.nodes.image.create({ src: (_a = block.src) != null ? _a : "", alt: (_b = block.alt) != null ? _b : "" });
+        return schema.nodes.paragraph.create(null, [
+          schema.nodes.image.create({ src: (_a = block.src) != null ? _a : "", alt: (_b = block.alt) != null ? _b : "" })
+        ]);
       case "code_block":
         return schema.nodes.code_block.create(
           { info: (_c = block.info) != null ? _c : "" },
@@ -14797,6 +14802,60 @@ ${inner}
     }
     return Math.min(low, size);
   }
+  function clampToInlineText(doc3, pos) {
+    const $pos = doc3.resolve(Math.max(0, Math.min(pos, doc3.content.size)));
+    if ($pos.parent.inlineContent) return pos;
+    const near = TextSelection.near($pos);
+    return near ? near.$from.pos : pos;
+  }
+  function setBlockTypeCommand(nodeType, attrs = null) {
+    return (state, dispatch) => {
+      let { from: from2, to } = state.selection;
+      let applicable = false;
+      if (from2 === to) {
+        const $from = state.selection.$from;
+        const parent = $from.parent;
+        if (!parent.isTextblock) return false;
+        if (parent.type === nodeType && parent.hasMarkup(nodeType, attrs)) return true;
+        const $parentPos = state.doc.resolve($from.before($from.depth));
+        const index = $parentPos.index();
+        if (!$parentPos.parent.canReplaceWith(index, index + 1, nodeType)) return false;
+        from2 = $from.before($from.depth);
+        to = from2 + parent.nodeSize;
+        applicable = true;
+      } else {
+        state.doc.nodesBetween(from2, to, (node, pos) => {
+          if (applicable) return false;
+          if (!node.isTextblock || node.hasMarkup(nodeType, attrs)) return false;
+          if (node.type === nodeType) applicable = true;
+          else {
+            const $pos = state.doc.resolve(pos);
+            const index = $pos.index();
+            applicable = $pos.parent.canReplaceWith(index, index + 1, nodeType);
+          }
+          return true;
+        });
+        if (!applicable) return false;
+      }
+      if (dispatch) dispatch(state.tr.setBlockType(from2, to, nodeType, attrs).scrollIntoView());
+      return true;
+    };
+  }
+  function blockTypeAt($pos) {
+    for (let depth = $pos.depth; depth > 0; depth -= 1) {
+      const type = $pos.node(depth).type.name;
+      if (type === "poetry_block") return "poetry";
+      if (type === "endnote_block") return "endnote";
+      if (type === "blockquote") return "quote";
+      if (type === "bullet_list" || type === "ordered_list" || type === "list_item") return "list";
+      if (type === "table" || type === "table_row" || type === "table_cell" || type === "table_header") return "table";
+    }
+    const parent = $pos.parent.type.name;
+    if (parent === "paragraph") return "paragraph";
+    if (parent === "heading") return "heading";
+    if (parent === "code_block") return "code";
+    return "other";
+  }
   function selectionInfo(state) {
     const marks = state.storedMarks || state.selection.$from.marks();
     const $from = state.selection.$from;
@@ -14810,12 +14869,40 @@ ${inner}
     }
     const block = $from.node($from.depth);
     if (block.type.name === "paragraph" && block.attrs.align) align = block.attrs.align;
+    const fromType = blockTypeAt(state.selection.$from);
+    const toType = blockTypeAt(state.selection.$to);
+    const blockType = fromType === toType ? fromType : "mixed";
+    const alignEnabled = (() => {
+      let found2 = false;
+      state.doc.nodesBetween(state.selection.from, state.selection.to, (node) => {
+        if (found2) return false;
+        if (node.type.name === "paragraph") found2 = true;
+        return true;
+      });
+      return found2;
+    })();
+    const linkEnabled = $from.parent.type.allowsMarkType(schema.marks.link) && !$from.parent.type.spec.code;
+    const imageEnabled = Boolean($from.parent.type.contentMatch.matchType(schema.nodes.image));
+    const enabled = {
+      link: linkEnabled,
+      image: imageEnabled,
+      align: alignEnabled,
+      poetry: convertContainerCommand(state, null, "poetry_block"),
+      endnote: convertContainerCommand(state, null, "endnote_block"),
+      quote: convertContainerCommand(state, null, "blockquote"),
+      paragraph: setBlockTypeCommand(schema.nodes.paragraph)(state, null),
+      heading: setBlockTypeCommand(schema.nodes.heading, { level: 2 })(state, null)
+    };
     return {
       canUndo: undoDepth(state) > 0,
       canRedo: redoDepth(state) > 0,
       bold: Boolean(schema.marks.strong.isInSet(marks)),
       em: Boolean(schema.marks.em.isInSet(marks)),
+      link: Boolean(schema.marks.link.isInSet(marks)),
       align,
+      blockType,
+      alignEnabled,
+      enabled,
       inPoetry,
       inEndnote
     };
@@ -14865,6 +14952,60 @@ ${inner}
     }
     return wrapIn(schema.nodes[typeName])(state, dispatch);
   }
+  function convertContainerCommand(state, dispatch, targetTypeName) {
+    const containerTypes = ["poetry_block", "endnote_block", "blockquote"];
+    let current = null;
+    for (let depth = state.selection.$from.depth; depth >= 1; depth -= 1) {
+      const type = state.selection.$from.node(depth).type.name;
+      if (containerTypes.includes(type)) {
+        current = type;
+        break;
+      }
+    }
+    if (current === targetTypeName) return false;
+    let tr = state.tr;
+    let changed = false;
+    if (current) {
+      const positions = [];
+      if (state.selection.from === state.selection.to) {
+        for (let depth = state.selection.$from.depth; depth >= 1; depth -= 1) {
+          if (state.selection.$from.node(depth).type.name === current) {
+            positions.push(state.selection.$from.before(depth));
+            break;
+          }
+        }
+      } else {
+        state.doc.nodesBetween(state.selection.from, state.selection.to, (node, pos) => {
+          if (node.type.name === current && node.content.childCount) positions.push(pos);
+        });
+      }
+      if (!positions.length) return false;
+      for (const pos of positions.sort((a, b) => b - a)) {
+        const node = state.doc.nodeAt(pos);
+        tr = tr.replaceWith(pos, pos + node.nodeSize, node.content);
+      }
+      changed = true;
+    }
+    if (targetTypeName !== "paragraph") {
+      const nodeType = schema.nodes[targetTypeName];
+      if (!nodeType) return false;
+      const fromPos = tr.mapping.map(state.selection.from, -1);
+      const toPos = tr.mapping.map(state.selection.to, 1);
+      const $from = tr.doc.resolve(fromPos);
+      const $to = tr.doc.resolve(toPos);
+      const range = $from.blockRange($to);
+      const wrapping = range && findWrapping(range, nodeType);
+      if (!wrapping) return false;
+      tr = tr.wrap(range, wrapping);
+      changed = true;
+    }
+    if (!changed) return false;
+    const mappedAnchor = tr.mapping.map(state.selection.from, -1);
+    const near = TextSelection.near(tr.doc.resolve(Math.max(1, Math.min(mappedAnchor, tr.doc.content.size - 1))));
+    tr = tr.setSelection(near);
+    if (dispatch) dispatch(tr.scrollIntoView());
+    return true;
+  }
   function containerExitEnter(state, dispatch) {
     const $from = state.selection.$from;
     const parent = $from.parent;
@@ -14909,7 +15050,7 @@ ${inner}
       "Ctrl-b": toggleMark(schema.marks.strong),
       "Ctrl-i": toggleMark(schema.marks.em),
       // 列表内回车=新列表项，列表外回车=分段（不能只绑 splitListItem，
-      // 否则普通段落里回车无效）；诗歌/尾注块末尾空段回车=退出容器
+      // 否则普通段落里回车无效）；诗歌/附记块末尾空段回车=退出容器
       Enter: chainCommands(containerExitEnter, splitListItem(schema.nodes.list_item), splitBlock),
       "Mod-Enter": chainCommands(splitListItem(schema.nodes.list_item), splitBlock),
       Tab: sinkListItem(schema.nodes.list_item),
@@ -14965,17 +15106,20 @@ ${inner}
         dispatchReplace(view.state.tr.replaceWith(0, view.state.doc.content.size, doc3.content));
       },
       replaceDocKeepCursor(markdown) {
+        const doc3 = jsonToPm(parseMarkdown(markdown));
+        if (doc3.eq(view.state.doc)) {
+          return;
+        }
         const { from: from2, to } = view.state.selection;
         const anchorOffset = textOffsetAt(view.state.doc, from2);
         const headOffset = textOffsetAt(view.state.doc, to);
-        const doc3 = jsonToPm(parseMarkdown(markdown));
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc3.content);
-        const newFrom = positionForTextOffset(tr.doc, anchorOffset);
-        const newTo = positionForTextOffset(tr.doc, headOffset);
+        const newFrom = clampToInlineText(tr.doc, positionForTextOffset(tr.doc, anchorOffset));
+        const newTo = clampToInlineText(tr.doc, positionForTextOffset(tr.doc, headOffset));
         if (newFrom !== newTo || tr.selection.from !== newFrom) {
           tr.setSelection(TextSelection.create(tr.doc, newFrom, newTo));
         }
-        dispatchReplace(tr);
+        view.dispatch(tr.scrollIntoView());
       },
       undo() {
         undo(view.state, view.dispatch);
@@ -14998,6 +15142,29 @@ ${inner}
       toggleEndnote() {
         toggleContainerCommand(view.state, view.dispatch, "endnote_block");
       },
+      toggleQuote() {
+        toggleContainerCommand(view.state, view.dispatch, "blockquote");
+      },
+      convertContainerType(name) {
+        convertContainerCommand(view.state, view.dispatch, name);
+      },
+      setBlockType(name, attrs) {
+        const nodeType = schema.nodes[name];
+        if (!nodeType) return;
+        setBlockTypeCommand(nodeType, attrs || null)(view.state, view.dispatch);
+      },
+      insertImage(src, alt) {
+        if (!src) return;
+        const node = schema.nodes.image.create({ src, alt: alt || "" });
+        view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+      },
+      setLink(url) {
+        if (url) {
+          toggleMark(schema.marks.link, { href: url })(view.state, view.dispatch);
+        } else {
+          toggleMark(schema.marks.link)(view.state, view.dispatch);
+        }
+      },
       focus() {
         view.focus();
       },
@@ -15015,11 +15182,16 @@ ${inner}
     pmToJson,
     textOffsetAt,
     positionForTextOffset,
+    clampToInlineText,
     editorKeymap,
     buildEditorPlugins,
     schema,
+    selectionInfo,
+    blockTypeAt,
     setAlignmentCommand,
+    setBlockTypeCommand,
     toggleContainerCommand,
+    convertContainerCommand,
     selectionInContainer,
     containerExitEnter,
     containerEmptyBackspace

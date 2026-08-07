@@ -1,6 +1,6 @@
 /*! Lidaiji Studio 工作台前端包（自动生成，请勿手改）。
  * 源码：studio/app/*.mjs；重新生成：npm run build:app。
- * 平台 0.2.1 · Studio 0.2.3。 */
+ * 平台 0.2.1 · Studio 0.2.6。 */
 (() => {
   // studio/app/util.mjs
   var SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -414,6 +414,67 @@
     }
   });
 
+  // studio/app/savestate.mjs
+  function createSaveStateMachine() {
+    let status = "saved";
+    let dirtyDuringSave = false;
+    const listeners = [];
+    function emit(next) {
+      for (const listener of listeners) listener(next);
+    }
+    return {
+      get status() {
+        return status;
+      },
+      onChange(listener) {
+        listeners.push(listener);
+        return () => {
+          const index = listeners.indexOf(listener);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+      /* 用户输入（或任何未保存修改）。返回变更后的状态。 */
+      userInput() {
+        if (status === "saving") {
+          dirtyDuringSave = true;
+          return status;
+        }
+        status = "dirty";
+        emit(status);
+        return status;
+      },
+      /* 发起保存请求。重复调用（并发防护）不改变状态、不重复通知。 */
+      saving() {
+        if (status === "saving") return status;
+        dirtyDuringSave = false;
+        status = "saving";
+        emit(status);
+        return status;
+      },
+      /* 服务端确认成功。若保存期间又有输入则回到 dirty。 */
+      saved() {
+        const next = dirtyDuringSave ? "dirty" : "saved";
+        dirtyDuringSave = false;
+        status = next;
+        emit(status);
+        return status;
+      },
+      /* 保存失败（仍是未保存状态）。 */
+      failed() {
+        status = "failed";
+        emit(status);
+        return status;
+      },
+      /* 重新打开文章：回到初始"已保存"。 */
+      reset() {
+        dirtyDuringSave = false;
+        status = "saved";
+        emit(status);
+        return status;
+      }
+    };
+  }
+
   // studio/app/editor-page.mjs
   function clientWordCount(text) {
     const plain = text.replace(/<!--[\s\S]*?-->/g, "");
@@ -423,6 +484,7 @@
   }
   var studioEditor = null;
   var pendingDraft = "";
+  var lastToolbarInfo = null;
   var AUTOSAVE_DELAY = 1200;
   var DRAFT_WRITE_DELAY = 1500;
   editState.articleId = "";
@@ -430,6 +492,7 @@
   editState.saveVersion = 0;
   editState.autosaveTimer = 0;
   editState.draftTimer = 0;
+  var saveMachine = createSaveStateMachine();
   function draftKey() {
     const base = editState.articleId || editState.path.replace(/[^A-Za-z0-9_-]+/g, "_");
     return `lidaiji.studio.draft.${base}`;
@@ -462,6 +525,7 @@
     el.classList.toggle("saved", kind === "saved");
     el.classList.toggle("failed", kind === "failed");
     el.classList.toggle("saving", kind === "saving");
+    el.classList.toggle("changed", kind === "changed");
     $("#editSaveRetry").classList.toggle("hidden", kind !== "failed");
   }
   function updateWordCount() {
@@ -471,7 +535,9 @@
   }
   function markDirty() {
     editState.dirty = true;
-    setSaveStatus("\u5C1A\u672A\u4FDD\u5B58", "");
+    if (saveMachine.userInput() === "dirty") {
+      setSaveStatus("\u6709\u672A\u4FDD\u5B58\u4FEE\u6539", "");
+    }
     updateWordCount();
     scheduleDraftWrite();
   }
@@ -487,17 +553,61 @@
       saveArticle();
     }, AUTOSAVE_DELAY);
   }
+  var BLOCK_TYPE_LABELS = {
+    paragraph: "\u6B63\u6587",
+    heading: "\u6807\u9898",
+    poetry: "\u8BD7\u6B4C",
+    endnote: "\u9644\u8BB0",
+    quote: "\u5F15\u7528",
+    list: "\u5217\u8868",
+    code: "\u4EE3\u7801\u5757",
+    table: "\u8868\u683C",
+    other: "\u5176\u4ED6",
+    mixed: "\u591A\u79CD\u6BB5\u843D"
+  };
+  var BLOCK_TYPE_OPTIONS = /* @__PURE__ */ new Set(["paragraph", "heading", "poetry", "endnote", "quote", "mixed", "other"]);
   function updateToolbarState(info) {
     if (!info) return;
+    lastToolbarInfo = info;
     $("#tbUndo").disabled = !info.canUndo;
     $("#tbRedo").disabled = !info.canRedo;
     $("#tbBold").setAttribute("aria-pressed", info.bold ? "true" : "false");
     $("#tbItalic").setAttribute("aria-pressed", info.em ? "true" : "false");
+    const linkButton = $("#tbLink");
+    linkButton.setAttribute("aria-pressed", info.link ? "true" : "false");
+    linkButton.disabled = !info.enabled.link;
+    const imageButton = $("#tbImage");
+    imageButton.disabled = !info.enabled.image;
+    const alignOk = info.enabled.align;
+    for (const id of ["tbAlignLeft", "tbAlignCenter", "tbAlignRight"]) {
+      $(`#${id}`).disabled = !alignOk;
+    }
     $("#tbAlignLeft").setAttribute("aria-pressed", info.align === null || info.align === "left" ? "true" : "false");
     $("#tbAlignCenter").setAttribute("aria-pressed", info.align === "center" ? "true" : "false");
     $("#tbAlignRight").setAttribute("aria-pressed", info.align === "right" ? "true" : "false");
-    $("#tbPoetry").setAttribute("aria-pressed", info.inPoetry ? "true" : "false");
-    $("#tbEndnote").setAttribute("aria-pressed", info.inEndnote ? "true" : "false");
+    const select = $("#tbBlockType");
+    const enabledMap = {
+      paragraph: info.enabled.paragraph,
+      heading: info.enabled.heading,
+      poetry: info.enabled.poetry,
+      endnote: info.enabled.endnote,
+      quote: info.enabled.quote
+    };
+    for (const option of select.options) {
+      if (Object.prototype.hasOwnProperty.call(enabledMap, option.value)) {
+        option.disabled = !enabledMap[option.value];
+      }
+    }
+    select.value = BLOCK_TYPE_OPTIONS.has(info.blockType) ? info.blockType : "other";
+    $("#stBlockType").textContent = BLOCK_TYPE_LABELS[info.blockType] || info.blockType;
+    $("#stAlign").textContent = info.align === "center" ? "\u5C45\u4E2D" : info.align === "right" ? "\u53F3\u5BF9\u9F50" : "\u5DE6\u5BF9\u9F50";
+    if (info.inPoetry) {
+      $("#stNote").textContent = "\u8BD7\u6B4C\u5757\u4F1A\u4FDD\u7559\u4E13\u7528\u6392\u7248\uFF1B\u8BD7\u884C\u7F16\u8F91\u65B9\u5F0F\u5C06\u5728\u540E\u7EED\u7248\u672C\u6539\u8FDB\u3002";
+    } else if (info.inEndnote) {
+      $("#stNote").textContent = "\u201C\u9644\u8BB0\u201D\u662F\u65E0\u7F16\u53F7\u7684\u8865\u5145\u8BF4\u660E\u5757\uFF0C\u4E0D\u662F\u811A\u6CE8\u6216\u5C3E\u6CE8\u7CFB\u7EDF\u3002";
+    } else {
+      $("#stNote").textContent = "";
+    }
   }
   function ensureEditor() {
     if (studioEditor) return studioEditor;
@@ -520,12 +630,13 @@
     if (editState.saving) return;
     const body = studioEditor.getMarkdown();
     if (!body.trim()) {
+      saveMachine.failed();
       setSaveStatus("\u6B63\u6587\u4E3A\u7A7A\uFF0C\u672A\u4FDD\u5B58", "failed");
       return;
     }
     editState.saving = true;
     editState.saveVersion = studioEditor.version();
-    setSaveStatus("\u6B63\u5728\u4FDD\u5B58", "saving");
+    saveMachine.saving();
     try {
       const payload = await api("/api/article/save", {
         path: editState.path,
@@ -534,7 +645,8 @@
       });
       if (editState.saveVersion !== studioEditor.version()) {
         editState.dirty = true;
-        setSaveStatus("\u5185\u5BB9\u5DF2\u53D8\u5316\uFF0C\u6B63\u5728\u518D\u6B21\u4FDD\u5B58\u2026", "saving");
+        saveMachine.userInput();
+        setSaveStatus("\u6709\u672A\u4FDD\u5B58\u4FEE\u6539\uFF0C\u7A0D\u540E\u81EA\u52A8\u4FDD\u5B58", "saving");
         scheduleAutosave();
         return;
       }
@@ -543,12 +655,19 @@
       clearLocalDraft();
       $("#editDraftBadge").classList.toggle("hidden", !payload.article.draft);
       $("#fmArticleRevision").textContent = payload.article.articleRevision || "\u2014";
-      setSaveStatus(
-        `\u5DF2\u4FDD\u5B58\uFF08\u65B0\u589E\u951A\u70B9 ${payload.anchors.created} \u4E2A\uFF0C\u4FDD\u7559 ${payload.anchors.retained} \u4E2A\uFF09`,
-        "saved"
-      );
+      saveMachine.saved();
+      if (saveMachine.status === "dirty") {
+        setSaveStatus("\u6709\u672A\u4FDD\u5B58\u4FEE\u6539", "");
+        scheduleAutosave();
+      } else {
+        setSaveStatus(
+          `\u5DF2\u4FDD\u5B58\uFF08\u65B0\u589E\u951A\u70B9 ${payload.anchors.created} \u4E2A\uFF0C\u4FDD\u7559 ${payload.anchors.retained} \u4E2A\uFF09`,
+          "saved"
+        );
+      }
       refreshPublishStatus();
     } catch (error) {
+      saveMachine.failed();
       setSaveStatus("\u4FDD\u5B58\u5931\u8D25", "failed");
       showError($("#editError"), error.message);
     } finally {
@@ -629,14 +748,15 @@
       const editor = ensureEditor();
       editor.setMarkdown(article.body);
       editState.dirty = false;
+      saveMachine.reset();
+      setSaveStatus("\u5DF2\u4FDD\u5B58", "saved");
       const fm = article.frontMatter;
       $("#editTitle").textContent = fm.subtitle ? `${fm.title} \xB7 ${fm.subtitle}` : fm.title || "\uFF08\u672A\u547D\u540D\uFF09";
       $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
       fillFmForm(fm);
-      setSaveStatus("\u5DF2\u4FDD\u5B58", "saved");
       showEditorMode("edit");
       updateWordCount();
-      updateToolbarState({ canUndo: false, canRedo: false, bold: false, em: false });
+      updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
       loadNotes();
       refreshPublishStatus();
       maybeOfferDraft(article.body);
@@ -651,15 +771,37 @@
     "tbRedo",
     "tbBold",
     "tbItalic",
+    "tbLink",
+    "tbImage",
     "tbAlignLeft",
     "tbAlignCenter",
     "tbAlignRight",
-    "tbPoetry",
-    "tbEndnote"
+    "tbBlockType"
   ]) {
-    const button = $(`#${id}`);
-    button.addEventListener("mousedown", (event) => event.preventDefault());
+    const element = $(`#${id}`);
+    if (element) element.addEventListener("mousedown", (event) => event.preventDefault());
   }
+  var CONTAINER_NODE_NAME = {
+    poetry: "poetry_block",
+    endnote: "endnote_block",
+    quote: "blockquote"
+  };
+  $("#tbBlockType").addEventListener("change", () => {
+    if (!studioEditor) return;
+    const value = $("#tbBlockType").value;
+    const current = lastToolbarInfo && lastToolbarInfo.blockType;
+    if (value === current || value === "mixed" || value === "other") return;
+    const inContainer = current === "poetry" || current === "endnote" || current === "quote";
+    if (CONTAINER_NODE_NAME[value]) {
+      studioEditor.convertContainerType(CONTAINER_NODE_NAME[value]);
+    } else if (value === "paragraph") {
+      if (inContainer) studioEditor.convertContainerType("paragraph");
+      else studioEditor.setBlockType("paragraph");
+    } else if (value === "heading") {
+      studioEditor.setBlockType("heading", { level: 2 });
+    }
+    studioEditor.focus();
+  });
   $("#tbUndo").addEventListener("click", () => {
     if (studioEditor) studioEditor.undo();
   });
@@ -678,6 +820,26 @@
       studioEditor.focus();
     }
   });
+  $("#tbLink").addEventListener("click", () => {
+    if (!studioEditor || !lastToolbarInfo || !lastToolbarInfo.enabled.link) return;
+    if (lastToolbarInfo.link) {
+      studioEditor.setLink("");
+    } else {
+      const url = window.prompt("\u94FE\u63A5\u5730\u5740\uFF08\u4EE5 https:// \u6216 / \u5F00\u5934\uFF09", "https://");
+      if (url) {
+        studioEditor.setLink(url.trim());
+      }
+    }
+    studioEditor.focus();
+  });
+  $("#tbImage").addEventListener("click", () => {
+    if (!studioEditor || !lastToolbarInfo || !lastToolbarInfo.enabled.image) return;
+    const src = window.prompt("\u56FE\u7247\u5730\u5740\uFF08\u672C\u5730\u5A92\u4F53\u6216 https://\uFF09", "");
+    if (src) {
+      studioEditor.insertImage(src.trim(), "");
+    }
+    studioEditor.focus();
+  });
   $("#tbAlignLeft").addEventListener("click", () => {
     if (studioEditor) {
       studioEditor.setAlignment("left");
@@ -693,18 +855,6 @@
   $("#tbAlignRight").addEventListener("click", () => {
     if (studioEditor) {
       studioEditor.setAlignment("right");
-      studioEditor.focus();
-    }
-  });
-  $("#tbPoetry").addEventListener("click", () => {
-    if (studioEditor) {
-      studioEditor.togglePoetry();
-      studioEditor.focus();
-    }
-  });
-  $("#tbEndnote").addEventListener("click", () => {
-    if (studioEditor) {
-      studioEditor.toggleEndnote();
       studioEditor.focus();
     }
   });

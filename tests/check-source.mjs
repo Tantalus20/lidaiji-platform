@@ -316,13 +316,24 @@ assert(editorApp.includes("LidaijiEditor.createStudioEditor"), "app 未接入所
 assert(editorApp.includes("replaceDocKeepCursor"), "app 缺少保存后光标保持");
 assert(editorApp.includes("AUTOSAVE_DELAY"), "app 缺少自动保存");
 assert(editorApp.includes("localStorage"), "app 缺少本地草稿机制");
+assert(editorApp.includes("createSaveStateMachine"), "app 缺少保存状态机");
 assert(editorApp.includes('setAlignment("left")'), "app 缺少左对齐按钮接线");
-assert(editorApp.includes("togglePoetry"), "app 缺少诗歌块接线");
-assert(editorApp.includes("toggleEndnote"), "app 缺少尾注块接线");
+assert(editorApp.includes("convertContainerType"), "app 缺少容器安全转换接线（诗歌/附记/引用）");
+assert(editorApp.includes("setBlockType"), "app 缺少段落类型转换接线");
+assert(editorApp.includes("setBlockType"), "app 缺少段落类型转换接线");
+assert(editorApp.includes("insertImage"), "app 缺少图片插入接线");
+assert(editorApp.includes("setLink"), "app 缺少链接接线");
 const editorHtml2 = read("studio/static/index.html");
-for (const id of ["tbAlignLeft", "tbAlignCenter", "tbAlignRight", "tbPoetry", "tbEndnote"]) {
-  assert(editorHtml2.includes(`id="${id}"`), `工具栏缺少按钮：${id}`);
+for (const id of ["tbBlockType", "tbBold", "tbItalic", "tbLink", "tbAlignLeft", "tbAlignCenter", "tbAlignRight", "tbImage", "tbUndo", "tbRedo"]) {
+  assert(editorHtml2.includes(`id="${id}"`), `工具栏缺少控件：${id}`);
 }
+for (const id of ["tbPoetry", "tbEndnote"]) {
+  assert(!editorHtml2.includes(`id="${id}"`), `旧式独立按钮不应再存在：${id}`);
+}
+assert(editorHtml2.includes('<option value="endnote">附记</option>'), "段落类型下拉缺少「附记」选项");
+assert(!editorHtml2.includes("尾注"), "界面不得出现用户可见文案「尾注」");
+assert(editorHtml2.includes('id="editStatusBar"'), "缺少编辑状态条");
+assert(editorHtml2.includes("stBlockType") && editorHtml2.includes("stAlign"), "状态条缺少段落类型/对齐位");
 const markdownEngine = read("studio/editor/markdown.mjs");
 assert(markdownEngine.includes("SHORTCODE_OPEN"), "Markdown 引擎缺少短代码解析");
 assert(markdownEngine.includes("poetry_block"), "Markdown 引擎缺少诗歌块");

@@ -14,6 +14,8 @@ const nodeChecks = [
   "tests/check-source.mjs",
   "tests/check-editor-markdown.mjs",
   "tests/check-editor-format.mjs",
+  "tests/check-editor-toolbar-state.mjs",
+  "tests/check-save-state.mjs",
   "tests/check-scope-migration.mjs",
 ];
 

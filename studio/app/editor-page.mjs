@@ -3,6 +3,7 @@ import { api, apiGet, apiRaw } from "./api.mjs";
 import { $, debounce, hideError, showError, LIST_FIELDS } from "./util.mjs";
 import { editState } from "./state.mjs";
 import { decoratePreviewNotes, loadNotes } from "./notes.mjs";
+import { createSaveStateMachine } from "./savestate.mjs";
 
 /* ---------------- 编辑页 ---------------- */
 
@@ -16,6 +17,7 @@ function clientWordCount(text) {
 /* 编辑器实例与保存状态（自动保存、本地草稿恢复都在这一层）。 */
 let studioEditor = null;
 let pendingDraft = "";
+let lastToolbarInfo = null;
 const AUTOSAVE_DELAY = 1200;
 const DRAFT_WRITE_DELAY = 1500;
 
@@ -24,6 +26,9 @@ editState.saving = false;
 editState.saveVersion = 0;
 editState.autosaveTimer = 0;
 editState.draftTimer = 0;
+
+/* 保存状态机：唯一事实来源；DOM 文案由 setSaveStatus 呈现。 */
+const saveMachine = createSaveStateMachine();
 
 function draftKey() {
   const base = editState.articleId || editState.path.replace(/[^A-Za-z0-9_-]+/g, "_");
@@ -63,6 +68,8 @@ function setSaveStatus(text, kind) {
   el.classList.toggle("saved", kind === "saved");
   el.classList.toggle("failed", kind === "failed");
   el.classList.toggle("saving", kind === "saving");
+  /* "磁盘内容已变化"为预留样式（.changed），本轮不实现检测逻辑。 */
+  el.classList.toggle("changed", kind === "changed");
   $("#editSaveRetry").classList.toggle("hidden", kind !== "failed");
 }
 
@@ -74,7 +81,9 @@ function updateWordCount() {
 
 function markDirty() {
   editState.dirty = true;
-  setSaveStatus("尚未保存", "");
+  if (saveMachine.userInput() === "dirty") {
+    setSaveStatus("有未保存修改", "");
+  }
   updateWordCount();
   scheduleDraftWrite();
 }
@@ -93,17 +102,69 @@ function scheduleAutosave() {
   }, AUTOSAVE_DELAY);
 }
 
+/* 段落类型（内容维度）与对齐（视觉维度）是两个独立维度：
+ * 状态条与工具栏分别展示，诗歌/附记与对齐互不掩盖。 */
+const BLOCK_TYPE_LABELS = {
+  paragraph: "正文",
+  heading: "标题",
+  poetry: "诗歌",
+  endnote: "附记",
+  quote: "引用",
+  list: "列表",
+  code: "代码块",
+  table: "表格",
+  other: "其他",
+  mixed: "多种段落",
+};
+const BLOCK_TYPE_OPTIONS = new Set(["paragraph", "heading", "poetry", "endnote", "quote", "mixed", "other"]);
+
 function updateToolbarState(info) {
   if (!info) return;
+  lastToolbarInfo = info;
+  /* 历史操作：ProseMirror history 真实状态控制可用性 */
   $("#tbUndo").disabled = !info.canUndo;
   $("#tbRedo").disabled = !info.canRedo;
+  /* 文字格式：active（aria-pressed）+ enabled（disabled）双状态 */
   $("#tbBold").setAttribute("aria-pressed", info.bold ? "true" : "false");
   $("#tbItalic").setAttribute("aria-pressed", info.em ? "true" : "false");
+  const linkButton = $("#tbLink");
+  linkButton.setAttribute("aria-pressed", info.link ? "true" : "false");
+  linkButton.disabled = !info.enabled.link;
+  const imageButton = $("#tbImage");
+  imageButton.disabled = !info.enabled.image;
+  /* 对齐：互斥一组；仅当选择内存在可对齐段落时可用 */
+  const alignOk = info.enabled.align;
+  for (const id of ["tbAlignLeft", "tbAlignCenter", "tbAlignRight"]) {
+    $(`#${id}`).disabled = !alignOk;
+  }
   $("#tbAlignLeft").setAttribute("aria-pressed", info.align === null || info.align === "left" ? "true" : "false");
   $("#tbAlignCenter").setAttribute("aria-pressed", info.align === "center" ? "true" : "false");
   $("#tbAlignRight").setAttribute("aria-pressed", info.align === "right" ? "true" : "false");
-  $("#tbPoetry").setAttribute("aria-pressed", info.inPoetry ? "true" : "false");
-  $("#tbEndnote").setAttribute("aria-pressed", info.inEndnote ? "true" : "false");
+  /* 段落类型下拉：显示当前类型；不可转换的选项禁用 */
+  const select = $("#tbBlockType");
+  const enabledMap = {
+    paragraph: info.enabled.paragraph,
+    heading: info.enabled.heading,
+    poetry: info.enabled.poetry,
+    endnote: info.enabled.endnote,
+    quote: info.enabled.quote,
+  };
+  for (const option of select.options) {
+    if (Object.prototype.hasOwnProperty.call(enabledMap, option.value)) {
+      option.disabled = !enabledMap[option.value];
+    }
+  }
+  select.value = BLOCK_TYPE_OPTIONS.has(info.blockType) ? info.blockType : "other";
+  /* 状态条：段落类型 / 对齐 / 说明 */
+  $("#stBlockType").textContent = BLOCK_TYPE_LABELS[info.blockType] || info.blockType;
+  $("#stAlign").textContent = info.align === "center" ? "居中" : info.align === "right" ? "右对齐" : "左对齐";
+  if (info.inPoetry) {
+    $("#stNote").textContent = "诗歌块会保留专用排版；诗行编辑方式将在后续版本改进。";
+  } else if (info.inEndnote) {
+    $("#stNote").textContent = "“附记”是无编号的补充说明块，不是脚注或尾注系统。";
+  } else {
+    $("#stNote").textContent = "";
+  }
 }
 
 function ensureEditor() {
@@ -126,15 +187,16 @@ function showEditorMode(mode) {
 
 async function saveArticle() {
   if (!editState.path || !studioEditor) return;
-  if (editState.saving) return;
+  if (editState.saving) return; // 并发防护：同一时间只允许一个保存请求
   const body = studioEditor.getMarkdown();
   if (!body.trim()) {
+    saveMachine.failed();
     setSaveStatus("正文为空，未保存", "failed");
     return;
   }
   editState.saving = true;
   editState.saveVersion = studioEditor.version();
-  setSaveStatus("正在保存", "saving");
+  saveMachine.saving();
   try {
     const payload = await api("/api/article/save", {
       path: editState.path,
@@ -145,7 +207,8 @@ async function saveArticle() {
       // 保存请求期间正文又发生了变化：文件里是旧内容，稍后自动再保存一次；
       // 不替换文档，避免覆盖作者正在输入的新内容。
       editState.dirty = true;
-      setSaveStatus("内容已变化，正在再次保存…", "saving");
+      saveMachine.userInput();
+      setSaveStatus("有未保存修改，稍后自动保存", "saving");
       scheduleAutosave();
       return;
     }
@@ -154,12 +217,20 @@ async function saveArticle() {
     clearLocalDraft();
     $("#editDraftBadge").classList.toggle("hidden", !payload.article.draft);
     $("#fmArticleRevision").textContent = payload.article.articleRevision || "—";
-    setSaveStatus(
-      `已保存（新增锚点 ${payload.anchors.created} 个，保留 ${payload.anchors.retained} 个）`,
-      "saved",
-    );
+    saveMachine.saved();
+    if (saveMachine.status === "dirty") {
+      // 保存期间又有输入：不得伪造“已保存”
+      setSaveStatus("有未保存修改", "");
+      scheduleAutosave();
+    } else {
+      setSaveStatus(
+        `已保存（新增锚点 ${payload.anchors.created} 个，保留 ${payload.anchors.retained} 个）`,
+        "saved",
+      );
+    }
     refreshPublishStatus();
   } catch (error) {
+    saveMachine.failed();
     setSaveStatus("保存失败", "failed");
     showError($("#editError"), error.message);
   } finally {
@@ -245,14 +316,15 @@ async function openEditor(path) {
     const editor = ensureEditor();
     editor.setMarkdown(article.body);
     editState.dirty = false;
+    saveMachine.reset();
+    setSaveStatus("已保存", "saved");
     const fm = article.frontMatter;
     $("#editTitle").textContent = fm.subtitle ? `${fm.title} · ${fm.subtitle}` : fm.title || "（未命名）";
     $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
     fillFmForm(fm);
-    setSaveStatus("已保存", "saved");
     showEditorMode("edit");
     updateWordCount();
-    updateToolbarState({ canUndo: false, canRedo: false, bold: false, em: false });
+    updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
     loadNotes();
     refreshPublishStatus();
     maybeOfferDraft(article.body);
@@ -263,21 +335,47 @@ async function openEditor(path) {
   }
 }
 
-/* 工具栏：mousedown 阻止默认行为，避免点击按钮时丢失正文选区。 */
+/* 工具栏：mousedown 阻止默认行为，避免点击按钮/下拉时丢失正文选区。 */
 for (const id of [
   "tbUndo",
   "tbRedo",
   "tbBold",
   "tbItalic",
+  "tbLink",
+  "tbImage",
   "tbAlignLeft",
   "tbAlignCenter",
   "tbAlignRight",
-  "tbPoetry",
-  "tbEndnote",
+  "tbBlockType",
 ]) {
-  const button = $(`#${id}`);
-  button.addEventListener("mousedown", (event) => event.preventDefault());
+  const element = $(`#${id}`);
+  if (element) element.addEventListener("mousedown", (event) => event.preventDefault());
 }
+
+/* 段落类型下拉：切换内容类型（正文/标题/诗歌/引用/附记）。
+ * 容器间转换（诗歌↔附记↔引用↔正文）走 convertContainerType 单事务安全转换；
+ * 选项 disabled 状态由 updateToolbarState 按命令 dry-run 驱动。 */
+const CONTAINER_NODE_NAME = {
+  poetry: "poetry_block",
+  endnote: "endnote_block",
+  quote: "blockquote",
+};
+$("#tbBlockType").addEventListener("change", () => {
+  if (!studioEditor) return;
+  const value = $("#tbBlockType").value;
+  const current = lastToolbarInfo && lastToolbarInfo.blockType;
+  if (value === current || value === "mixed" || value === "other") return;
+  const inContainer = current === "poetry" || current === "endnote" || current === "quote";
+  if (CONTAINER_NODE_NAME[value]) {
+    studioEditor.convertContainerType(CONTAINER_NODE_NAME[value]);
+  } else if (value === "paragraph") {
+    if (inContainer) studioEditor.convertContainerType("paragraph");
+    else studioEditor.setBlockType("paragraph");
+  } else if (value === "heading") {
+    studioEditor.setBlockType("heading", { level: 2 });
+  }
+  studioEditor.focus();
+});
 
 $("#tbUndo").addEventListener("click", () => {
   if (studioEditor) studioEditor.undo();
@@ -297,6 +395,26 @@ $("#tbItalic").addEventListener("click", () => {
     studioEditor.focus();
   }
 });
+$("#tbLink").addEventListener("click", () => {
+  if (!studioEditor || !lastToolbarInfo || !lastToolbarInfo.enabled.link) return;
+  if (lastToolbarInfo.link) {
+    studioEditor.setLink("");
+  } else {
+    const url = window.prompt("链接地址（以 https:// 或 / 开头）", "https://");
+    if (url) {
+      studioEditor.setLink(url.trim());
+    }
+  }
+  studioEditor.focus();
+});
+$("#tbImage").addEventListener("click", () => {
+  if (!studioEditor || !lastToolbarInfo || !lastToolbarInfo.enabled.image) return;
+  const src = window.prompt("图片地址（本地媒体或 https://）", "");
+  if (src) {
+    studioEditor.insertImage(src.trim(), "");
+  }
+  studioEditor.focus();
+});
 $("#tbAlignLeft").addEventListener("click", () => {
   if (studioEditor) {
     studioEditor.setAlignment("left");
@@ -312,18 +430,6 @@ $("#tbAlignCenter").addEventListener("click", () => {
 $("#tbAlignRight").addEventListener("click", () => {
   if (studioEditor) {
     studioEditor.setAlignment("right");
-    studioEditor.focus();
-  }
-});
-$("#tbPoetry").addEventListener("click", () => {
-  if (studioEditor) {
-    studioEditor.togglePoetry();
-    studioEditor.focus();
-  }
-});
-$("#tbEndnote").addEventListener("click", () => {
-  if (studioEditor) {
-    studioEditor.toggleEndnote();
     studioEditor.focus();
   }
 });
