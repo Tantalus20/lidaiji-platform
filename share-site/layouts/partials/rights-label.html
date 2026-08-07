@@ -1,0 +1,2 @@
+{{- $modes := dict "original" "原创" "public-domain" "公共领域" "licensed" "已获授权" "cc" "CC许可" "excerpt" "摘录" "link-only" "仅链接" -}}
+{{- with index $modes (. | string) }}{{ . }}{{ else }}其他{{ end -}}

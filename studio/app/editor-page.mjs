@@ -170,6 +170,7 @@ function updateToolbarState(info) {
 function ensureEditor() {
   if (studioEditor) return studioEditor;
   studioEditor = LidaijiEditor.createStudioEditor($("#editorHost"), {
+    anchorPolicy: editState.mode === "share" ? "share" : "work",
     onUpdate: () => {
       markDirty();
       scheduleAutosave();
@@ -179,6 +180,110 @@ function ensureEditor() {
   return studioEditor;
 }
 
+/* ---------------- 文档模式：work（正式作品）/ share（长文分享） ----------------
+ * 模式只控制：保存 API、元数据表单、锚点政策、发布动作；不复制编辑器内核。 */
+
+const SHARE_KIND_LABELS = {
+  "original-writing": "我的文章", fiction: "小说", news: "新闻", paper: "论文",
+  "public-domain-work": "公共领域作品", other: "其他",
+};
+const SHARE_RIGHTS_LABELS = {
+  original: "原创", "public-domain": "公共领域", licensed: "已获授权", cc: "CC许可",
+  excerpt: "摘录", "link-only": "仅链接",
+};
+const QQ_TEXT_MAX = 2000;
+const QQ_TEXT_WARN = 1900;
+
+function shareRightsHint(rightsMode) {
+  if (rightsMode === "excerpt") return "「摘录」分享：分享站页面只显示介绍、摘要与原文链接，不会公开完整正文。";
+  if (rightsMode === "link-only") return "「仅链接」分享：本站不保存第三方完整正文，页面只有标题、介绍与原链接。";
+  return "完整正文会发布到分享站页面；QQ 空间只发摘要与链接。";
+}
+
+function setEditMode(mode) {
+  const share = mode === "share";
+  editState.mode = share ? "share" : "work";
+  $("#fmPanel").classList.toggle("hidden", share);
+  $("#shareFmPanel").classList.toggle("hidden", !share);
+  $("#notesPanel").classList.toggle("hidden", share);
+  $("#publishBar").classList.add("hidden", share);
+  $("#editPublishPreview").classList.add("hidden", share);
+  $("#editPublish").classList.add("hidden", share);
+  $("#shareEditPrepare").classList.toggle("hidden", !share);
+  $("#shareEditPreview").classList.toggle("hidden", !share);
+  $("#editHugoPreview").classList.add("hidden", share);
+  $("#editOpenFolder").classList.add("hidden", share);
+  if (studioEditor) studioEditor.setAnchorPolicy(share ? "share" : "work");
+}
+
+function fillShareFmForm(fm) {
+  const form = $("#shareFmForm");
+  form.title.value = fm.title || "";
+  form.author.value = fm.author || "";
+  form.sourceName.value = fm.sourceName || "";
+  form.sourceUrl.value = fm.sourceUrl || "";
+  form.shareKind.value = fm.shareKind || "original-writing";
+  form.rightsMode.value = fm.rightsMode || "original";
+  form.categories.value = Array.isArray(fm.categories) ? fm.categories.join("，") : (fm.categories || "");
+  form.description.value = fm.description || "";
+  $("#shareQqSummary").value = fm.qqSummary || "";
+  $("#shareMetaId").textContent = fm.shareId || "—";
+  $("#shareMetaRevision").textContent = fm.shareRevision || "—";
+  $("#shareMetaHash").textContent = fm.shareRevision ? String(fm.shareRevision).split("@")[1] || "—" : "—";
+  $("#shareMetaUrl").textContent = fm.slug ? `/${fm.slug}/` : "—";
+  $("#shareRightsHint").textContent = shareRightsHint(fm.rightsMode || "original");
+  updateShareChars();
+}
+
+function readShareFmForm() {
+  const form = $("#shareFmForm");
+  return {
+    title: form.title.value.trim(),
+    author: form.author.value.trim(),
+    sourceName: form.sourceName.value.trim(),
+    sourceUrl: form.sourceUrl.value.trim(),
+    shareKind: form.shareKind.value,
+    rightsMode: form.rightsMode.value,
+    description: form.description.value.trim(),
+    categories: form.categories.value.split(/[,，]/).map((item) => item.trim()).filter(Boolean),
+    qqSummary: $("#shareQqSummary").value,
+  };
+}
+
+function updateShareChars() {
+  const summary = $("#shareQqSummary").value;
+  const url = `${(window.shareBaseUrl || "http://localhost:1314/").replace(/\/$/, "")}${editState.shareUrl || ""}`;
+  const finalText = [summary.trim(), "阅读全文：", url].filter(Boolean).join("\n\n");
+  const length = [...finalText].length;
+  const box = $("#shareQqChars");
+  box.textContent = `最终 QQ 文案约 ${length} 字（含阅读全文链接）`;
+  box.classList.toggle("danger-text", length > QQ_TEXT_WARN);
+  if (length > QQ_TEXT_WARN) {
+    box.textContent += `：已超过 ${QQ_TEXT_WARN} 字预警线，请精简（QQ 空间存在约 ${QQ_TEXT_MAX} 字上限，最终以接口为准）。`;
+  }
+  const confirmText = $("#shareConfirmText");
+  if (confirmText && !confirmText.dataset.touched) {
+    confirmText.value = finalText;
+  }
+}
+
+function resetShareForm() {
+  const form = $("#shareFmForm");
+  form.reset();
+  form.title.value = "";
+  form.author.value = "";
+  form.shareKind.value = "original-writing";
+  form.rightsMode.value = "original";
+  $("#shareQqSummary").value = "";
+  $("#shareMetaId").textContent = "保存后生成";
+  $("#shareMetaRevision").textContent = "—";
+  $("#shareMetaHash").textContent = "—";
+  $("#shareMetaUrl").textContent = "—";
+  editState.shareUrl = "";
+  $("#shareRightsHint").textContent = shareRightsHint("original");
+  updateShareChars();
+}
+
 function showEditorMode(mode) {
   $("#editorHost").classList.toggle("hidden", mode !== "edit");
   $("#editorPreviewWrap").classList.toggle("hidden", mode !== "preview");
@@ -186,22 +291,53 @@ function showEditorMode(mode) {
 }
 
 async function saveArticle() {
-  if (!editState.path || !studioEditor) return;
+  if (!studioEditor) return;
   if (editState.saving) return; // 并发防护：同一时间只允许一个保存请求
+  if (!editState.path && editState.mode !== "share") return;
   const body = studioEditor.getMarkdown();
   if (!body.trim()) {
     saveMachine.failed();
     setSaveStatus("正文为空，未保存", "failed");
     return;
   }
+  /* 分享模式的新建分享：先创建条目（shareId 由服务端生成），再保存正文 */
+  if (editState.mode === "share" && !editState.path) {
+    const fields = readShareFmForm();
+    if (!fields.title || !fields.author) {
+      saveMachine.failed();
+      setSaveStatus("标题与作者不能为空，未保存", "failed");
+      return;
+    }
+    editState.saving = true;
+    saveMachine.saving();
+    setSaveStatus("正在创建…", "saving");
+    try {
+      const created = await api("/api/share/item/new", {
+        title: fields.title,
+        author: fields.author,
+        shareKind: fields.shareKind,
+        rightsMode: fields.rightsMode,
+      });
+      editState.path = created.share.path;
+      editState.shareUrl = created.share.slug ? `/${created.share.slug}/` : "";
+    } catch (error) {
+      saveMachine.failed();
+      setSaveStatus("创建失败", "failed");
+      showError($("#editError"), error.message);
+      editState.saving = false;
+      return;
+    }
+    editState.saving = false;
+  }
   editState.saving = true;
   editState.saveVersion = studioEditor.version();
   saveMachine.saving();
   setSaveStatus("正在保存", "saving");
   try {
-    const payload = await api("/api/article/save", {
+    const share = editState.mode === "share";
+    const payload = await api(share ? "/api/share/item/save" : "/api/article/save", {
       path: editState.path,
-      frontMatter: readFmForm(),
+      frontMatter: share ? readShareFmForm() : readFmForm(),
       body,
     });
     if (editState.saveVersion !== studioEditor.version()) {
@@ -216,20 +352,41 @@ async function saveArticle() {
     studioEditor.replaceDocKeepCursor(payload.body);
     editState.dirty = false;
     clearLocalDraft();
-    $("#editDraftBadge").classList.toggle("hidden", !payload.article.draft);
-    $("#fmArticleRevision").textContent = payload.article.articleRevision || "—";
-    saveMachine.saved();
-    if (saveMachine.status === "dirty") {
-      // 保存期间又有输入：不得伪造“已保存”
-      setSaveStatus("有未保存修改", "");
-      scheduleAutosave();
+    if (share) {
+      // 分享保存：正文永远不带段评锚点；身份信息更新到只读区
+      const fm = payload.share;
+      $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
+      $("#editTitle").textContent = fm.title || "（未命名）";
+      $("#shareMetaId").textContent = fm.shareId || "—";
+      $("#shareMetaRevision").textContent = fm.shareRevision || "—";
+      $("#shareMetaHash").textContent = fm.shareRevision ? String(fm.shareRevision).split("@")[1] || "—" : "—";
+      $("#shareMetaUrl").textContent = fm.slug ? `/${fm.slug}/` : "—";
+      editState.shareUrl = fm.slug ? `/${fm.slug}/` : "";
+      saveMachine.saved();
+      if (saveMachine.status === "dirty") {
+        setSaveStatus("有未保存修改", "");
+        scheduleAutosave();
+      } else {
+        setSaveStatus(payload.anchorsStripped ? "已保存（已剥离段评锚点）" : "已保存（无段评锚点）", "saved");
+      }
     } else {
-      setSaveStatus(
-        `已保存（新增锚点 ${payload.anchors.created} 个，保留 ${payload.anchors.retained} 个）`,
-        "saved",
-      );
+      studioEditor.replaceDocKeepCursor(payload.body);
+      editState.dirty = false;
+      clearLocalDraft();
+      $("#editDraftBadge").classList.toggle("hidden", !payload.article.draft);
+      $("#fmArticleRevision").textContent = payload.article.articleRevision || "—";
+      saveMachine.saved();
+      if (saveMachine.status === "dirty") {
+        setSaveStatus("有未保存修改", "");
+        scheduleAutosave();
+      } else {
+        setSaveStatus(
+          `已保存（新增锚点 ${payload.anchors.created} 个，保留 ${payload.anchors.retained} 个）`,
+          "saved",
+        );
+      }
+      refreshPublishStatus();
     }
-    refreshPublishStatus();
   } catch (error) {
     saveMachine.failed();
     setSaveStatus("保存失败", "failed");
@@ -299,7 +456,7 @@ const refreshEditorPreview = debounce(async () => {
   }
 }, 300);
 
-async function openEditor(path) {
+async function openEditor(path, mode = "work") {
   hideError($("#editError"));
   $("#draftBar").classList.add("hidden");
   pendingDraft = "";
@@ -307,29 +464,53 @@ async function openEditor(path) {
   editState.path = "";
   editState.articleId = "";
   editState.dirty = false;
+  editState.shareUrl = "";
   clearTimeout(editState.autosaveTimer);
   clearTimeout(editState.draftTimer);
+  setEditMode(mode);
   try {
-    const payload = await apiGet(`/api/article?path=${encodeURIComponent(path)}`);
-    const article = payload.article;
-    editState.path = article.path;
-    editState.articleId = article.frontMatter.articleId || "";
+    const share = mode === "share";
+    const payload = await apiGet(
+      share ? `/api/share/item?path=${encodeURIComponent(path)}` : `/api/article?path=${encodeURIComponent(path)}`,
+    );
     const editor = ensureEditor();
-    editor.setMarkdown(article.body);
-    editState.dirty = false;
-    saveMachine.reset();
-    setSaveStatus("已保存", "saved");
-    const fm = article.frontMatter;
-    $("#editTitle").textContent = fm.subtitle ? `${fm.title} · ${fm.subtitle}` : fm.title || "（未命名）";
-    $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
-    fillFmForm(fm);
-    showEditorMode("edit");
-    updateWordCount();
-    updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
-    loadNotes();
-    refreshPublishStatus();
-    maybeOfferDraft(article.body);
-    editor.focus();
+    if (share) {
+      const item = payload.share;
+      editState.path = item.path;
+      editState.shareUrl = item.url;
+      editor.setMarkdown(item.body);
+      editState.dirty = false;
+      saveMachine.reset();
+      setSaveStatus("已保存", "saved");
+      const fm = item.frontMatter;
+      $("#editTitle").textContent = fm.title || "（未命名）";
+      $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
+      fillShareFmForm(fm);
+      showEditorMode("edit");
+      updateWordCount();
+      updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
+      maybeOfferDraft(item.body);
+      editor.focus();
+    } else {
+      const article = payload.article;
+      editState.path = article.path;
+      editState.articleId = article.frontMatter.articleId || "";
+      editor.setMarkdown(article.body);
+      editState.dirty = false;
+      saveMachine.reset();
+      setSaveStatus("已保存", "saved");
+      const fm = article.frontMatter;
+      $("#editTitle").textContent = fm.subtitle ? `${fm.title} · ${fm.subtitle}` : fm.title || "（未命名）";
+      $("#editDraftBadge").classList.toggle("hidden", !fm.draft);
+      fillFmForm(fm);
+      showEditorMode("edit");
+      updateWordCount();
+      updateToolbarState(LidaijiEditor.selectionInfo(editor.view.state));
+      loadNotes();
+      refreshPublishStatus();
+      maybeOfferDraft(article.body);
+      editor.focus();
+    }
   } catch (error) {
     editState.path = "";
     showError($("#editError"), error.message);
@@ -462,6 +643,16 @@ $("#draftDiscard").addEventListener("click", () => {
 });
 
 $("#fmForm").addEventListener("input", markDirty);
+$("#shareFmForm").addEventListener("input", markDirty);
+$("#shareQqSummary").addEventListener("input", () => {
+  markDirty();
+  updateShareChars();
+});
+$("#shareFmForm").addEventListener("change", (event) => {
+  if (event.target.name === "rightsMode") {
+    $("#shareRightsHint").textContent = shareRightsHint(event.target.value);
+  }
+});
 
 $("#editSave").addEventListener("click", async () => {
   hideError($("#editError"));
@@ -478,6 +669,11 @@ $("#editHugoPreview").addEventListener("click", async () => {
   status.textContent = "正在打开 Hugo 预览…";
   status.classList.remove("saved", "failed", "saving");
   try {
+    if (editState.mode === "share") {
+      await api("/api/share/preview", { action: "start" });
+      status.textContent = "已打开分享站预览（1314 端口，含草稿）。";
+      return;
+    }
     await api("/api/article/open-page", { path: editState.path });
     status.textContent = editState.dirty ? "已在浏览器打开（未保存的修改不会出现在预览中）" : "已在浏览器打开。";
   } catch (error) {
@@ -493,7 +689,7 @@ $("#editOpenFolder").addEventListener("click", async () => {
   }
 });
 
-export { openEditor, studioEditor, writeLocalDraft };
+export { openEditor, saveArticle, setEditMode, ensureEditor, resetShareForm, updateShareChars, studioEditor, writeLocalDraft };
 
 /* ---------------- 文章发布闭环（v0.2.2） ---------------- */
 

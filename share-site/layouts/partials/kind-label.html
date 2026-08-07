@@ -1,0 +1,2 @@
+{{- $kinds := dict "my-article" "我的文章" "novel" "小说" "news" "新闻" "paper" "论文" "public-domain" "公共领域作品" "other" "其他" -}}
+{{- with index $kinds (. | string) }}{{ . }}{{ else }}分享{{ end -}}

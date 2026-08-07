@@ -1,0 +1,10 @@
+[Unit]
+Description=历代纪长文分享站发布器每分钟唤醒（无任务时立即退出）
+
+[Timer]
+OnCalendar=*:0/1
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

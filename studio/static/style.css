@@ -955,3 +955,22 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 .publish-dialog-dl { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.9rem; margin: 0.6rem 0; }
 .publish-dialog-dl dt { color: var(--muted, #77715f); }
 .publish-dialog-dl dd { margin: 0; word-break: break-all; }
+
+/* ---------------- 长文分享 ---------------- */
+.share-group { margin-bottom: 1.4rem; }
+.share-group .group-title { font-size: 1.05rem; margin: 0 0 0.5rem; color: var(--ink-soft); }
+.share-row { border-bottom: 1px solid var(--line); }
+.share-row:last-child { border-bottom: 0; }
+.share-row a { display: grid; gap: 0.15rem; padding: 0.7rem 0.25rem; text-decoration: none; }
+.share-row-title { font-size: 0.98rem; color: var(--ink); }
+.share-row:hover .share-row-title { color: var(--accent); }
+.share-row-meta { font-size: 0.78rem; color: var(--ink-faint); }
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.data-table th, .data-table td { border: 1px solid var(--line); padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; }
+.data-table th { background: var(--paper-muted); font-weight: 600; white-space: nowrap; }
+.data-table code { font-size: 0.78rem; }
+.mono-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; word-break: break-all; }
+.danger-text { color: var(--danger) !important; }
+.radio-inline { display: inline-flex; align-items: center; gap: 0.4rem; margin-right: 1.2rem; }
+.radio-inline input[type="radio"] { width: auto; }

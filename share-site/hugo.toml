@@ -1,0 +1,57 @@
+baseURL = "http://localhost:1314/"
+title = "长文分享"
+locale = "zh-CN"
+defaultContentLanguage = "zh-cn"
+hasCJKLanguage = true
+enableRobotsTXT = true
+timeout = "60s"
+
+# 分享内容根位于公开仓库之外（LIDAIJI_SHARE_CONTENT_ROOT，缺省为
+# 仓库上一级的 lidaiji-share-private）；正文绝不出现在代码仓库中。
+contentDir = "../lidaiji-share-private/items"
+
+[taxonomies]
+  category = "categories"
+
+[outputs]
+  home = ["HTML", "RSS"]
+  taxonomy = ["HTML", "RSS"]
+  term = ["HTML", "RSS"]
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = false
+  [markup.highlight]
+    noClasses = false
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 4
+    ordered = false
+
+[sitemap]
+  changefreq = "weekly"
+  priority = 0.5
+  filename = "sitemap.xml"
+
+[security]
+  enableInlineShortcodes = false
+
+[params]
+  siteName = "长文分享"
+  siteSubtitle = "长文完整阅读，QQ 空间只发摘要与链接"
+  siteDescription = "长文分享站：完整正文长期保存，QQ 空间负责传播、评论与讨论。"
+  footerNote = "正文归原作者所有；本站不设评论，不使用第三方追踪或远程服务。"
+  dateFormat = "2006年1月2日"
+  homeIntro = "这里保存长文章的完整正文。QQ 空间里的每一条分享，点「阅读全文」即可回到这里完整阅读、调整字号与深浅主题，阅读位置会自动记住。"
+
+[navigation]
+  [[navigation.items]]
+    label = "首页"
+    url = "/"
+  [[navigation.items]]
+    label = "分类"
+    url = "/categories/"
+  [[navigation.items]]
+    label = "RSS"
+    url = "/index.xml"

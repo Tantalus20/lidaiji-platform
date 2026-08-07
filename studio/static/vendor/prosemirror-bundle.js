@@ -14408,8 +14408,8 @@ ${inner}
         return "";
     }
   }
-  function serializeMarkdown(jsonDoc) {
-    const parts = ((jsonDoc == null ? void 0 : jsonDoc.content) || []).map(serializeBlock).filter((part) => part !== "");
+  function serializeMarkdown(jsonDoc, options = {}) {
+    const parts = ((jsonDoc == null ? void 0 : jsonDoc.content) || []).map((block) => serializeBlock(block, options)).filter((part) => part !== "");
     return parts.length ? parts.join("\n\n") + "\n" : "";
   }
 
@@ -15068,15 +15068,41 @@ ${inner}
   }
   function createStudioEditor(host, options = {}) {
     const { onUpdate, onSelection } = options;
+    let anchorPolicy = options.anchorPolicy === "share" ? "share" : "work";
     let version = 0;
     let replacing = false;
+    const markdownOf = (doc3) => serializeMarkdown(pmToJson(doc3), { stripPid: anchorPolicy === "share" });
+    const stripPids = (doc3) => ({
+      ...doc3,
+      content: (doc3.content || []).map((block) => {
+        const cleaned = { ...block };
+        if (Object.prototype.hasOwnProperty.call(cleaned, "pid")) {
+          cleaned.pid = null;
+        }
+        if (Array.isArray(cleaned.content)) {
+          cleaned.content = (cleaned.content || []).map((child) => {
+            if (child && Array.isArray(child.content)) {
+              return { ...child, content: stripInlinePids(child.content) };
+            }
+            return child;
+          });
+        }
+        return cleaned;
+      })
+    });
+    const stripInlinePids = (blocks) => (blocks || []).map((child) => {
+      if (child && Array.isArray(child.content)) {
+        return { ...child, content: stripInlinePids(child.content) };
+      }
+      return child;
+    });
     const listenerPlugin = new Plugin({
       view: () => ({
         update: (view2, prevState) => {
           const docChanged = !view2.state.doc.eq(prevState.doc);
           if (docChanged && !replacing) {
             version += 1;
-            if (onUpdate) onUpdate({ version, markdown: serializeMarkdown(pmToJson(view2.state.doc)) });
+            if (onUpdate) onUpdate({ version, markdown: markdownOf(view2.state.doc) });
           }
           if (onSelection) onSelection(selectionInfo(view2.state));
         }
@@ -15099,10 +15125,14 @@ ${inner}
     const editor = {
       view,
       getMarkdown() {
-        return serializeMarkdown(pmToJson(view.state.doc));
+        return markdownOf(view.state.doc);
+      },
+      setAnchorPolicy(policy) {
+        anchorPolicy = policy === "share" ? "share" : "work";
       },
       setMarkdown(markdown) {
-        const doc3 = jsonToPm(parseMarkdown(markdown));
+        const parsed = parseMarkdown(markdown);
+        const doc3 = jsonToPm(anchorPolicy === "share" ? stripPids(parsed) : parsed);
         dispatchReplace(view.state.tr.replaceWith(0, view.state.doc.content.size, doc3.content));
       },
       replaceDocKeepCursor(markdown) {

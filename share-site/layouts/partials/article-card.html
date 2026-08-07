@@ -1,0 +1,16 @@
+<article class="article-card">
+  <p class="card-kicker">{{ partial "kind-label.html" .Params.shareKind }} · {{ partial "rights-label.html" .Params.rightsMode }}</p>
+  <h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2>
+  {{ with .Params.author }}<p class="card-subtitle">作者：{{ . }}</p>{{ end }}
+  {{ $metaOnly := or (eq .Params.rightsMode "excerpt") (eq .Params.rightsMode "link-only") }}
+  {{ $cardText := or .Description .Params.qqSummary }}
+  {{ if and (not $cardText) (not $metaOnly) }}{{ $cardText = .Summary }}{{ end }}
+  <p class="card-summary">{{ $cardText | plainify | truncate 130 }}</p>
+  <p class="card-meta">
+    <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006年1月2日" }}</time>
+    <span>{{ .WordCount }} 字</span>
+    {{ with .GetTerms "categories" }}
+      <span>{{ range $i, $term := . }}{{ if $i }} · {{ end }}<a href="{{ $term.RelPermalink }}">{{ $term.LinkTitle }}</a>{{ end }}</span>
+    {{ end }}
+  </p>
+</article>

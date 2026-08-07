@@ -1,0 +1,43 @@
+{{ define "main" }}
+<section class="home-hero">
+  <div class="home-hero-copy">
+    <h1>{{ .Site.Params.siteName }}</h1>
+    <p class="hero-subtitle">{{ .Site.Params.siteSubtitle }}</p>
+    <p class="hero-intro">{{ .Site.Params.homeIntro }}</p>
+  </div>
+</section>
+
+{{ $pages := where .Site.RegularPages "Draft" false }}
+<section class="home-section">
+  <div class="section-heading">
+    <h2>最新分享</h2>
+    <a href="{{ "/categories/" | relURL }}">按分类浏览</a>
+  </div>
+  {{ if $pages }}
+  <div class="index-list">
+    {{ range $pages.ByDate.Reverse }}
+      {{ partial "article-card.html" . }}
+    {{ end }}
+  </div>
+  {{ else }}
+    <p class="empty-state">还没有公开分享。打开 Author Studio「长文分享」即可发布第一篇。</p>
+  {{ end }}
+</section>
+
+{{ if .Site.Taxonomies.categories }}
+<section class="home-section home-indexes">
+  <div>
+    <h2>分类</h2>
+    <div class="term-cloud">
+      {{ range .Site.Taxonomies.categories.ByCount }}
+        <a href="{{ .Page.RelPermalink }}">{{ .Page.Title }} <small>{{ .Count }}</small></a>
+      {{ end }}
+    </div>
+  </div>
+  <aside class="about-card">
+    <h2>这里是长文的家</h2>
+    <p>QQ 空间里的每条分享都指向这里的完整正文。正文长期保存，可随时回来调整字号、切换深浅主题、从上次读到的地方继续。</p>
+  </aside>
+</section>
+{{ end }}
+{{ end }}

@@ -10,11 +10,12 @@
 <header class="topbar">
   <div class="topbar-main">
     <h1>《历代纪》作者工作台</h1>
-    <p class="subtitle">本地作者工作台 v0.2.6 · 仅在本机运行，不会上传任何文件</p>
+    <p class="subtitle">本地作者工作台 v0.2.7 · 仅在本机运行，不会上传任何文件</p>
     <p id="workspaceTarget" class="workspace-target">正在确认内容仓库……</p>
   </div>
   <nav class="topnav" aria-label="主导航">
     <a href="#/" data-nav="home">文章</a>
+    <a href="#/share" data-nav="share">长文分享</a>
     <a href="#/versions" data-nav="versions">版本</a>
     <a href="#/media" data-nav="media">媒体</a>
     <a href="#/publish" data-nav="publish">发布</a>
@@ -61,6 +62,8 @@
       <button id="editSave" class="primary" type="button">保存草稿</button>
       <button id="editPublishPreview" class="secondary small" type="button">预览发布版本</button>
       <button id="editPublish" class="primary small" type="button">确认发布</button>
+      <button id="shareEditPrepare" class="danger small hidden" type="button">准备发布</button>
+      <button id="shareEditPreview" class="secondary small hidden" type="button">预览网页</button>
       <button id="editHugoPreview" class="secondary small" type="button">Hugo 真实预览</button>
       <button id="editOpenFolder" class="secondary small" type="button">打开目录</button>
     </div>
@@ -177,6 +180,50 @@
         <pre id="editorSource" class="markdown-source"></pre>
       </div>
     </div>
+    <details id="shareFmPanel" class="fm-panel hidden">
+      <summary>分享信息（标题、作者、来源、版权等，点击展开）</summary>
+      <form id="shareFmForm" class="meta-form">
+        <div class="fm-grid">
+          <label>标题 <input name="title" required></label>
+          <label>作者 <input name="author" required></label>
+          <label>来源 <input name="sourceName" placeholder="如：某报 2026 年第 3 期"></label>
+          <label>原文链接 <input name="sourceUrl" type="url" placeholder="https://…"></label>
+          <label>类型
+            <select name="shareKind">
+              <option value="original-writing">我的文章</option>
+              <option value="fiction">小说</option>
+              <option value="news">新闻</option>
+              <option value="paper">论文</option>
+              <option value="public-domain-work">公共领域作品</option>
+              <option value="other">其他</option>
+            </select>
+          </label>
+          <label>版权/发布方式
+            <select name="rightsMode">
+              <option value="original">原创</option>
+              <option value="public-domain">公共领域</option>
+              <option value="licensed">已获授权</option>
+              <option value="cc">CC许可</option>
+              <option value="excerpt">摘录</option>
+              <option value="link-only">仅链接</option>
+            </select>
+          </label>
+          <label>分类 <input name="categories" placeholder="逗号分隔，可留空"></label>
+        </div>
+        <label>介绍（分享站页面顶部显示，可留空）<textarea name="description" rows="2"></textarea></label>
+        <dl class="fm-readonly">
+          <dt>shareId</dt><dd id="shareMetaId">—</dd>
+          <dt>shareRevision</dt><dd id="shareMetaRevision">—</dd>
+          <dt>正文 hash</dt><dd id="shareMetaHash">—</dd>
+          <dt>网页地址</dt><dd id="shareMetaUrl">—</dd>
+        </dl>
+        <p id="shareRightsHint" class="meta-text"></p>
+        <h3 class="section-sub">QQ 空间摘要</h3>
+        <p class="meta-text">这是发送到 QQ 空间的文字：摘要 + 阅读全文链接。字符数实时统计（上限约 2000 字，超出会有警告）。</p>
+        <textarea id="shareQqSummary" rows="6" placeholder="写一段 QQ 空间摘要……"></textarea>
+        <p class="meta-text" id="shareQqChars"></p>
+      </form>
+    </details>
     <details id="fmPanel" class="fm-panel">
       <summary>元数据（标题、日期、分类等，点击展开）</summary>
       <form id="fmForm" class="meta-form">
@@ -578,6 +625,53 @@
       <div id="feedbackQuick" class="panel hidden"></div>
       <div id="feedbackList"></div>
       <div id="feedbackPager" class="feedback-pager"></div>
+    </div>
+  </section>
+
+  <!-- 长文分享首页 -->
+  <section id="view-share" class="view hidden">
+    <div id="shareError" class="error-box hidden"></div>
+    <div class="home-toolbar">
+      <input id="shareFilter" type="search" placeholder="筛选标题或作者……" aria-label="筛选分享">
+      <a class="button primary" href="#/share-edit">新建分享</a>
+      <button id="sharePreviewBtn" class="secondary" type="button">预览网页</button>
+      <span id="sharePreviewStatus" class="preview-status"></span>
+      <span class="spacer"></span>
+      <span id="sharePublishNote" class="meta-text"></span>
+    </div>
+    <div id="shareGroups"></div>
+    <div class="panel">
+      <h2>发布任务</h2>
+      <div id="sharePublications" class="table-wrap"></div>
+    </div>
+  </section>
+
+  <!-- 长文分享发布确认页 -->
+  <section id="view-share-confirm" class="view hidden">
+    <div id="shareConfirmError" class="error-box hidden"></div>
+    <div class="panel">
+      <h2>准备发布</h2>
+      <h3 class="section-sub">网页地址</h3>
+      <p class="mono-text" id="shareConfirmUrl">—</p>
+      <p id="shareConfirmDraftNote" class="meta-text"></p>
+      <h3 class="section-sub">QQ 空间最终文案</h3>
+      <p class="meta-text" id="shareConfirmTextInfo"></p>
+      <textarea id="shareConfirmText" rows="8"></textarea>
+      <h3 class="section-sub">发布时间</h3>
+      <div class="actions">
+        <label class="radio-inline"><input type="radio" name="shareWhen" value="now" checked> 现在发布</label>
+        <label class="radio-inline"><input type="radio" name="shareWhen" value="scheduled"> 定时发布
+          <input type="datetime-local" id="shareWhenAt">
+        </label>
+      </div>
+      <p class="meta-text" id="shareQqEnabledNote"></p>
+      <p class="meta-text">发布后：构建分享站候选 → 验证网页 → 记录发布任务；到期后由发布器自动发 QQ（如果已启用）。网页发布与 QQ 发布是两个阶段，互不阻塞。</p>
+      <div class="actions">
+        <button class="button secondary" id="shareConfirmBack" type="button">返回修改</button>
+        <button id="shareConfirmBtn" class="danger" type="button">确认发布</button>
+        <span id="shareConfirmStatus" class="preview-status"></span>
+      </div>
+      <pre id="shareConfirmLog" class="log-box hidden"></pre>
     </div>
   </section>
 </main>

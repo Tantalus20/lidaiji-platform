@@ -32,6 +32,8 @@ node "$ROOT/tests/check-editor-markdown.mjs"
 node "$ROOT/tests/check-editor-format.mjs"
 node "$ROOT/tests/check-editor-toolbar-state.mjs"
 node "$ROOT/tests/check-save-state.mjs"
+node "$ROOT/tests/check-share-reading.mjs" "$ROOT"
+"$ROOT/tests/check-share-site.sh"
 node "$ROOT/scripts/smoke-studio.mjs" auto --edit "content/works/cloud-post-office/first-letter/index.md"
 npm --prefix "$ROOT/comments-service" run check
 node "$ROOT/tests/comments-performance.mjs"

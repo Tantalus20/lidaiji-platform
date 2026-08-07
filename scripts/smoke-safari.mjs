@@ -4,7 +4,7 @@
  * 若未开启：本脚本如实报告「Safari 自动化不可用」并给出启用步骤，不用 Chrome 结果替代。
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,11 +29,16 @@ const driverPort = 24618;
 /* 1. 启动演示工作台（虚构内容，独立临时工作区） */
 fs.rmSync(path.join(root, ".cache", "studio-demo-workspace"), { recursive: true, force: true });
 const python = path.join(root, ".venv-importer", "bin", "python3");
+/* 演示分享私有根：仓库外临时目录 */
+const shareRoot = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-share-demo-"));
+spawnSync(python, [path.join(root, "scripts", "create-share-demo-content.py"), "--root", shareRoot], {
+  stdio: "ignore",
+});
 const studioProc = spawn(
   python,
   ["-m", "studio", "--project-root", root, "--port", String(studioPort), "--no-browser"],
   {
-    env: { ...process.env, LIDAIJI_WORKSPACE_MODE: "demo" },
+    env: { ...process.env, LIDAIJI_WORKSPACE_MODE: "demo", LIDAIJI_SHARE_CONTENT_ROOT: shareRoot },
     stdio: "ignore",
   },
 );
@@ -238,6 +243,79 @@ try {
   await sleep(2000);
   check("Safari 失败后显示保存失败", ((await saveStatus()) || "").includes("保存失败"), await saveStatus());
   await exec(`window.fetch = window.__origFetch;`);
+
+  /* 长文分享冒烟（v0.1）：列表 → 新建 → 编辑保存（无段评锚点） → 发布确认 */
+  await webdriver("POST", "/url", { url: `${base}/#/share` });
+  await sleep(2500);
+  const shareHome = JSON.parse(
+    (await exec(`JSON.stringify({
+      nav: !!document.querySelector("[data-nav='share']"),
+      groups: document.querySelectorAll("#shareGroups .share-group").length,
+      qqNote: (document.querySelector("#sharePublishNote")||{}).textContent || '',
+    })`)) || "{}",
+  );
+  check("Safari 分享首页导航与分组渲染", shareHome.nav && shareHome.groups >= 1, `groups=${shareHome.groups}`);
+  check("Safari 分享首页显示 QQ 未启用", shareHome.qqNote.includes("未启用"), shareHome.qqNote);
+
+  await webdriver("POST", "/url", { url: `${base}/#/share-edit` });
+  await sleep(3000);
+  const shareEdit = JSON.parse(
+    (await exec(`JSON.stringify({
+      fmVisible: !document.querySelector("#shareFmPanel").classList.contains("hidden"),
+      notesHidden: document.querySelector("#notesPanel").classList.contains("hidden"),
+      prepareVisible: !document.querySelector("#shareEditPrepare").classList.contains("hidden"),
+      saveStatus: (document.querySelector("#editSaveStatus")||{}).textContent || '',
+    })`)) || "{}",
+  );
+  check("Safari 新建分享进入分享编辑模式", shareEdit.fmVisible && shareEdit.notesHidden && shareEdit.prepareVisible, "模式切换失败");
+
+  await exec(`(() => {
+    const f = document.querySelector("#shareFmForm");
+    f.title.value = "Safari 冒烟分享";
+    f.author.value = "冒烟作者";
+    f.title.dispatchEvent(new Event("input"));
+    f.author.dispatchEvent(new Event("input"));
+    document.querySelector("#shareQqSummary").value = "Safari 冒烟 QQ 摘要。";
+    document.querySelector("#shareQqSummary").dispatchEvent(new Event("input"));
+  })()`);
+  await exec(`document.querySelector('#editorHost .ProseMirror').focus()`);
+  /* WebDriver 按键一次一个字符（与既有单字符输入一致） */
+  for (const ch of "Safari分享正文") {
+    await webdriver("POST", "/actions", { actions: [{ type: "key", id: "k3", actions: [ { type: "keyDown", value: ch }, { type: "keyUp", value: ch } ] }] });
+  }
+  await sleep(800);
+  await exec(`document.querySelector('#editSave').click()`);
+  let shareSaved = false;
+  for (let i = 0; i < 20 && !shareSaved; i += 1) {
+    await sleep(500);
+    shareSaved = ((await exec(`(document.querySelector('#editSaveStatus')||{}).textContent || ''`)) || "").includes("已保存");
+  }
+  check("Safari 分享保存成功（无段评锚点）", shareSaved, "未出现已保存");
+  const shareMeta = JSON.parse(
+    (await exec(`JSON.stringify({
+      metaId: (document.querySelector("#shareMetaId")||{}).textContent || '',
+      source: (() => { document.querySelector("#tbSource").click(); return ""; })() ,
+    })`)) || "{}",
+  );
+  await sleep(800);
+  const sourceText = (await exec(`(document.querySelector("#editorSource")||{}).textContent || ''`)) || "";
+  check("Safari 分享保存后 shareId 已生成", /^sh-/.test(shareMeta.metaId), shareMeta.metaId);
+  check("Safari 分享 Markdown 源码无 paragraph-id", !sourceText.includes("paragraph-id"), "源码出现段评锚点");
+  await exec(`document.querySelector("#editorSourceBack").click()`);
+  await sleep(400);
+
+  await exec(`document.querySelector("#shareEditPrepare").click()`);
+  await sleep(2500);
+  const confirmInfo = JSON.parse(
+    (await exec(`JSON.stringify({
+      url: (document.querySelector("#shareConfirmUrl")||{}).textContent || '',
+      note: (document.querySelector("#shareQqEnabledNote")||{}).textContent || '',
+      text: (document.querySelector("#shareConfirmText")||{}).value || '',
+    })`)) || "{}",
+  );
+  check("Safari 发布确认页显示网页地址", /^https?:\/\//.test(confirmInfo.url), confirmInfo.url);
+  check("Safari 发布确认页 QQ 未启用说明", confirmInfo.note.includes("未启用"), confirmInfo.note);
+  check("Safari 发布确认页 QQ 文案含阅读全文", confirmInfo.text.includes("阅读全文"), "缺少阅读全文链接");
 } catch (error) {
   failures += 1;
   console.error(`失败：Safari 冒烟流程异常（${error.message}）`);
