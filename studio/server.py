@@ -670,6 +670,10 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.handle_share_publish_status()
             elif path == "/api/share/preview-status":
                 self.handle_share_preview_status()
+            elif path == "/api/share/images/status":
+                self.handle_share_images_status()
+            elif path == "/api/share/images/file":
+                self.handle_share_images_file()
             elif path in STATIC_FILES:
                 self.serve_static(path)
             else:
@@ -731,6 +735,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             "/api/share/preview": self.handle_share_preview,
             "/api/share/publication": self.handle_share_publication_create,
             "/api/share/publication/cancel": self.handle_share_publication_cancel,
+            "/api/share/images/generate": self.handle_share_images_generate,
         }
         handler = handlers.get(path)
         if handler is None:
@@ -1338,8 +1343,16 @@ class StudioHandler(BaseHTTPRequestHandler):
         path = str(data.get("path") or "")
         final_text = data.get("finalText") if isinstance(data.get("finalText"), str) else ""
         scheduled_at = str(data.get("scheduledAt") or "")
+        mode = str(data.get("mode") or "text-link")
+        artifact_manifest_hash = str(data.get("artifactManifestHash") or "")
         with self._share_service() as service:
-            result = service.create(path, final_text, scheduled_at)
+            result = service.create(
+                path,
+                final_text,
+                scheduled_at,
+                mode=mode,
+                artifact_manifest_hash=artifact_manifest_hash,
+            )
             self.send_json({"ok": True, **result})
 
     def handle_share_publication_cancel(self) -> None:
@@ -1348,6 +1361,104 @@ class StudioHandler(BaseHTTPRequestHandler):
         with self._share_service() as service:
             service.cancel(publication_id)
             self.send_json({"ok": True})
+
+    # -- 长文分享图片卡 API（V0.2） ------------------------------------------
+
+    def _share_manifest_hash(self, share_root, share_id, share_revision):
+        import hashlib as _hashlib
+
+        from share_publisher.artifacts import MANIFEST_NAME, artifact_dir
+
+        target = artifact_dir(share_root, share_id, share_revision) / MANIFEST_NAME
+        if not target.is_file():
+            return ""
+        return _hashlib.sha256(target.read_bytes()).hexdigest()
+
+    def _share_item_meta(self, rel_path: str):
+        item = share_articles.read_share(self.state.project_root, rel_path)
+        return item, share_articles.share_root(self.state.project_root)
+
+    def handle_share_images_status(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        rel_path = (query.get("path") or [""])[0]
+        item, share_root = self._share_item_meta(rel_path)
+        data = item["frontMatter"]
+        share_id = str(data.get("shareId") or "")
+        share_revision = str(data.get("shareRevision") or "")
+        from share_publisher import artifacts
+
+        try:
+            manifest = artifacts.read_manifest(share_root, share_id, share_revision)
+            payload = {
+                "generated": True,
+                "pageCount": manifest.get("pageCount", 0),
+                "stale": artifacts.is_stale(manifest, share_revision),
+                "manifestHash": self._share_manifest_hash(share_root, share_id, share_revision),
+                "files": artifacts.page_names(manifest),
+            }
+        except artifacts.ArtifactError:
+            payload = {"generated": False, "pageCount": 0, "stale": False, "manifestHash": "", "files": []}
+        self.send_json({"ok": True, "images": payload})
+
+    def handle_share_images_generate(self) -> None:
+        import time as _time
+
+        from share_publisher import artifacts
+        from share_publisher.render import RenderError, generate_cards
+
+        data = self.read_json_body(MAX_RENDER_BYTES)
+        rel_path = str(data.get("path") or "")
+        item, share_root = self._share_item_meta(rel_path)
+        fm = item["frontMatter"]
+        share_id = str(fm.get("shareId") or "")
+        share_revision = str(fm.get("shareRevision") or "")
+        if not share_id or not share_revision:
+            raise StudioError("validation-failed", "分享缺少身份信息。")
+        out_dir = artifacts.artifact_dir(share_root, share_id, share_revision)
+        started = _time.monotonic()
+        try:
+            manifest = generate_cards(
+                item["body"],
+                title=str(fm.get("title") or ""),
+                byline=str(fm.get("author") or ""),
+                out_dir=out_dir,
+                test_mode=os.environ.get("SHARE_IMAGE_TEST_MODE") == "1",
+            )
+        except RenderError as error:
+            raise StudioError(error.code, error.message) from error
+        manifest_hash = artifacts.write_manifest(out_dir, manifest)
+        self.send_json({
+            "ok": True,
+            "images": {
+                "generated": True,
+                "pageCount": manifest["pageCount"],
+                "stale": False,
+                "manifestHash": manifest_hash,
+                "files": artifacts.page_names(manifest),
+                "durationSeconds": round(_time.monotonic() - started, 2),
+            },
+        })
+
+    def handle_share_images_file(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        rel_path = (query.get("path") or [""])[0]
+        name = (query.get("name") or [""])[0]
+        item, share_root = self._share_item_meta(rel_path)
+        share_id = str(item["frontMatter"].get("shareId") or "")
+        share_revision = str(item["frontMatter"].get("shareRevision") or "")
+        from share_publisher import artifacts
+
+        try:
+            target = artifacts.safe_resolve(share_root, share_id, share_revision, name)
+            payload = target.read_bytes()
+        except artifacts.ArtifactError as error:
+            raise StudioError(error.code, error.message) from error
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
 
     # -- 系统 API ----------------------------------------------------------
 

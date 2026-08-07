@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 QZONE_COOKIE_DOMAIN = "qzone.qq.com"
 QZONE_PUBLISH_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
+QZONE_UPLOAD_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_pic_upload"
 QZONE_REFERRER = "https://user.qzone.qq.com/{uin}/infocenter"
 HTTP_TIMEOUT = 30.0
 
@@ -120,6 +121,22 @@ class _RealTransport:
                 f"无法连接 NapCat：{redact(error.reason if hasattr(error, 'reason') else error)}。",
             ) from error
         return _parse_json(body, "NapCat")
+
+    def qzone_upload_multipart(self, url: str, multipart: bytes, headers: dict) -> str:
+        request = urllib.request.Request(url, data=multipart, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as error:
+            raise QzoneAdapterError(
+                "qzone-upload-http-error",
+                f"QZone 图片上传接口返回 {error.code}（{redact(error.reason)}）。",
+            ) from error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise QzoneAdapterError(
+                "qzone-ambiguous",
+                "QZone 图片上传连接中断/超时，无法确认是否成功；请勿盲目重发。",
+            ) from error
 
     def qzone_post_form(self, url: str, data: bytes, headers: dict) -> str:
         request = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -255,6 +272,116 @@ class QzoneAdapter:
             post_id=post_id,
             message="已提交，尚未反查确认。" if not post_id else f"已提交，获得说说标识 {post_id}。",
         )
+
+
+    # -- 图片上传与图文发布（V0.2） ------------------------------------------
+
+    def upload_image(self, png_bytes: bytes, cookie: str) -> str:
+        """上传单张 PNG 到 QZone，返回 pic 标识（<albumId>/<lloc>）。
+
+        端点：up.qzone.qq.com/cgi-bin/upload/cgi_pic_upload（公开协议）。
+        """
+        if not png_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+            raise QzoneAdapterError("upload-not-png", "仅允许上传 PNG 图片。")
+        uin = self.config.qq_account
+        skey = self._cookie_field(cookie, "p_skey") or self._cookie_field(cookie, "skey")
+        if not skey:
+            raise QzoneAdapterError("cookie-invalid", "Cookie 缺少 p_skey/skey，可能已过期。")
+        gtk = compute_gtk(skey)
+        boundary = "----lidaiji-share-v02"
+        body = (
+            f"--{boundary}\r\n"
+            "Content-Disposition: form-data; name=\"file\"; filename=\"card.png\"\r\n"
+            "Content-Type: image/png\r\n\r\n"
+        ).encode("utf-8") + png_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+        url = f"{QZONE_UPLOAD_URL}?g_tk={gtk}&uin={uin}"
+        headers = {
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Cookie": cookie,
+            "Origin": "https://user.qzone.qq.com",
+            "Referer": QZONE_REFERRER.format(uin=uin),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        try:
+            response = self._transport.qzone_upload_multipart(url, body, headers)
+        except QzoneAdapterError:
+            raise
+        except Exception as error:
+            raise QzoneAdapterError("qzone-ambiguous", redact(str(error))) from error
+        album_id, lloc = _parse_upload_response(response)
+        if not album_id or not lloc:
+            raise QzoneAdapterError("upload-rejected", f"QZone 图片上传未返回可用标识（{redact(response[:200])}）。")
+        return f"{album_id}/{lloc}"
+
+    def publish_text_with_images(self, text: str, cookie: str, pic_ids: list[str]) -> PublishOutcome:
+        """发布纯文字 + 多张图片的说说。pic_ids 为 upload_image 返回的标识。"""
+        if not pic_ids:
+            return self.publish_text(text, cookie)
+        uin = self.config.qq_account
+        skey = self._cookie_field(cookie, "p_skey") or self._cookie_field(cookie, "skey")
+        if not skey:
+            raise QzoneAdapterError("cookie-invalid", "Cookie 缺少 p_skey/skey，可能已过期。")
+        gtk = compute_gtk(skey)
+        payload = {
+            "syn_tweet_verson": "1",
+            "con": text,
+            "feedversion": "1",
+            "ver": "1",
+            "ugc_right": "1",
+            "to_sign": "0",
+            "hostuin": uin,
+            "code_version": "1",
+            "format": "fs",
+            "qzreferrer": QZONE_REFERRER.format(uin=uin),
+        }
+        for index, pic in enumerate(pic_ids[:9], start=1):
+            payload[f"pic_{index}"] = pic
+        payload["richtype"] = "1"
+        payload["richval"] = pic_ids[0]
+        url = f"{QZONE_PUBLISH_URL}?g_tk={gtk}"
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Cookie": cookie,
+            "Origin": "https://user.qzone.qq.com",
+            "Referer": QZONE_REFERRER.format(uin=uin),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+        try:
+            response = self._transport.qzone_post_form(
+                url, urllib.parse.urlencode(payload).encode("utf-8"), headers
+            )
+        except QzoneAdapterError:
+            raise
+        except Exception as error:
+            raise QzoneAdapterError("qzone-ambiguous", redact(str(error))) from error
+        accepted = '"code":0' in response or '"code": 0' in response
+        if not accepted:
+            raise QzoneAdapterError(
+                "qzone-rejected",
+                f"QZone 拒绝了图文发布请求（{redact(response[:200])}）。",
+            )
+        post_id = _extract_post_id(response)
+        return PublishOutcome(
+            submitted=True,
+            post_id=post_id,
+            message="已提交，尚未反查确认。" if not post_id else f"已提交，获得说说标识 {post_id}。",
+        )
+
+
+def _parse_upload_response(response: str) -> tuple[str, str]:
+    """解析 cgi_pic_upload 响应中的 albumId/lloc（JSON 或 JSONP 包裹）。"""
+    text = response.strip()
+    if text.startswith("_Callback(") and text.endswith(");"):
+        text = text[len("_Callback("):-2]
+    import json as _json
+
+    try:
+        data = _json.loads(text)
+    except ValueError:
+        return "", ""
+    if not isinstance(data, dict) or data.get("ret") != 0:
+        return "", ""
+    return str(data.get("albumId") or ""), str(data.get("lloc") or "")
 
 
 def _extract_post_id(response: str) -> str | None:

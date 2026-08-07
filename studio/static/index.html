@@ -664,6 +664,31 @@
           <input type="datetime-local" id="shareWhenAt">
         </label>
       </div>
+      <h3 class="section-sub">QQ 发布方式</h3>
+      <div class="actions">
+        <label class="radio-inline"><input type="radio" name="shareMode" value="text-link" checked> 摘要 + 链接</label>
+        <label class="radio-inline"><input type="radio" name="shareMode" value="image-excerpt-link"> 图片节选 + 链接</label>
+        <label class="radio-inline"><input type="radio" name="shareMode" value="image-full-link"> 图片全文 + 链接</label>
+      </div>
+      <div id="shareImagePanel" class="hidden">
+        <p class="meta-text" id="shareImageStatus">图片未生成</p>
+        <div class="actions">
+          <button id="shareImageGenerate" class="primary small" type="button">生成图片</button>
+          <button id="shareImagePreview" class="secondary small hidden" type="button">预览图片</button>
+          <button id="shareImageRegenerate" class="secondary small hidden" type="button">重新生成</button>
+          <span id="shareImageStatus2" class="preview-status"></span>
+        </div>
+        <div id="shareImageGrid" class="share-image-grid hidden"></div>
+        <div id="shareImageViewer" class="share-image-viewer hidden">
+          <img id="shareImageViewerImg" alt="图片预览">
+          <div class="actions">
+            <button id="shareImagePrev" class="secondary small" type="button">上一张</button>
+            <span id="shareImagePage" class="meta-text"></span>
+            <button id="shareImageNext" class="secondary small" type="button">下一张</button>
+            <button id="shareImageClose" class="secondary small" type="button">关闭</button>
+          </div>
+        </div>
+      </div>
       <p class="meta-text" id="shareQqEnabledNote"></p>
       <p class="meta-text">发布后：构建分享站候选 → 验证网页 → 记录发布任务；到期后由发布器自动发 QQ（如果已启用）。网页发布与 QQ 发布是两个阶段，互不阻塞。</p>
       <div class="actions">

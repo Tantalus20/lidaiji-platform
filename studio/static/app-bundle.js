@@ -2993,6 +2993,13 @@
     qzoneConfigured: false,
     pendingHash: ""
   };
+  var shareImage = {
+    files: [],
+    index: 0,
+    manifestHash: "",
+    generated: false,
+    stale: false
+  };
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, (ch) => ({
       "&": "&amp;",
@@ -3289,6 +3296,15 @@
       showError($("#shareConfirmError"), "QQ \u7A7A\u95F4\u6700\u7EC8\u6587\u6848\u4E0D\u80FD\u4E3A\u7A7A\u3002");
       return;
     }
+    const mode = document.querySelector('input[name="shareMode"]:checked').value;
+    let artifactManifestHash = "";
+    if (mode === "image-excerpt-link" || mode === "image-full-link") {
+      if (!shareImage.generated || shareImage.stale || !shareImage.manifestHash) {
+        showError($("#shareConfirmError"), "\u56FE\u7247\u6A21\u5F0F\u9700\u8981\u5148\u300C\u751F\u6210\u56FE\u7247\u300D\u4E14\u56FE\u7247\u672A\u8FC7\u671F\u3002");
+        return;
+      }
+      artifactManifestHash = shareImage.manifestHash;
+    }
     const when = document.querySelector('input[name="shareWhen"]:checked').value;
     let scheduledAt = (/* @__PURE__ */ new Date()).toISOString();
     if (when === "scheduled") {
@@ -3306,7 +3322,9 @@
       const payload = await api("/api/share/publication", {
         path: editState.path,
         finalText,
-        scheduledAt
+        scheduledAt,
+        mode,
+        artifactManifestHash
       });
       const log = $("#shareConfirmLog");
       log.textContent = payload.webStage && payload.webStage.message ? `\u7F51\u9875\u9636\u6BB5\uFF1A${payload.webStage.message}` : "";

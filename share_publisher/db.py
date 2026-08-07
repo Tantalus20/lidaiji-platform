@@ -33,6 +33,11 @@ import threading
 import uuid
 from pathlib import Path
 
+MODE_TEXT_LINK = "text-link"
+MODE_IMAGE_EXCERPT = "image-excerpt-link"
+MODE_IMAGE_FULL = "image-full-link"
+MODES = (MODE_TEXT_LINK, MODE_IMAGE_EXCERPT, MODE_IMAGE_FULL)
+
 WEB_PENDING = "pending"
 WEB_BUILDING = "building"
 WEB_VERIFIED = "verified"
@@ -70,7 +75,10 @@ CREATE TABLE IF NOT EXISTS publications (
   error_message TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   confirmed_at TEXT,
-  confirmed_by TEXT
+  confirmed_by TEXT,
+  mode TEXT NOT NULL DEFAULT 'text-link',
+  artifact_manifest_hash TEXT,
+  image_hashes_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_publications_due
   ON publications (qzone_status, scheduled_at);
@@ -188,9 +196,18 @@ class PublisherDB:
             self.conn.executescript(SCHEMA)
             # 轻量列迁移：既有数据库补 confirmed_at/confirmed_by（人工确认审计）
             columns = {row[1] for row in self.conn.execute("PRAGMA table_info(publications)")}
-            for name in ("confirmed_at", "confirmed_by"):
+            for name in ("confirmed_at", "confirmed_by", "mode", "artifact_manifest_hash", "image_hashes_json"):
                 if name not in columns:
-                    self.conn.execute(f"ALTER TABLE publications ADD COLUMN {name} TEXT")
+                    if name == "mode":
+                        self.conn.execute(
+                            "ALTER TABLE publications ADD COLUMN mode TEXT NOT NULL DEFAULT 'text-link'"
+                        )
+                    elif name == "image_hashes_json":
+                        self.conn.execute(
+                            "ALTER TABLE publications ADD COLUMN image_hashes_json TEXT NOT NULL DEFAULT '[]'"
+                        )
+                    else:
+                        self.conn.execute(f"ALTER TABLE publications ADD COLUMN {name} TEXT")
 
     # -- 查询 ------------------------------------------------------------
 
@@ -251,7 +268,12 @@ class PublisherDB:
         scheduled_at: str,
         canonical_url: str = "",
         metadata: dict | None = None,
+        mode: str = MODE_TEXT_LINK,
+        artifact_manifest_hash: str = "",
+        image_hashes: list[str] | None = None,
     ) -> dict:
+        if mode not in MODES:
+            raise PublisherError("validation-failed", f"未知发布方式：{mode}")
         if not share_id or not share_revision or not content_hash:
             raise PublisherError("validation-failed", "创建发布任务缺少分享身份信息。")
         if text_length(final_text) > QQ_TEXT_MAX:
@@ -262,13 +284,19 @@ class PublisherDB:
         publication_id = new_publication_id()
         now = utcnow()
         scheduled_utc = to_utc_iso(scheduled_at)
+        image_hashes = list(image_hashes or [])
+        if mode in (MODE_IMAGE_EXCERPT, MODE_IMAGE_FULL) and not artifact_manifest_hash:
+            raise PublisherError(
+                "validation-failed", "图片发布方式必须携带 artifact manifest 哈希（快照冻结）。"
+            )
         with self._lock():
             with self._transaction():
                 self.conn.execute(
                     "INSERT INTO publications "
                     "(publication_id, share_id, share_revision, content_hash, canonical_url, idempotency_key, "
-                    " scheduled_at, created_at, web_status, qzone_status, final_text, metadata_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " scheduled_at, created_at, web_status, qzone_status, final_text, metadata_json, "
+                    " mode, artifact_manifest_hash, image_hashes_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         publication_id,
                         share_id,
@@ -282,6 +310,9 @@ class PublisherDB:
                         QZ_SCHEDULED,
                         final_text,
                         _json_dumps(metadata or {}),
+                        mode,
+                        artifact_manifest_hash,
+                        _json_dumps(image_hashes),
                     ),
                 )
         return self.get(publication_id)

@@ -33,6 +33,13 @@ sys.path.insert(0, str(ROOT / "importer"))
 from share_publisher import db as pubdb  # noqa: E402
 from share_publisher import qzone as qzone_mod  # noqa: E402
 from share_publisher import web as web_stage  # noqa: E402
+from share_publisher.artifacts import (  # noqa: E402
+    ArtifactError,
+    page_names,
+    read_manifest,
+    safe_resolve,
+    verify_artifact,
+)
 
 
 def _env(key: str, default: str = "") -> str:
@@ -91,7 +98,7 @@ def run_web_stage(project_root: Path, db: pubdb.PublisherDB, share_root: Path, b
             print(f"网页验证失败：{record['publication_id']}（缺少 {slug}/）")
 
 
-def run_qzone_stage(db: pubdb.PublisherDB, base_url: str, adapter_factory=None, readback=None) -> None:
+def run_qzone_stage(db: pubdb.PublisherDB, base_url: str, share_root: Path, adapter_factory=None, readback=None) -> None:
     due = db.list_due()
     if not due:
         return
@@ -117,7 +124,11 @@ def run_qzone_stage(db: pubdb.PublisherDB, base_url: str, adapter_factory=None, 
             continue
         try:
             cookie = adapter.fetch_cookie()
-            outcome = adapter.publish_text(record["final_text"], cookie)
+            if record["mode"] in (pubdb.MODE_IMAGE_EXCERPT, pubdb.MODE_IMAGE_FULL):
+                pic_ids = _upload_publication_images(adapter, cookie, record, share_root)
+                outcome = adapter.publish_text_with_images(record["final_text"], cookie, pic_ids)
+            else:
+                outcome = adapter.publish_text(record["final_text"], cookie)
         except qzone_mod.QzoneAdapterError as error:
             if error.code == "qzone-ambiguous":
                 # 请求可能已到达 QQ：绝不标 failed（否则用户可能误以为没发而重发）。
@@ -144,6 +155,36 @@ def run_qzone_stage(db: pubdb.PublisherDB, base_url: str, adapter_factory=None, 
         db.touch_attempt(record["publication_id"])
 
 
+def _upload_publication_images(adapter, cookie, record, share_root: Path) -> list[str]:
+    """按 publication 快照上传图片（图片节选只取前 N 张）。
+
+    返回 pic_id 列表；上传中途失败抛出 QzoneAdapterError（由调用方标 failed，
+    绝不发布残缺说说）。图片节选数量由 SHARE_IMAGE_EXCERPT_COUNT 决定。
+    """
+    manifest = read_manifest(share_root, record["share_id"], record["share_revision"])
+    if manifest.get("shareRevision") != record["share_revision"]:
+        raise qzone_mod.QzoneAdapterError(
+            "artifact-stale", "图片 artifact 与发布任务快照不一致，请重新生成图片后新建任务。"
+        )
+    errors = verify_artifact(share_root, record["share_id"], record["share_revision"])
+    if errors:
+        raise qzone_mod.QzoneAdapterError("artifact-corrupt", "；".join(errors))
+    names = page_names(manifest)
+    if record["mode"] == pubdb.MODE_IMAGE_EXCERPT:
+        names = names[: _IMAGE_EXCERPT_COUNT()]
+    pic_ids: list[str] = []
+    for name in names:
+        target = safe_resolve(share_root, record["share_id"], record["share_revision"], name)
+        pic_ids.append(adapter.upload_image(target.read_bytes(), cookie))
+    return pic_ids
+
+
+def _IMAGE_EXCERPT_COUNT() -> int:
+    import os
+
+    return int(os.environ.get("SHARE_IMAGE_EXCERPT_COUNT", "6"))
+
+
 def cmd_run_once(project_root: Path) -> int:
     share_root, dist_root, base_url, db_path = resolve_paths(project_root)
     with pubdb.PublisherDB(db_path) as db:
@@ -151,7 +192,7 @@ def cmd_run_once(project_root: Path) -> int:
         for publication_id in recovered:
             print(f"崩溃恢复：{publication_id} 已标记失败（拒绝重复发布）。")
         run_web_stage(project_root, db, share_root, base_url, dist_root)
-        run_qzone_stage(db, base_url)
+        run_qzone_stage(db, base_url, share_root)
     return 0
 
 

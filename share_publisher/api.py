@@ -70,8 +70,17 @@ class SharePublicationService:
 
     # -- 创建 ------------------------------------------------------------
 
-    def create(self, rel_path: str, final_text: str, scheduled_at: str) -> dict:
+    def create(
+        self,
+        rel_path: str,
+        final_text: str,
+        scheduled_at: str,
+        mode: str = pubdb.MODE_TEXT_LINK,
+        artifact_manifest_hash: str = "",
+    ) -> dict:
         from studio import share
+
+        from share_publisher import artifacts
 
         item = share.read_share(self.project_root, rel_path)
         data = item["frontMatter"]
@@ -96,6 +105,30 @@ class SharePublicationService:
             share.save_share(self.project_root, rel_path, fields, item["body"])
 
         url = web_stage.canonical_url(self.base_url, slug)
+        image_hashes: list[str] = []
+        if mode in (pubdb.MODE_IMAGE_EXCERPT, pubdb.MODE_IMAGE_FULL):
+            # 图片模式：冻结 artifact（manifest 哈希 + 逐图哈希），禁止旧 revision 图片
+            share_revision = str(data.get("shareRevision") or "")
+            manifest = artifacts.read_manifest(self.share_root, share_id, share_revision)
+            if artifacts.is_stale(manifest, share_revision):
+                raise SharePublishError(
+                    "artifact-stale",
+                    "图片已过期（正文已修改），请重新生成图片后再发布。",
+                )
+            actual_hash = artifacts.sha256_file(
+                artifacts.artifact_dir(self.share_root, share_id, share_revision) / artifacts.MANIFEST_NAME
+            )
+            if artifact_manifest_hash and actual_hash != artifact_manifest_hash:
+                raise SharePublishError(
+                    "artifact-changed",
+                    "图片 manifest 与预览不一致，请重新生成后再发布。",
+                )
+            errors = artifacts.verify_artifact(self.share_root, share_id, share_revision)
+            if errors:
+                raise SharePublishError("artifact-corrupt", "；".join(errors))
+            for name in artifacts.page_names(manifest):
+                target = artifacts.safe_resolve(self.share_root, share_id, share_revision, name)
+                image_hashes.append(artifacts.sha256_file(target))
         try:
             record = self.db.create(
                 share_id=share_id,
@@ -105,6 +138,9 @@ class SharePublicationService:
                 scheduled_at=scheduled_at,
                 canonical_url=url,
                 metadata={"source": "studio", "slug": slug},
+                mode=mode,
+                artifact_manifest_hash=artifact_manifest_hash,
+                image_hashes=image_hashes,
             )
         except pubdb.PublisherError as error:
             raise SharePublishError(error.code, error.message) from error

@@ -34,6 +34,14 @@ const shareState = {
   pendingHash: "",
 };
 
+const shareImage = {
+  files: [],
+  index: 0,
+  manifestHash: "",
+  generated: false,
+  stale: false,
+};
+
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -370,6 +378,15 @@ $("#shareConfirmBtn").addEventListener("click", async () => {
     showError($("#shareConfirmError"), "QQ 空间最终文案不能为空。");
     return;
   }
+  const mode = document.querySelector('input[name="shareMode"]:checked').value;
+  let artifactManifestHash = "";
+  if (mode === "image-excerpt-link" || mode === "image-full-link") {
+    if (!shareImage.generated || shareImage.stale || !shareImage.manifestHash) {
+      showError($("#shareConfirmError"), "图片模式需要先「生成图片」且图片未过期。");
+      return;
+    }
+    artifactManifestHash = shareImage.manifestHash;
+  }
   const when = document.querySelector('input[name="shareWhen"]:checked').value;
   let scheduledAt = new Date().toISOString();
   if (when === "scheduled") {
@@ -388,6 +405,8 @@ $("#shareConfirmBtn").addEventListener("click", async () => {
       path: editState.path,
       finalText,
       scheduledAt,
+      mode,
+      artifactManifestHash,
     });
     const log = $("#shareConfirmLog");
     log.textContent = payload.webStage && payload.webStage.message

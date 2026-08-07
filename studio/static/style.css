@@ -974,3 +974,10 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 .danger-text { color: var(--danger) !important; }
 .radio-inline { display: inline-flex; align-items: center; gap: 0.4rem; margin-right: 1.2rem; }
 .radio-inline input[type="radio"] { width: auto; }
+
+/* ---------------- 长文分享图片卡（V0.2） ---------------- */
+.share-image-grid { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.8rem; }
+.share-image-grid img { width: 120px; height: 160px; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.share-image-viewer { margin-top: 0.8rem; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised); }
+.share-image-viewer img { display: block; max-width: 100%; max-height: 60vh; margin: 0 auto 0.6rem; }
+.share-image-viewer .actions { justify-content: center; }
