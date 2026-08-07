@@ -101,8 +101,10 @@ const webdriver = async (method, url, body) => {
   });
   return response.json();
 };
+/* Safari 的 execute/sync 需要脚本显式 return 完成值（W3C 实现差异），
+ * 这里统一把表达式包装为 return 表达式。 */
 const exec = (script, args = []) =>
-  webdriver("POST", "/execute/sync", { script, args }).then((r) => r.value);
+  webdriver("POST", "/execute/sync", { script: `return (${script})`, args }).then((r) => r.value);
 
 try {
   /* 打开编辑页 */
@@ -163,12 +165,18 @@ try {
   await exec(`document.querySelector('#tbUndo').click()`);
   await sleep(800);
   const afterUndo = JSON.parse(
-    (await exec(`JSON.stringify({ canRedo: !document.querySelector('#tbRedo').disabled, t: (document.querySelector('#stBlockType')||{}).textContent || '' })`)) || "{}",
+    (await exec(`JSON.stringify({ canRedo: !document.querySelector('#tbRedo').disabled, t: (document.querySelector('#stBlockType')||{}).textContent || '', a: (document.querySelector('#stAlign')||{}).textContent || '' })`)) || "{}",
   );
   check("Safari 撤销后重做可用", afterUndo.canRedo, "redo 未启用");
-  check("Safari 撤销后类型状态刷新", afterUndo.t !== "附记" || afterUndo.t === "诗歌" || afterUndo.t === "正文", afterUndo.t);
+  check("Safari 撤销后类型保持（单次撤销仅回退对齐）", afterUndo.t === "附记" && afterUndo.a === "左对齐", `${afterUndo.t}/${afterUndo.a}`);
+  await exec(`document.querySelector('#tbRedo').click()`);
+  await sleep(800);
+  const afterRedo = JSON.parse(
+    (await exec(`JSON.stringify({ canUndo: !document.querySelector('#tbUndo').disabled, a: (document.querySelector('#stAlign')||{}).textContent || '' })`)) || "{}",
+  );
+  check("Safari 重做恢复对齐", afterRedo.canUndo && afterRedo.a === "右对齐", `${afterRedo.canUndo}/${afterRedo.a}`);
 
-  /* 重新打开：附记块渲染保持 */
+  /* 重新打开：先以恢复后的状态（附记+右对齐）保存 */
   await exec(`document.querySelector('#editSave').click()`);
   await sleep(2500);
   await webdriver("POST", "/url", { url: `${base}/#/` });

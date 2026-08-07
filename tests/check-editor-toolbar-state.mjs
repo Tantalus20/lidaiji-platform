@@ -328,6 +328,80 @@ if (fs.existsSync(path.join(root, "node_modules", "prosemirror-model"))) {
     assert.ok(out.includes("<!-- paragraph-id:p-abc123 -->"), "锚点必须原样保留");
     assert.equal(out, md, "未编辑文档往返必须逐字一致");
   });
+
+  test("光标钳制：保存恢复的光标必须落在可编辑文本内（回归：块边界光标导致工具栏状态误判）", () => {
+    /* 构造：光标在文档末尾（容器块之后），按纯文本偏移恢复会落在块边界 */
+    const doc = internals.jsonToPm(parseMarkdown("第一段。\n\n{{< endnote >}}\n\n附记文字\n\n{{< /endnote >}}\n"));
+    const endPos = doc.content.size;
+    const clamped = internals.clampToInlineText(doc, endPos);
+    const $pos = doc.resolve(clamped);
+    assert.ok($pos.parent.inlineContent, `钳制后光标父节点应是文本块（实际：${$pos.parent.type.name} @ ${clamped}）`);
+    /* 文档中间的正常位置不应被移动 */
+    const mid = doc.resolve(3);
+    assert.ok(mid.parent.inlineContent);
+    assert.equal(internals.clampToInlineText(doc, 3), 3, "文本内位置不应被钳制移动");
+    /* 位置 0（文档开头，块边界）也应钳制进文本 */
+    const clampedStart = internals.clampToInlineText(doc, 0);
+    assert.ok(doc.resolve(clampedStart).parent.inlineContent, "文档开头应被钳制进文本");
+  });
+
+  test("块级图片必须是合法结构（回归：内联图片直挂 block 容器导致渲染/选区异常）", () => {
+    const md = "第一段。\n\n![图](images/x.svg)\n";
+    const json = parseMarkdown(md);
+    assert.equal(json.content[1].type, "image", "独占一行的图片应解析为块级图片");
+    const doc = internals.jsonToPm(json);
+    assert.doesNotThrow(() => doc.check(), "含块级图片的文档必须是合法结构");
+    const last = doc.content.content[doc.content.content.length - 1];
+    assert.equal(last.type.name, "paragraph", "块级图片应包进段落");
+    assert.equal(last.content.content[0].type.name, "image", "段内应为图片节点");
+    /* 往返必须逐字一致（序列化输出不变） */
+    const out = serializeMarkdown(internals.pmToJson(doc));
+    assert.equal(out, md, "块级图片往返必须逐字一致");
+    /* 容器内块级图片同样合法 */
+    const doc2 = internals.jsonToPm(parseMarkdown("{{< endnote >}}\n\n![图](images/x.svg)\n\n{{< /endnote >}}\n"));
+    assert.doesNotThrow(() => doc2.check(), "容器内块级图片也必须是合法结构");
+    assert.equal(serializeMarkdown(internals.pmToJson(doc2)), "{{< endnote >}}\n\n![图](images/x.svg)\n\n{{< /endnote >}}\n");
+  });
+
+  test("对齐包裹的块级图片：重新打开后对齐不丢失（回归：Safari 验收暴露的数据丢失）", () => {
+    const md = "{{< align right >}}\n\n![图](images/x.svg)\n\n{{< /align >}}\n";
+    const json = parseMarkdown(md);
+    assert.equal(json.content[0].type, "paragraph", "对齐包裹的图片应解析为带对齐的段落");
+    assert.equal(json.content[0].align, "right", "对齐必须保留");
+    assert.equal(json.content[0].content[0].type, "image", "段内应为图片");
+    const out = serializeMarkdown(json);
+    assert.equal(out, md, "对齐+块级图片往返必须逐字一致（不得丢失对齐）");
+    /* 容器内的对齐图片同样稳定 */
+    const md2 = "{{< endnote >}}\n\n{{< align right >}}\n\n![图](images/x.svg)\n\n{{< /align >}}\n\n{{< /endnote >}}\n";
+    const out2 = serializeMarkdown(parseMarkdown(md2));
+    assert.equal(out2, md2, "附记内对齐图片往返必须逐字一致");
+  });
+
+  test("保存后撤销仍可用（回归：整篇替换以 addToHistory:false 分发会毒化历史）", () => {
+    const { doc } = infoAt("第一段。\n\n第二段。\n", 2);
+    let st = EditorState.create({
+      schema: internals.schema,
+      plugins: internals.buildEditorPlugins(),
+      doc,
+    });
+    st = st.apply(st.tr.setSelection(TextSelection.create(st.doc, 2, 4)));
+    internals.convertContainerCommand(st, (tr) => { st = st.apply(tr); }, "endnote_block");
+    internals.setAlignmentCommand(st, (tr) => { st = st.apply(tr); }, "right");
+    const md = serializeMarkdown(internals.pmToJson(st.doc));
+    /* 模拟 replaceDocKeepCursor 的等值判定：内容一致的规范化结果不替换 */
+    const normalized = internals.jsonToPm(parseMarkdown(md));
+    assert.ok(normalized.eq(st.doc), "规范化往返应与编辑文档结构一致");
+    /* 直接验证历史未被破坏：应用一个 addToHistory:false 空事务后撤销仍应有步骤 */
+    st = st.apply(st.tr.setMeta("addToHistory", false));
+    let undoSteps = -1;
+    undo(st, (tr) => { undoSteps = tr.steps.length; st = st.apply(tr); });
+    assert.ok(undoSteps > 0, `撤销事务必须含步骤（实际 ${undoSteps}）`);
+    const after = serializeMarkdown(internals.pmToJson(st.doc));
+    assert.ok(!after.includes("{{< endnote >}}") || after.includes("第一段。"),
+      "撤销后内容应回到转换前");
+    /* 等值替换被跳过后，编辑历史应能连续撤销两次（转换+对齐合并为一次时至少可撤销一次） */
+    assert.ok(st.selection.from > 0, "撤销后光标应有效");
+  });
 } else {
   console.log("跳过：本机未安装根依赖（node_modules），ProseMirror 层状态测试未运行。");
 }

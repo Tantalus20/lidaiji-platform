@@ -243,6 +243,10 @@ function parseBlocks(lines, start, end, inContainer = false) {
           if (block.type === "paragraph") {
             block.align = align;
             content.push(block);
+          } else if (block.type === "image") {
+            // 对齐包裹的块级图片：包进带对齐的段落。否则图片块不是段落，
+            // align 会在重新打开时静默丢失（Safari 验收暴露的数据丢失）。
+            content.push({ type: "paragraph", align, content: [block] });
           } else {
             content.push(block);
           }

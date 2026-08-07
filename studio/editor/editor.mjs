@@ -329,7 +329,13 @@ function blockToPm(block) {
       return schema.nodes.table.create(null, rows);
     }
     case "image":
-      return schema.nodes.image.create({ src: block.src ?? "", alt: block.alt ?? "" });
+      /* 块级图片（独占一行的 ![alt](src)）在 Markdown 中是块，但 PM schema 的
+       * image 是内联原子节点——必须包进段落，否则内联节点直挂 block 容器，
+       * 产生非法文档结构（doc.check() 会抛错），导致渲染与选区异常
+       * （Safari 验收暴露：容器内裸图片被选中、工具栏 enabled 误判）。 */
+      return schema.nodes.paragraph.create(null, [
+        schema.nodes.image.create({ src: block.src ?? "", alt: block.alt ?? "" }),
+      ]);
     case "code_block":
       return schema.nodes.code_block.create(
         { info: block.info ?? "" },
@@ -432,6 +438,16 @@ function positionForTextOffset(doc, target) {
     else high = mid;
   }
   return Math.min(low, size);
+}
+
+/* 把光标位置钳制到可编辑文本内：按纯文本偏移恢复的光标可能落在块边界
+ * （例如容器块末尾），此时父节点不是文本块，工具栏 enabled 状态会误判。
+ * TextSelection.near 会找到最近的含文本位置。 */
+function clampToInlineText(doc, pos) {
+  const $pos = doc.resolve(Math.max(0, Math.min(pos, doc.content.size)));
+  if ($pos.parent.inlineContent) return pos;
+  const near = TextSelection.near($pos);
+  return near ? near.$from.pos : pos;
 }
 
 /* 段落块类型转换命令（正文/标题）：
@@ -788,17 +804,26 @@ export function createStudioEditor(host, options = {}) {
     },
 
     replaceDocKeepCursor(markdown) {
+      const doc = jsonToPm(parseMarkdown(markdown));
+      /* 内容与服务器规范化结果一致时跳过整篇替换：
+       * 整篇替换若以 addToHistory:false 分发，prosemirror-history 会把替换 map
+       * 累加进既有历史条目，导致之后的撤销产生 0 步空事务（保存后撤销失效，
+       * Safari 验收暴露）。内容一致时无需替换，撤销历史保持完好。 */
+      if (doc.eq(view.state.doc)) {
+        return;
+      }
       const { from, to } = view.state.selection;
       const anchorOffset = textOffsetAt(view.state.doc, from);
       const headOffset = textOffsetAt(view.state.doc, to);
-      const doc = jsonToPm(parseMarkdown(markdown));
       const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
-      const newFrom = positionForTextOffset(tr.doc, anchorOffset);
-      const newTo = positionForTextOffset(tr.doc, headOffset);
+      const newFrom = clampToInlineText(tr.doc, positionForTextOffset(tr.doc, anchorOffset));
+      const newTo = clampToInlineText(tr.doc, positionForTextOffset(tr.doc, headOffset));
       if (newFrom !== newTo || tr.selection.from !== newFrom) {
         tr.setSelection(TextSelection.create(tr.doc, newFrom, newTo));
       }
-      dispatchReplace(tr);
+      /* 内容确已变化时：替换记入历史（保存形成的可见差异可被撤销），
+       * 保证撤销链不被整篇替换破坏。 */
+      view.dispatch(tr.scrollIntoView());
     },
 
     undo() {
@@ -881,6 +906,7 @@ export const _internals = {
   pmToJson,
   textOffsetAt,
   positionForTextOffset,
+  clampToInlineText,
   editorKeymap,
   buildEditorPlugins,
   schema,

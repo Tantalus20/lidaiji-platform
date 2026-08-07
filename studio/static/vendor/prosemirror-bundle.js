@@ -14137,6 +14137,8 @@ var LidaijiEditor = (() => {
             if (block.type === "paragraph") {
               block.align = align;
               content.push(block);
+            } else if (block.type === "image") {
+              content.push({ type: "paragraph", align, content: [block] });
             } else {
               content.push(block);
             }
@@ -14700,7 +14702,9 @@ ${inner}
         return schema.nodes.table.create(null, rows);
       }
       case "image":
-        return schema.nodes.image.create({ src: (_a = block.src) != null ? _a : "", alt: (_b = block.alt) != null ? _b : "" });
+        return schema.nodes.paragraph.create(null, [
+          schema.nodes.image.create({ src: (_a = block.src) != null ? _a : "", alt: (_b = block.alt) != null ? _b : "" })
+        ]);
       case "code_block":
         return schema.nodes.code_block.create(
           { info: (_c = block.info) != null ? _c : "" },
@@ -14797,6 +14801,12 @@ ${inner}
       else high = mid;
     }
     return Math.min(low, size);
+  }
+  function clampToInlineText(doc3, pos) {
+    const $pos = doc3.resolve(Math.max(0, Math.min(pos, doc3.content.size)));
+    if ($pos.parent.inlineContent) return pos;
+    const near = TextSelection.near($pos);
+    return near ? near.$from.pos : pos;
   }
   function setBlockTypeCommand(nodeType, attrs = null) {
     return (state, dispatch) => {
@@ -15096,17 +15106,20 @@ ${inner}
         dispatchReplace(view.state.tr.replaceWith(0, view.state.doc.content.size, doc3.content));
       },
       replaceDocKeepCursor(markdown) {
+        const doc3 = jsonToPm(parseMarkdown(markdown));
+        if (doc3.eq(view.state.doc)) {
+          return;
+        }
         const { from: from2, to } = view.state.selection;
         const anchorOffset = textOffsetAt(view.state.doc, from2);
         const headOffset = textOffsetAt(view.state.doc, to);
-        const doc3 = jsonToPm(parseMarkdown(markdown));
         const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc3.content);
-        const newFrom = positionForTextOffset(tr.doc, anchorOffset);
-        const newTo = positionForTextOffset(tr.doc, headOffset);
+        const newFrom = clampToInlineText(tr.doc, positionForTextOffset(tr.doc, anchorOffset));
+        const newTo = clampToInlineText(tr.doc, positionForTextOffset(tr.doc, headOffset));
         if (newFrom !== newTo || tr.selection.from !== newFrom) {
           tr.setSelection(TextSelection.create(tr.doc, newFrom, newTo));
         }
-        dispatchReplace(tr);
+        view.dispatch(tr.scrollIntoView());
       },
       undo() {
         undo(view.state, view.dispatch);
@@ -15169,6 +15182,7 @@ ${inner}
     pmToJson,
     textOffsetAt,
     positionForTextOffset,
+    clampToInlineText,
     editorKeymap,
     buildEditorPlugins,
     schema,
