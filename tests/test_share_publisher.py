@@ -326,6 +326,92 @@ class QzoneAdapterTestCase(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "cookie-invalid")
 
 
+class MultiImagePayloadTestCase(unittest.TestCase):
+    """P0 多图协议纠偏：payload 形状回归（对照 MIT 参考 onebot-qzone）。
+
+    - richval 条目数 == 图片数（TAB 分隔）
+    - pic_bo 为 "b1,b2,…\tb1,b2,…" 双段、不含 '&'
+    - pic_template == tpl-{N}-1、richtype=1、subrichtype=1
+    - publish_v6 恰好 1 次
+    - >9 上传前拒绝
+    """
+
+    UPLOAD_OK = {"ret": 0, "data": {"url": "https://up.qzone.qq.com/x?q=1&bo=BO_CLEAN_1&extra=2",
+                                    "albumid": "ALB1", "lloc": "L1", "sloc": "S1",
+                                    "type": "0", "height": 2880, "width": 1080}}
+
+    def _capture(self, count, config=None):
+        import json as _json
+        import urllib.parse as _up
+
+        class Spy:
+            def __init__(self):
+                self.calls = []
+            def napcat_call(self, base, action, params):
+                self.calls.append(("napcat", action))
+                if action == "get_credentials":
+                    return {"status": "ok", "data": {"cookies": "uin=o1; p_skey=abcdef0123456789; skey=abcdef0123456789"}}
+                return {"status": "ok", "data": {"user_id": "1"}}
+            def qzone_upload_multipart(self, url, data, headers):
+                self.calls.append(("upload", ""))
+                return _json.dumps({
+                    "ret": 0,
+                    "data": {"url": "https://up.qzone.qq.com/x?q=1&bo=BO_CLEAN_1&extra=2",
+                             "albumid": "ALB1", "lloc": "L1", "sloc": "S1",
+                             "type": "0", "height": 2880, "width": 1080},
+                })
+            def qzone_post_form(self, url, data, headers):
+                self.calls.append(("publish", data.decode()))
+                return _json.dumps({"code": 0, "t1_tid": "9"})
+
+        spy = Spy()
+        ad = qzone_mod.QzoneAdapter(qzone_mod.QzoneAdapterConfig(
+            napcat_http_url="http://x", qq_account="1", transport=spy, visibility=config or "public"))
+        cookie = ad.fetch_cookie()
+        png = b"\x89PNG\r\n\x1a\n" + b"x"
+        pics = [ad.upload_image(png, cookie) for _ in range(count)]
+        ad.publish_text_with_images("测试", cookie, pics)
+        payload = [d for k, d in spy.calls if k == "publish"][0]
+        params = dict(x.split("=", 1) for x in payload.split("&"))
+        return spy, params
+
+    def _decode(self, params):
+        import urllib.parse as _up
+
+        return {k: _up.unquote_plus(v) for k, v in params.items()}
+
+    def test_payload_shapes_2_6_9(self):
+        for count in (1, 2, 6, 9):
+            spy, params = self._capture(count)
+            p = self._decode(params)
+            uploads = sum(1 for k, _ in spy.calls if k == "upload")
+            publishes = sum(1 for k, _ in spy.calls if k == "publish")
+            self.assertEqual(uploads, count, f"{count}图 upload 数")
+            self.assertEqual(publishes, 1, f"{count}图 publish_v6 必须恰好 1 次")
+            self.assertEqual(p["pic_template"], f"tpl-{count}-1", f"{count}图 pic_template")
+            self.assertEqual(p.get("richtype", ""), "1", f"{count}图 richtype")
+            self.assertEqual(p.get("subrichtype", ""), "1", f"{count}图 subrichtype")
+            rich_items = p["richval"].split("\t")
+            self.assertEqual(len(rich_items), count, f"{count}图 richval 条目数")
+            for item in rich_items:
+                fields = item.split(",")
+                self.assertEqual(len(fields), 10, f"richval 每条 10 字段，实际 {len(fields)}")
+            self.assertEqual(p["pic_bo"].count("\t"), 1, f"{count}图 pic_bo 双段")
+            bo_parts = p["pic_bo"].split("\t")
+            self.assertEqual(bo_parts[0], bo_parts[1], "pic_bo 两段一致")
+            self.assertNotIn("&", bo_parts[0], "pic_bo 不得含 &（bo 截断）")
+            self.assertNotIn("BO_CLEAN_1&extra", bo_parts[0], "bo 提取必须截断在 &")
+
+    def test_visibility_fields(self):
+        for visibility, expected in [("public", {}), ("friends", {"who_can_see": "1"}),
+                                     ("self", {"who_can_see": "2", "secret": "1"})]:
+            _, params = self._capture(2, config=visibility)
+            p = self._decode(params)
+            for key, value in expected.items():
+                self.assertEqual(p.get(key, ""), value, f"{visibility} 应含 {key}={value}")
+            self.assertEqual(p.get("ugc_right", ""), "1", "ugc_right 恒为 1")
+
+
 class RealTransportContractTestCase(unittest.TestCase):
     """真实 transport 的 HTTP 契约回归（本地假服务器捕获原始请求）：
     NapCat v4.18：POST /<action>，body 直接传参（不包 action/params 外层）。"""

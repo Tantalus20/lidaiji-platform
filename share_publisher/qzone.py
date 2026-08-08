@@ -74,7 +74,8 @@ class QzoneAdapterConfig:
     qq_account: str = ""  # 目标 QQ 号（NapCat 登录账号）
     timeout: float = HTTP_TIMEOUT
     access_token: str = ""  # NapCat HTTP API 访问令牌（Authorization: Bearer）
-    ugc_right: str = "1"  # 说说可见性（真机实测）：1=公开 2=仅好友 3=无效 4=仅自己
+    visibility: str = "public"  # 说说可见性（MIT 参考语义）：public/friends/self
+    ugc_right: str = "1"  # 兼容保留（固定 1；可见性由 who_can_see/secret 控制）
     # 注入点：测试用假 transport；缺省为真实 urllib
     transport: object = None
 
@@ -331,22 +332,37 @@ class QzoneAdapter:
             "con": text,
             "feedversion": "1",
             "ver": "1",
-            "ugc_right": self.config.ugc_right,
+            "ugc_right": "1",
             "to_sign": "0",
             "hostuin": uin,
             "code_version": "1",
             "format": "fs",
             "qzreferrer": QZONE_REFERRER.format(uin=uin),
         }
-        payload["richtype"] = "1"
         if pic_ids and isinstance(pic_ids[0], tuple):
-            # 图片发布：pic_bo 逗号拼接、richval Tab 拼接（行为参考公开协议）
+            # 多图结构（MIT 参考 onebot-qzone 真机验证的完整形态）：
+            # pic_template=tpl-{N}-1 · richtype=1 · subrichtype=1 · special_url=''
+            # richval：每图一条 ",albumid,lloc,sloc,type,h,w,,h,w" 以 TAB 分隔
+            # pic_bo：逗号拼接列表，以 TAB 重复一次（"b1,b2	b1,b2"）
+            count = len(pic_ids[:9])
             pic_bos = ",".join(pic[0] for pic in pic_ids[:9])
             richvals = "\t".join(pic[1] for pic in pic_ids[:9])
-            payload["pic_bo"] = pic_bos
+            payload["pic_template"] = f"tpl-{count}-1"
+            payload["richtype"] = "1"
+            payload["subrichtype"] = "1"
+            payload["special_url"] = ""
             payload["richval"] = richvals
+            payload["pic_bo"] = f"{pic_bos}\t{pic_bos}"
         else:
+            payload["richtype"] = "1"
             payload["richval"] = str(pic_ids[0])
+        # 可见性（MIT 参考语义）：who_can_see 0=公开 1=仅好友 2=仅自己(+secret=1)
+        visibility = self.config.visibility
+        if visibility == "friends":
+            payload["who_can_see"] = "1"
+        elif visibility == "self":
+            payload["who_can_see"] = "2"
+            payload["secret"] = "1"
         url = f"{QZONE_PUBLISH_URL}?g_tk={gtk}"
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -397,14 +413,21 @@ def _parse_upload_response(response: str) -> tuple[str, str]:
     payload = data.get("data")
     if not isinstance(payload, dict):
         return "", ""
-    url = str(payload.get("url") or "")
-    if "&bo=" not in url:
+    pre = str(payload.get("pre") or payload.get("url") or "")
+    marker = "bo="
+    start = pre.find(marker)
+    if start < 0:
         return "", ""
-    picbo = url.split("&bo=", 1)[1]
+    start += len(marker)
+    end = pre.find("&", start)
+    picbo = pre[start:end] if end != -1 else pre[start:]
+    if not picbo:
+        return "", ""
     try:
         richval = ",{},{},{},{},{},{},,{},{}".format(
-            payload["albumid"], payload["lloc"], payload["sloc"], payload["type"],
-            payload["height"], payload["width"], payload["height"], payload["width"],
+            payload["albumid"], payload["lloc"], payload.get("sloc") or payload["lloc"],
+            payload.get("type") or "0", payload["height"], payload["width"],
+            payload["height"], payload["width"],
         )
     except (KeyError, TypeError):
         return "", ""
