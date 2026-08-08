@@ -1422,6 +1422,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 title=str(fm.get("title") or ""),
                 byline=str(fm.get("author") or ""),
                 out_dir=out_dir,
+                share_id=share_id,
+                share_revision=share_revision,
                 test_mode=os.environ.get("SHARE_IMAGE_TEST_MODE") == "1",
             )
         except RenderError as error:

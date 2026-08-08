@@ -58,13 +58,16 @@ def generate_cards(
     title: str,
     byline: str,
     out_dir: Path,
+    share_id: str = "",
+    share_revision: str = "",
     site_domain: str = "read.历代纪.cn",
     test_mode: bool = False,
     max_pages: int = cards.MAX_PAGES,
 ) -> dict:
     """生成图片卡到 out_dir；返回 manifest dict。
 
-    out_dir 由调用方按 artifact 路径构造（shareId/shareRevision/版本）。
+    out_dir 由调用方按 artifact 路径构造（shareId/shareRevision/版本）；
+    manifest 记录 shareId/shareRevision 用于 stale 判定与可重现身份。
     """
     blocks = parse_blocks(markdown_body)
     if not blocks:
@@ -152,6 +155,8 @@ def generate_cards(
         "rendererVersion": cards.RENDERER_VERSION,
         "playwrightVersion": PLAYWRIGHT_VERSION,
         "chromiumBuild": CHROMIUM_BUILD,
+        "shareId": share_id,
+        "shareRevision": share_revision,
         "width": cards.CARD_WIDTH,
         "height": cards.CARD_HEIGHT,
         "deviceScale": cards.DEVICE_SCALE,

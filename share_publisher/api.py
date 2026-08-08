@@ -27,6 +27,13 @@ class SharePublishError(Exception):
         self.message = message
 
 
+def _image_max_count() -> int:
+    """QQ 单条说说图片上限（真机实测：>9 会被拆成多条单图说说）→ 硬上限 9。"""
+    import os
+
+    return min(9, max(1, int(os.environ.get("SHARE_IMAGE_MAX_COUNT", "9"))))
+
+
 class SharePublicationService:
     def __init__(self, project_root: Path):
         from studio import share
@@ -126,6 +133,14 @@ class SharePublicationService:
             errors = artifacts.verify_artifact(self.share_root, share_id, share_revision)
             if errors:
                 raise SharePublishError("artifact-corrupt", "；".join(errors))
+            if mode == pubdb.MODE_IMAGE_FULL:
+                limit = _image_max_count()
+                if manifest.get("pageCount", 0) > limit:
+                    raise SharePublishError(
+                        "too-many-images",
+                        f"图片全文需要 {manifest['pageCount']} 张，超过 QQ 单条安全上限 {limit} 张；"
+                        f"请改用图片节选或摘要+链接。",
+                    )
             for name in artifacts.page_names(manifest):
                 target = artifacts.safe_resolve(self.share_root, share_id, share_revision, name)
                 image_hashes.append(artifacts.sha256_file(target))

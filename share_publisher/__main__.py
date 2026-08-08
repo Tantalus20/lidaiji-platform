@@ -64,6 +64,7 @@ def build_adapter() -> qzone_mod.QzoneAdapter:
         napcat_http_url=_env("NAPCAT_HTTP_URL"),
         qq_account=_env("NAPCAT_QQ"),
         access_token=_env("NAPCAT_ACCESS_TOKEN"),
+        ugc_right=_env("SHARE_QZONE_UGC_RIGHT", "1"),  # 测试环境建议 4（仅自己可见）
     )
     return qzone_mod.QzoneAdapter(config)
 
@@ -172,6 +173,7 @@ def _upload_publication_images(adapter, cookie, record, share_root: Path) -> lis
     names = page_names(manifest)
     if record["mode"] == pubdb.MODE_IMAGE_EXCERPT:
         names = names[: _IMAGE_EXCERPT_COUNT()]
+    names = names[: _IMAGE_MAX_COUNT()]
     pic_ids: list[str] = []
     for name in names:
         target = safe_resolve(share_root, record["share_id"], record["share_revision"], name)
@@ -183,6 +185,13 @@ def _IMAGE_EXCERPT_COUNT() -> int:
     import os
 
     return int(os.environ.get("SHARE_IMAGE_EXCERPT_COUNT", "6"))
+
+
+def _IMAGE_MAX_COUNT() -> int:
+    """QQ 单条说说图片上限（真机实测 9）；任何路径都不得高于 9。"""
+    import os
+
+    return min(9, max(1, int(os.environ.get("SHARE_IMAGE_MAX_COUNT", "9"))))
 
 
 def cmd_run_once(project_root: Path) -> int:

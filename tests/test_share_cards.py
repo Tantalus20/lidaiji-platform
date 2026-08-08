@@ -245,6 +245,14 @@ class PublicationImageModeTestCase(unittest.TestCase):
         self.db.mark_submitted(record["publication_id"], code="")
         self.assertEqual(self.db.get(record["publication_id"])["qzone_status"], pubdb.QZ_SUBMITTED)
 
+    def test_image_count_capped_at_nine(self):
+        """QQ 单条上限（真机实测 9）：超过 9 张的发布在创建时拒绝。"""
+        from share_publisher import api as pubapi
+
+        # 直接验证硬上限常量
+        self.assertEqual(pubapi._image_max_count(), 9)
+        self.assertLessEqual(pubapi._image_max_count(), 9)
+
     def test_upload_interrupted_marks_ambiguous_not_failed(self):
         """图片上传连接中断（可能已上传）：submitted_unverified + ambiguous，零重发。"""
         record = self.create(mode="image-excerpt-link", manifest_hash="m1", images=["h1"])

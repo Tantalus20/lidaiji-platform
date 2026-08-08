@@ -425,7 +425,7 @@ class DryRunTestCase(unittest.TestCase):
         self.db.mark_web_verified(record["publication_id"], "https://read.example.com/some-post/")
         os.environ.pop("QZONE_PUBLISH_ENABLED", None)
         self.assertFalse(qzone_mod.adapter_enabled())
-        cli.run_qzone_stage(self.db, "https://read.example.com/")
+        cli.run_qzone_stage(self.db, "https://read.example.com/", Path(self.temp.name) / "share-private")
         state = self.db.get(record["publication_id"])
         self.assertEqual(state["qzone_status"], pubdb.QZ_SKIPPED)
         self.assertNotEqual(state["error_code"], "qzone-disabled") if False else None
@@ -464,9 +464,9 @@ class DryRunTestCase(unittest.TestCase):
 
         os.environ["QZONE_PUBLISH_ENABLED"] = "true"
         try:
-            cli.run_qzone_stage(self.db, "https://read.example.com/", adapter_factory=counting_factory)
+            cli.run_qzone_stage(self.db, "https://read.example.com/", Path(self.temp.name) / "share-private", adapter_factory=counting_factory)
             # 第二次执行：任务已 failed，不再有任何发布尝试
-            cli.run_qzone_stage(self.db, "https://read.example.com/", adapter_factory=counting_factory)
+            cli.run_qzone_stage(self.db, "https://read.example.com/", Path(self.temp.name) / "share-private", adapter_factory=counting_factory)
         finally:
             os.environ.pop("QZONE_PUBLISH_ENABLED", None)
         state = self.db.get(record["publication_id"])
@@ -510,8 +510,8 @@ class DryRunTestCase(unittest.TestCase):
 
         os.environ["QZONE_PUBLISH_ENABLED"] = "true"
         try:
-            cli.run_qzone_stage(self.db, "https://read.example.com/", adapter_factory=factory)
-            cli.run_qzone_stage(self.db, "https://read.example.com/", adapter_factory=factory)
+            cli.run_qzone_stage(self.db, "https://read.example.com/", Path(self.temp.name) / "share-private", adapter_factory=factory)
+            cli.run_qzone_stage(self.db, "https://read.example.com/", Path(self.temp.name) / "share-private", adapter_factory=factory)
         finally:
             os.environ.pop("QZONE_PUBLISH_ENABLED", None)
         state = self.db.get(record["publication_id"])
@@ -535,6 +535,7 @@ class DryRunTestCase(unittest.TestCase):
             cli.run_qzone_stage(
                 self.db,
                 "https://read.example.com/",
+                Path(self.temp.name) / "share-private",
                 adapter_factory=lambda: qzone_mod.QzoneAdapter(
                     qzone_mod.QzoneAdapterConfig(
                         napcat_http_url="http://127.0.0.1:1/",
@@ -569,6 +570,7 @@ class DryRunTestCase(unittest.TestCase):
             cli.run_qzone_stage(
                 self.db,
                 "https://read.example.com/",
+                Path(self.temp.name) / "share-private",
                 adapter_factory=lambda: qzone_mod.QzoneAdapter(
                     qzone_mod.QzoneAdapterConfig(
                         napcat_http_url="http://127.0.0.1:1/",

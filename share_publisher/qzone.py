@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 QZONE_COOKIE_DOMAIN = "qzone.qq.com"
 QZONE_PUBLISH_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
-QZONE_UPLOAD_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_pic_upload"
+QZONE_UPLOAD_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
 QZONE_REFERRER = "https://user.qzone.qq.com/{uin}/infocenter"
 HTTP_TIMEOUT = 30.0
 
@@ -74,6 +74,7 @@ class QzoneAdapterConfig:
     qq_account: str = ""  # 目标 QQ 号（NapCat 登录账号）
     timeout: float = HTTP_TIMEOUT
     access_token: str = ""  # NapCat HTTP API 访问令牌（Authorization: Bearer）
+    ugc_right: str = "1"  # 说说可见性（真机实测）：1=公开 2=仅好友 3=无效 4=仅自己
     # 注入点：测试用假 transport；缺省为真实 urllib
     transport: object = None
 
@@ -232,7 +233,7 @@ class QzoneAdapter:
             "con": text,
             "feedversion": "1",
             "ver": "1",
-            "ugc_right": "1",
+            "ugc_right": self.config.ugc_right,
             "to_sign": "0",
             "hostuin": uin,
             "code_version": "1",
@@ -276,42 +277,45 @@ class QzoneAdapter:
 
     # -- 图片上传与图文发布（V0.2） ------------------------------------------
 
-    def upload_image(self, png_bytes: bytes, cookie: str) -> str:
-        """上传单张 PNG 到 QZone，返回 pic 标识（<albumId>/<lloc>）。
-
-        端点：up.qzone.qq.com/cgi-bin/upload/cgi_pic_upload（公开协议）。
-        """
+    def upload_image(self, png_bytes: bytes, cookie: str) -> tuple[str, str]:
+        """上传单张 PNG 到 QZone（base64 表单，行为参考公开协议），返回 (picbo, richval)。"""
         if not png_bytes[:8] == b"\x89PNG\r\n\x1a\n":
             raise QzoneAdapterError("upload-not-png", "仅允许上传 PNG 图片。")
         uin = self.config.qq_account
-        skey = self._cookie_field(cookie, "p_skey") or self._cookie_field(cookie, "skey")
+        p_skey = self._cookie_field(cookie, "p_skey")
+        skey = self._cookie_field(cookie, "skey") or p_skey
         if not skey:
             raise QzoneAdapterError("cookie-invalid", "Cookie 缺少 p_skey/skey，可能已过期。")
-        gtk = compute_gtk(skey)
-        boundary = "----lidaiji-share-v02"
-        body = (
-            f"--{boundary}\r\n"
-            "Content-Disposition: form-data; name=\"file\"; filename=\"card.png\"\r\n"
-            "Content-Type: image/png\r\n\r\n"
-        ).encode("utf-8") + png_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
-        url = f"{QZONE_UPLOAD_URL}?g_tk={gtk}&uin={uin}"
+        import base64
+
+        form = urllib.parse.urlencode({
+            "filename": "filename",
+            "uploadtype": "1",
+            "albumtype": "7",
+            "skey": skey,
+            "uin": uin,
+            "p_skey": p_skey,
+            "output_type": "json",
+            "base64": "1",
+            "picfile": base64.b64encode(png_bytes).decode("ascii"),
+        }).encode("utf-8")
         headers = {
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Type": "application/x-www-form-urlencoded",
             "Cookie": cookie,
             "Origin": "https://user.qzone.qq.com",
-            "Referer": QZONE_REFERRER.format(uin=uin),
+            "Referer": f"https://user.qzone.qq.com/{uin}",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
         try:
-            response = self._transport.qzone_upload_multipart(url, body, headers)
+            response = self._transport.qzone_upload_multipart(QZONE_UPLOAD_URL, form, headers)
         except QzoneAdapterError:
             raise
         except Exception as error:
             raise QzoneAdapterError("qzone-ambiguous", redact(str(error))) from error
-        album_id, lloc = _parse_upload_response(response)
-        if not album_id or not lloc:
+        picbo, richval = _parse_upload_response(response)
+        if not picbo or not richval:
             raise QzoneAdapterError("upload-rejected", f"QZone 图片上传未返回可用标识（{redact(response[:200])}）。")
-        return f"{album_id}/{lloc}"
+        return picbo, richval
 
     def publish_text_with_images(self, text: str, cookie: str, pic_ids: list[str]) -> PublishOutcome:
         """发布纯文字 + 多张图片的说说。pic_ids 为 upload_image 返回的标识。"""
@@ -327,17 +331,22 @@ class QzoneAdapter:
             "con": text,
             "feedversion": "1",
             "ver": "1",
-            "ugc_right": "1",
+            "ugc_right": self.config.ugc_right,
             "to_sign": "0",
             "hostuin": uin,
             "code_version": "1",
             "format": "fs",
             "qzreferrer": QZONE_REFERRER.format(uin=uin),
         }
-        for index, pic in enumerate(pic_ids[:9], start=1):
-            payload[f"pic_{index}"] = pic
         payload["richtype"] = "1"
-        payload["richval"] = pic_ids[0]
+        if pic_ids and isinstance(pic_ids[0], tuple):
+            # 图片发布：pic_bo 逗号拼接、richval Tab 拼接（行为参考公开协议）
+            pic_bos = ",".join(pic[0] for pic in pic_ids[:9])
+            richvals = "\t".join(pic[1] for pic in pic_ids[:9])
+            payload["pic_bo"] = pic_bos
+            payload["richval"] = richvals
+        else:
+            payload["richval"] = str(pic_ids[0])
         url = f"{QZONE_PUBLISH_URL}?g_tk={gtk}"
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -369,7 +378,11 @@ class QzoneAdapter:
 
 
 def _parse_upload_response(response: str) -> tuple[str, str]:
-    """解析 cgi_pic_upload 响应中的 albumId/lloc（JSON 或 JSONP 包裹）。"""
+    """解析图片上传响应 → (picbo, richval)。
+
+    richval 形如 ",<albumid>,<lloc>,<sloc>,<type>,<height>,<width>,,<height>,<width>"
+    （行为参考公开协议；字段缺失时返回空元组由调用方拒绝）。
+    """
     text = response.strip()
     if text.startswith("_Callback(") and text.endswith(");"):
         text = text[len("_Callback("):-2]
@@ -381,7 +394,21 @@ def _parse_upload_response(response: str) -> tuple[str, str]:
         return "", ""
     if not isinstance(data, dict) or data.get("ret") != 0:
         return "", ""
-    return str(data.get("albumId") or ""), str(data.get("lloc") or "")
+    payload = data.get("data")
+    if not isinstance(payload, dict):
+        return "", ""
+    url = str(payload.get("url") or "")
+    if "&bo=" not in url:
+        return "", ""
+    picbo = url.split("&bo=", 1)[1]
+    try:
+        richval = ",{},{},{},{},{},{},,{},{}".format(
+            payload["albumid"], payload["lloc"], payload["sloc"], payload["type"],
+            payload["height"], payload["width"], payload["height"], payload["width"],
+        )
+    except (KeyError, TypeError):
+        return "", ""
+    return picbo, richval
 
 
 def _extract_post_id(response: str) -> str | None:

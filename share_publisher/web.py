@@ -77,7 +77,11 @@ def build_share_site(project_root: Path, share_root: Path, base_url: str, out_ro
 
 
 def _latest_candidate(out_root: Path) -> str:
-    candidates = sorted((out_root / "share-candidates").glob("*"))
+    """按 mtime 取最新候选（mktemp 后缀字典序 ≠ 创建顺序）。"""
+    candidates = sorted(
+        (out_root / "share-candidates").glob("*"),
+        key=lambda p: p.stat().st_mtime if p.is_dir() else 0.0,
+    )
     return str(candidates[-1]) if candidates else ""
 
 
