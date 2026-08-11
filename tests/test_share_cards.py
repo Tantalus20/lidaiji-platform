@@ -473,6 +473,54 @@ class LongCardsE2ETestCase(unittest.TestCase):
         finally:
             os.environ.pop("LIDAIJI_SHARE_CONTENT_ROOT", None)
 
+    def test_upload_uses_long_artifact_for_long_mode(self):
+        # 回归：long-cards 模式的上传循环必须读取长图目录的图片（LQ01 真机轮：
+        # 校验走了长图，上传却读了卡片目录，结果发出去的是短图）。
+        from share_publisher import longimage
+        from share_publisher.render import generate_long_cards
+        from share_publisher import __main__ as pubmain
+
+        self._build_cards(10)
+        generate_long_cards(
+            self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
+            constraints=longimage.LongImageConstraints(),
+        )
+        long_bytes = (self.long_dir / "01.png").read_bytes()
+        card_bytes = (self.cards_dir / "01.png").read_bytes()
+        self.assertNotEqual(long_bytes, card_bytes, "长图与卡片字节必须不同（否则本测试无意义）")
+
+        uploaded: list[bytes] = []
+        counter = {"n": 0}
+
+        class FakeAdapter:
+            def upload_image(self, png_bytes, cookie):
+                uploaded.append(png_bytes)
+                n = counter["n"]
+                counter["n"] += 1
+                return (f"picbo{n}", f"richval{n}")
+
+        class FakeRecord(dict):
+            pass
+
+        record = FakeRecord(
+            share_id=self.share_id,
+            share_revision=self.rev,
+            mode="image-full-link",
+            metadata_json=json.dumps({
+                "artifactMode": "long-cards",
+                "imageNames": [f"{i:02d}.png" for i in range(1, 6)],
+            }),
+        )
+        names = pubmain._verify_long_snapshot(self.share_root, record)
+        self.assertEqual(names, [f"{i:02d}.png" for i in range(1, 6)])
+        pic_ids = pubmain._upload_publication_images(FakeAdapter(), "cookie", record, self.share_root)
+        self.assertEqual(len(uploaded), 5)
+        for i, blob in enumerate(uploaded):
+            self.assertEqual(
+                blob, (self.long_dir / f"{i + 1:02d}.png").read_bytes(), f"第 {i + 1} 张必须来自长图目录"
+            )
+            self.assertNotEqual(blob, card_bytes)
+
     def test_small_pages_no_long_needed(self):
         # 1-9 页：cards 即可，create 不会要求长图
         self._build_cards(6)

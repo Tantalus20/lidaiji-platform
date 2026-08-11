@@ -188,8 +188,15 @@ def _upload_publication_images(adapter, cookie, record, share_root: Path) -> lis
         )
     pic_ids: list[str] = []
     for name in names:
-        target = safe_resolve(share_root, record["share_id"], record["share_revision"], name)
+        target = safe_resolve(
+            share_root,
+            record["share_id"],
+            record["share_revision"],
+            name,
+            long=(artifact_mode == "long-cards"),
+        )
         pic_ids.append(adapter.upload_image(target.read_bytes(), cookie))
+        print(f"上传图片: {name}（{target.stat().st_size} 字节，来自 {'长图' if artifact_mode == 'long-cards' else '卡片'} artifact）")
     return pic_ids
 
 

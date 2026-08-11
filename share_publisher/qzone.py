@@ -389,7 +389,11 @@ class QzoneAdapter:
         return PublishOutcome(
             submitted=True,
             post_id=post_id,
-            message="已提交，尚未反查确认。" if not post_id else f"已提交，获得说说标识 {post_id}。",
+            message=(
+                f"已提交，获得说说标识 {post_id}。"
+                if post_id
+                else f"已提交，尚未获得说说标识；响应摘要：{redact(response[:160])}。"
+            ),
         )
 
 
