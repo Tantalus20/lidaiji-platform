@@ -343,5 +343,116 @@ class RealRenderTestCase(unittest.TestCase):
         self.assertEqual([f["name"] for f in manifest["files"]], [f["name"] for f in manifest2["files"]])
 
 
+class LongCardsE2ETestCase(unittest.TestCase):
+    """V0.3 长图端到端（本地，零真实网络）：cards → long → 快照 → 发布完整性。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="share-long-e2e-")
+        self.root = Path(self.temp.name)
+        self.share_root = self.root / "share"
+        self.share_id = "sh-20260810-000001"
+        self.rev = "sh-20260810-000001@abcdef123456"
+        self.cards_dir = artifacts.artifact_dir(self.share_root, self.share_id, self.rev)
+        self.long_dir = artifacts.long_artifact_dir(self.share_root, self.share_id, self.rev)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def _build_cards(self, pages=10):
+        """生成 pages 张 1080×1440 卡片（用 PIL 直绘，不用 Playwright，快且确定）。"""
+        from PIL import Image
+
+        self.cards_dir.mkdir(parents=True, exist_ok=True)
+        files = []
+        for i in range(1, pages + 1):
+            img = Image.new("RGB", (1080, 1440), (240, 240, 230))
+            name = f"{i:02d}.png"
+            img.save(self.cards_dir / name, format="PNG")
+            files.append({"name": name, "size": 0, "sha256": artifacts.sha256_file(self.cards_dir / name)})
+        manifest = {
+            "templateVersion": "qzone-card-v1",
+            "rendererVersion": "share-card-renderer-1",
+            "shareId": self.share_id,
+            "shareRevision": self.rev,
+            "pageCount": pages,
+            "files": files,
+        }
+        return artifacts.write_manifest(self.cards_dir, manifest)
+
+    def test_generate_long_and_freeze(self):
+        cards_hash = self._build_cards(10)
+        from share_publisher import longimage
+        from share_publisher.render import generate_long_cards
+
+        long_manifest = generate_long_cards(
+            self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
+            constraints=longimage.LongImageConstraints(),
+        )
+        self.assertEqual(long_manifest["imageCount"], 5)
+        self.assertEqual(long_manifest["groupSize"], 2)
+        self.assertEqual(long_manifest["sourceArtifactHash"], cards_hash)
+        self.assertEqual(len(long_manifest["publishImages"]), 5)
+        self.assertEqual(long_manifest["publishImages"][0]["pages"], [1, 2])
+        # 每张 SHA 可复验
+        for img in long_manifest["publishImages"]:
+            self.assertEqual(
+                artifacts.sha256_file(self.long_dir / f"{img['index']:02d}.png"), img["sha256"]
+            )
+        # stale：cards 变化 → long stale
+        self._build_cards(10)  # 重新生成同内容 cards（hash 相同）
+        cards_hash2 = artifacts.sha256_file(self.cards_dir / artifacts.MANIFEST_NAME)
+        self.assertEqual(cards_hash, cards_hash2, "同内容 cards 哈希稳定")
+        # 重建不同页数（manifest 变化）→ long stale；同页数重建 → 不 stale
+        self._build_cards(12)
+        cards_hash4 = artifacts.sha256_file(self.cards_dir / artifacts.MANIFEST_NAME)
+        self.assertTrue(artifacts.long_stale(long_manifest, self.rev, cards_hash4))
+        self.assertFalse(artifacts.long_stale(long_manifest, self.rev, cards_hash))
+
+    def test_tamper_rejected(self):
+        self._build_cards(10)
+        from share_publisher import longimage
+        from share_publisher.render import generate_long_cards
+
+        generate_long_cards(self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
+                            constraints=longimage.LongImageConstraints())
+        # 篡改一张长图
+        (self.long_dir / "01.png").write_bytes(b"tampered")
+        with self.assertRaises(SharePublishError) as ctx:
+            from share_publisher.api import _read_long_for_publish
+
+            _read_long_for_publish(self.share_root, self.share_id, self.rev)
+        self.assertEqual(ctx.exception.code, "PUBLICATION_SNAPSHOT_TAMPERED")
+
+    def test_small_pages_no_long_needed(self):
+        # 1-9 页：cards 即可，create 不会要求长图
+        self._build_cards(6)
+        item_dir = self.share_root / "items" / self.share_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        from studio import share as share_mod
+
+        (item_dir / "index.md").write_text(share_mod.render_source(
+            {"title": "t", "author": "a", "date": "2026-08-10", "slug": "long-test",
+             "draft": False, "shareKind": "other", "rightsMode": "original",
+             "shareId": self.share_id, "shareRevision": self.rev},
+            "正文。\n",
+        ), encoding="utf-8")
+        os.environ["LIDAIJI_SHARE_CONTENT_ROOT"] = str(self.share_root)
+        try:
+            from share_publisher.api import SharePublicationService
+            from share_publisher import db as pubdb
+
+            with SharePublicationService(Path("/Users/haminster/Projects/lidaiji-split/lidaiji-platform")) as svc:
+                r = svc.create(
+                    "items/sh-20260810-000001/index.md", "测试", pubdb.to_utc_iso(pubdb.utcnow()),
+                    mode=pubdb.MODE_IMAGE_FULL, artifact_manifest_hash="",
+                )
+                self.assertEqual(r["publication"]["mode"], pubdb.MODE_IMAGE_FULL)
+                self.assertEqual(len(json.loads(r["publication"]["image_hashes_json"])), 6)
+        finally:
+            os.environ.pop("LIDAIJI_SHARE_CONTENT_ROOT", None)
+
+
+from share_publisher.api import SharePublishError  # noqa: E402
+
 if __name__ == "__main__":
     unittest.main()

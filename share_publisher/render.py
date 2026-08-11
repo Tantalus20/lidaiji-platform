@@ -170,6 +170,59 @@ def generate_cards(
     return manifest
 
 
+def generate_long_cards(
+    cards_dir: Path,
+    out_dir: Path,
+    *,
+    share_id: str = "",
+    share_revision: str = "",
+    constraints=None,
+) -> dict:
+    """读取 cards artifact → 规划 → 纯拼接合成长图 → 写 long manifest。
+
+    out_dir 为 qzone-long-cards-v1 目录；返回 long manifest。
+    """
+    from share_publisher import artifacts as art
+    from share_publisher import longimage
+
+    cards_manifest = _read_cards_manifest(cards_dir)
+    source_hash = sha256_file(cards_dir / art.MANIFEST_NAME)
+    page_names = art.page_names(cards_manifest)
+    card_paths: dict[int, Path] = {}
+    for name in page_names:
+        index = int("".join(ch for ch in name if ch.isdigit()) or "0")
+        card_paths[index] = cards_dir / name
+    plan = longimage.plan_long_images(len(page_names), constraints or longimage.env_constraints())
+    results = longimage.compose_long_images(card_paths, plan, out_dir, constraints or longimage.env_constraints())
+    page_hashes = [
+        {"index": i, "sha256": sha256_file(cards_dir / name)}
+        for i, name in enumerate(page_names, start=1)
+    ]
+    manifest = {
+        "templateVersion": art.LONG_TEMPLATE_VERSION,
+        "rendererVersion": art.LONG_RENDERER_VERSION,
+        "shareId": share_id,
+        "shareRevision": share_revision,
+        "sourceArtifactHash": source_hash,
+        "sourcePageCount": len(page_names),
+        "groupSize": len(plan[0]) if plan else 0,
+        "imageCount": len(results),
+        "width": results[0]["width"] if results else 0,
+        "separatorPx": (constraints or longimage.env_constraints()).separator_px,
+        "pageCards": page_hashes,
+        "publishImages": results,
+        "generatedAt": _now_iso(),
+    }
+    write_manifest(out_dir, manifest)
+    return manifest
+
+
+def _read_cards_manifest(cards_dir: Path) -> dict:
+    import json as _json
+
+    return _json.loads((cards_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+
+
 def _now_iso() -> str:
     import datetime as dt
 

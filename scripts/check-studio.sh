@@ -30,4 +30,5 @@ fi
 "$PYTHON" "$ROOT/tests/test_share_publisher.py"
 "$PYTHON" "$ROOT/tests/test_studio_share.py"
 "$PYTHON" "$ROOT/tests/test_share_cards.py"
+"$PYTHON" "$ROOT/tests/test_long_image.py"
 printf '作者工作台自动测试通过。\n'

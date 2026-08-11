@@ -21,6 +21,8 @@ from pathlib import Path
 from share_publisher.cards import RENDERER_VERSION, TEMPLATE_VERSION
 
 MANIFEST_NAME = "manifest.json"
+LONG_TEMPLATE_VERSION = "qzone-long-cards-v1"
+LONG_RENDERER_VERSION = "share-long-composer-1"
 
 
 class ArtifactError(Exception):
@@ -32,6 +34,30 @@ class ArtifactError(Exception):
 
 def artifact_dir(share_root: Path, share_id: str, share_revision: str) -> Path:
     return share_root / "artifacts" / share_id / share_revision / TEMPLATE_VERSION
+
+
+def long_artifact_dir(share_root: Path, share_id: str, share_revision: str) -> Path:
+    return share_root / "artifacts" / share_id / share_revision / LONG_TEMPLATE_VERSION
+
+
+def read_long_manifest(share_root: Path, share_id: str, share_revision: str) -> dict:
+    manifest_path = long_artifact_dir(share_root, share_id, share_revision) / MANIFEST_NAME
+    if not manifest_path.is_file():
+        raise ArtifactError("not-found", "长图 artifact 未生成。")
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as error:
+        raise ArtifactError("corrupt-manifest", f"长图 manifest 无法解析：{error}") from error
+    if not isinstance(data, dict) or data.get("templateVersion") != LONG_TEMPLATE_VERSION:
+        raise ArtifactError("corrupt-manifest", "长图 manifest 格式不正确。")
+    return data
+
+
+def long_stale(manifest: dict, current_revision: str, current_cards_hash: str) -> bool:
+    return (
+        str(manifest.get("shareRevision") or "") != str(current_revision)
+        or str(manifest.get("sourceArtifactHash") or "") != str(current_cards_hash)
+    )
 
 
 def safe_resolve(share_root: Path, share_id: str, share_revision: str, name: str) -> Path:

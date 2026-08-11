@@ -2998,7 +2998,8 @@
     index: 0,
     manifestHash: "",
     generated: false,
-    stale: false
+    stale: false,
+    long: { generated: false, imageCount: 0, sourcePageCount: 0, groupSize: 0, stale: false, manifestHash: "", images: [] }
   };
   function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, (ch) => ({
@@ -3303,7 +3304,12 @@
         showError($("#shareConfirmError"), "\u56FE\u7247\u6A21\u5F0F\u9700\u8981\u5148\u300C\u751F\u6210\u56FE\u7247\u300D\u4E14\u56FE\u7247\u672A\u8FC7\u671F\u3002");
         return;
       }
-      artifactManifestHash = shareImage.manifestHash;
+      const longActive = mode === "image-full-link" && shareImage.pageCount > 9;
+      if (longActive && (!shareImage.long.generated || shareImage.long.stale || !shareImage.long.manifestHash)) {
+        showError($("#shareConfirmError"), "\u8D85\u8FC7 9 \u9875\u7684\u5168\u6587\u56FE\u7247\u9700\u8981\u5148\u300C\u751F\u6210\u957F\u56FE\u300D\u4E14\u957F\u56FE\u672A\u8FC7\u671F\u3002");
+        return;
+      }
+      artifactManifestHash = longActive ? shareImage.long.manifestHash : shareImage.manifestHash;
     }
     const when = document.querySelector('input[name="shareWhen"]:checked').value;
     let scheduledAt = (/* @__PURE__ */ new Date()).toISOString();

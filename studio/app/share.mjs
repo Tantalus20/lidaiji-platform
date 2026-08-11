@@ -40,7 +40,10 @@ const shareImage = {
   manifestHash: "",
   generated: false,
   stale: false,
+  long: { generated: false, imageCount: 0, sourcePageCount: 0, groupSize: 0, stale: false, manifestHash: "", images: [] },
 };
+
+const shareLong = { index: 0 };
 
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (ch) => ({
@@ -385,7 +388,12 @@ $("#shareConfirmBtn").addEventListener("click", async () => {
       showError($("#shareConfirmError"), "图片模式需要先「生成图片」且图片未过期。");
       return;
     }
-    artifactManifestHash = shareImage.manifestHash;
+    const longActive = mode === "image-full-link" && shareImage.pageCount > 9;
+    if (longActive && (!shareImage.long.generated || shareImage.long.stale || !shareImage.long.manifestHash)) {
+      showError($("#shareConfirmError"), "超过 9 页的全文图片需要先「生成长图」且长图未过期。");
+      return;
+    }
+    artifactManifestHash = longActive ? shareImage.long.manifestHash : shareImage.manifestHash;
   }
   const when = document.querySelector('input[name="shareWhen"]:checked').value;
   let scheduledAt = new Date().toISOString();

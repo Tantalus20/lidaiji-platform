@@ -162,18 +162,25 @@ def _upload_publication_images(adapter, cookie, record, share_root: Path) -> lis
     返回 pic_id 列表；上传中途失败抛出 QzoneAdapterError（由调用方标 failed，
     绝不发布残缺说说）。图片节选数量由 SHARE_IMAGE_EXCERPT_COUNT 决定。
     """
-    manifest = read_manifest(share_root, record["share_id"], record["share_revision"])
-    if manifest.get("shareRevision") != record["share_revision"]:
-        raise qzone_mod.QzoneAdapterError(
-            "artifact-stale", "图片 artifact 与发布任务快照不一致，请重新生成图片后新建任务。"
-        )
-    errors = verify_artifact(share_root, record["share_id"], record["share_revision"])
-    if errors:
-        raise qzone_mod.QzoneAdapterError("artifact-corrupt", "；".join(errors))
-    names = page_names(manifest)
-    if record["mode"] == pubdb.MODE_IMAGE_EXCERPT:
-        names = names[: _IMAGE_EXCERPT_COUNT()]
-    names = names[: _IMAGE_MAX_COUNT()]
+    import json as _json
+
+    metadata = _json.loads(record.get("metadata_json") or "{}")
+    artifact_mode = metadata.get("artifactMode", "cards")
+    if artifact_mode == "long-cards":
+        names = _verify_long_snapshot(share_root, record)
+    else:
+        manifest = read_manifest(share_root, record["share_id"], record["share_revision"])
+        if manifest.get("shareRevision") != record["share_revision"]:
+            raise qzone_mod.QzoneAdapterError(
+                "artifact-stale", "图片 artifact 与发布任务快照不一致，请重新生成图片后新建任务。"
+            )
+        errors = verify_artifact(share_root, record["share_id"], record["share_revision"])
+        if errors:
+            raise qzone_mod.QzoneAdapterError("artifact-corrupt", "；".join(errors))
+        names = page_names(manifest)
+        if record["mode"] == pubdb.MODE_IMAGE_EXCERPT:
+            names = names[: _IMAGE_EXCERPT_COUNT()]
+        names = names[: _IMAGE_MAX_COUNT()]
     # 上传前的统一硬门：任何路径最终图片数都不得高于 9（绝不先上传再检查）
     if len(names) > _IMAGE_MAX_COUNT():
         raise qzone_mod.QzoneAdapterError(
@@ -184,6 +191,64 @@ def _upload_publication_images(adapter, cookie, record, share_root: Path) -> lis
         target = safe_resolve(share_root, record["share_id"], record["share_revision"], name)
         pic_ids.append(adapter.upload_image(target.read_bytes(), cookie))
     return pic_ids
+
+
+def _verify_long_snapshot(share_root, record) -> list[str]:
+    """长图发布前完整性校验（任务书 §十一）：
+
+    1. 长图 manifest 存在且 shareRevision 一致；
+    2. sourceArtifactHash 与当前 cards manifest 哈希一致（未 stale）；
+    3. 每张最终图片 SHA 与 manifest 一致（PUBLICATION_SNAPSHOT_TAMPERED）；
+    4. 图片数 ≤9；顺序 = publishImages.index 顺序；无额外图片。
+    """
+    from share_publisher.artifacts import (
+        MANIFEST_NAME,
+        artifact_dir,
+        long_artifact_dir,
+        long_stale,
+        read_long_manifest,
+        safe_resolve,
+        sha256_file,
+    )
+
+    manifest = read_long_manifest(share_root, record["share_id"], record["share_revision"])
+    if manifest.get("shareRevision") != record["share_revision"]:
+        raise qzone_mod.QzoneAdapterError("artifact-stale", "长图与发布任务快照不一致。")
+    cards_hash = sha256_file(artifact_dir(share_root, record["share_id"], record["share_revision"]) / MANIFEST_NAME)
+    if long_stale(manifest, record["share_revision"], cards_hash):
+        raise qzone_mod.QzoneAdapterError("artifact-stale", "长图已过期，请重新生成。")
+    images = manifest.get("publishImages", [])
+    if not images or len(images) > _IMAGE_MAX_COUNT():
+        raise qzone_mod.QzoneAdapterError("too-many-images", f"长图 {len(images)} 张超过安全上限。")
+    names: list[str] = []
+    for img in images:
+        name = f"{img['index']:02d}.png"
+        names.append(name)
+        try:
+            target = safe_resolve(share_root, record["share_id"], record["share_revision"], name)
+            if sha256_file(target) != img.get("sha256"):
+                raise qzone_mod.QzoneAdapterError(
+                    "PUBLICATION_SNAPSHOT_TAMPERED", f"长图 {name} 哈希不一致，拒绝发布。"
+                )
+        except (FileNotFoundError, qzone_mod.QzoneAdapterError) as error:
+            if isinstance(error, qzone_mod.QzoneAdapterError):
+                raise
+            raise qzone_mod.QzoneAdapterError("PUBLICATION_SNAPSHOT_TAMPERED", f"长图 {name} 缺失。") from error
+    # 冻结快照中的图片名与当前一致（无额外图片）
+    frozen_names = metadata_image_names(record)
+    if frozen_names and frozen_names != names:
+        raise qzone_mod.QzoneAdapterError(
+            "PUBLICATION_SNAPSHOT_TAMPERED", "长图清单与发布任务快照不一致，拒绝发布。"
+        )
+    return names
+
+
+def metadata_image_names(record) -> list[str] | None:
+    import json as _json
+
+    metadata = _json.loads(record.get("metadata_json") or "{}")
+    names = metadata.get("imageNames")
+    return names if isinstance(names, list) else None
 
 
 def _IMAGE_EXCERPT_COUNT() -> int:

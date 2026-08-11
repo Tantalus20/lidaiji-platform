@@ -33,6 +33,43 @@ def _image_excerpt_count() -> int:
     return max(1, int(os.environ.get("SHARE_IMAGE_EXCERPT_COUNT", "6")))
 
 
+def _read_long_for_publish(share_root, share_id, share_revision) -> dict:
+    """读取长图 artifact 并做发布前完整性校验（返回 long manifest）。
+
+    校验：manifest 存在且未 stale（sourceArtifactHash 与当前 cards manifest 一致）、
+    每张最终图片 SHA 与 manifest 一致、图片数 ≤ 9。失败抛 SharePublishError。
+    """
+    from share_publisher import artifacts
+
+    try:
+        manifest = artifacts.read_long_manifest(share_root, share_id, share_revision)
+    except artifacts.ArtifactError as error:
+        raise SharePublishError(
+            "long-not-generated",
+            "原始分页超过 9 张：请先在 Studio「生成长图」后再发布全文图片。",
+        ) from error
+    cards_hash = artifacts.sha256_file(
+        artifacts.artifact_dir(share_root, share_id, share_revision) / artifacts.MANIFEST_NAME
+    )
+    if artifacts.long_stale(manifest, share_revision, cards_hash):
+        raise SharePublishError("artifact-stale", "长图已过期（正文或分页已变化），请重新生成。")
+    images = manifest.get("publishImages", [])
+    if not images or len(images) > _image_max_count():
+        raise SharePublishError("too-many-images", f"长图 {len(images)} 张超过 QQ 安全上限 {_image_max_count()}。")
+    for img in images:
+        name = f"{img['index']:02d}.png"
+        try:
+            target = artifacts.safe_resolve(share_root, share_id, share_revision, name)
+            if artifacts.sha256_file(target) != img.get("sha256"):
+                raise SharePublishError(
+                    "PUBLICATION_SNAPSHOT_TAMPERED",
+                    f"长图 {name} 与 manifest 哈希不一致，已拒绝发布。",
+                )
+        except artifacts.ArtifactError as error:
+            raise SharePublishError("PUBLICATION_SNAPSHOT_TAMPERED", f"长图 {name} 缺失或不可读。") from error
+    return manifest
+
+
 def _image_max_count() -> int:
     """QQ 单条说说图片上限（真机实测：>9 会被拆成多条单图说说）→ 硬上限 9。"""
     import os
@@ -118,6 +155,7 @@ class SharePublicationService:
             share.save_share(self.project_root, rel_path, fields, item["body"])
 
         url = web_stage.canonical_url(self.base_url, slug)
+        metadata: dict = {"source": "studio", "slug": slug}
         image_hashes: list[str] = []
         if mode in (pubdb.MODE_IMAGE_EXCERPT, pubdb.MODE_IMAGE_FULL):
             # 图片模式：冻结 artifact（manifest 哈希 + 逐图哈希），禁止旧 revision 图片
@@ -140,26 +178,44 @@ class SharePublicationService:
             if errors:
                 raise SharePublishError("artifact-corrupt", "；".join(errors))
             limit = _image_max_count()
+            artifact_mode = "cards"
+            frozen_manifest_hash = artifact_manifest_hash or actual_hash
             if manifest.get("pageCount", 0) > limit and mode == pubdb.MODE_IMAGE_FULL:
-                raise SharePublishError(
-                    "too-many-images",
-                    f"图片全文需要 {manifest['pageCount']} 张，超过 QQ 单条安全上限 {limit} 张；"
-                    f"请改用图片节选或摘要+链接。",
+                # V0.3：>9 页全文 → 使用长图 artifact（最终图片 ≤9）
+                long_manifest = _read_long_for_publish(self.share_root, share_id, share_revision)
+                long_hash = artifacts.sha256_file(
+                    artifacts.long_artifact_dir(self.share_root, share_id, share_revision) / artifacts.MANIFEST_NAME
                 )
-            if mode == pubdb.MODE_IMAGE_EXCERPT:
+                if artifact_manifest_hash and artifact_manifest_hash != long_hash:
+                    raise SharePublishError(
+                        "artifact-changed",
+                        "长图 manifest 与预览不一致，请重新生成后再发布。",
+                    )
+                frozen_manifest_hash = long_hash
+                names = [f"{img['index']:02d}.png" for img in long_manifest.get("publishImages", [])]
+                if len(names) > limit:
+                    raise SharePublishError(
+                        "too-many-images",
+                        f"长图 {len(names)} 张仍超过 QQ 单条安全上限 {limit} 张。",
+                    )
+                artifact_mode = "long-cards"
+            elif mode == pubdb.MODE_IMAGE_EXCERPT:
                 excerpt = min(_image_excerpt_count(), manifest.get("pageCount", 0))
                 if excerpt > limit:
                     raise SharePublishError(
                         "too-many-images",
                         f"图片节选 {excerpt} 张超过 QQ 单条安全上限 {limit} 张。",
                     )
-            if mode == pubdb.MODE_IMAGE_EXCERPT:
-                names = artifacts.page_names(manifest)[: _image_excerpt_count()]
+                names = artifacts.page_names(manifest)[: excerpt]
             else:
-                names = artifacts.page_names(manifest)[: _image_max_count()]
+                names = artifacts.page_names(manifest)[: limit]
             for name in names:
                 target = artifacts.safe_resolve(self.share_root, share_id, share_revision, name)
                 image_hashes.append(artifacts.sha256_file(target))
+            metadata["artifactMode"] = artifact_mode
+            metadata["imageNames"] = names
+            artifact_manifest_hash = frozen_manifest_hash
+
         try:
             record = self.db.create(
                 share_id=share_id,
@@ -168,7 +224,7 @@ class SharePublicationService:
                 final_text=final_text,
                 scheduled_at=scheduled_at,
                 canonical_url=url,
-                metadata={"source": "studio", "slug": slug},
+                metadata=metadata,
                 mode=mode,
                 artifact_manifest_hash=artifact_manifest_hash,
                 image_hashes=image_hashes,

@@ -674,6 +674,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self.handle_share_images_status()
             elif path == "/api/share/images/file":
                 self.handle_share_images_file()
+            elif path == "/api/share/images/long-file":
+                self.handle_share_images_long_file()
             elif path in STATIC_FILES:
                 self.serve_static(path)
             else:
@@ -736,6 +738,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             "/api/share/publication": self.handle_share_publication_create,
             "/api/share/publication/cancel": self.handle_share_publication_cancel,
             "/api/share/images/generate": self.handle_share_images_generate,
+            "/api/share/images/generate-long": self.handle_share_images_generate_long,
         }
         handler = handlers.get(path)
         if handler is None:
@@ -1364,12 +1367,13 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     # -- 长文分享图片卡 API（V0.2） ------------------------------------------
 
-    def _share_manifest_hash(self, share_root, share_id, share_revision):
+    def _share_manifest_hash(self, share_root, share_id, share_revision, long=False):
         import hashlib as _hashlib
 
-        from share_publisher.artifacts import MANIFEST_NAME, artifact_dir
+        from share_publisher.artifacts import MANIFEST_NAME, artifact_dir, long_artifact_dir
 
-        target = artifact_dir(share_root, share_id, share_revision) / MANIFEST_NAME
+        directory = (long_artifact_dir if long else artifact_dir)(share_root, share_id, share_revision)
+        target = directory / MANIFEST_NAME
         if not target.is_file():
             return ""
         return _hashlib.sha256(target.read_bytes()).hexdigest()
@@ -1398,6 +1402,24 @@ class StudioHandler(BaseHTTPRequestHandler):
             }
         except artifacts.ArtifactError:
             payload = {"generated": False, "pageCount": 0, "stale": False, "manifestHash": "", "files": []}
+        # 长图信息（V0.3）
+        try:
+            long_manifest = artifacts.read_long_manifest(share_root, share_id, share_revision)
+            cards_hash = self._share_manifest_hash(share_root, share_id, share_revision)
+            payload["long"] = {
+                "generated": True,
+                "imageCount": long_manifest.get("imageCount", 0),
+                "sourcePageCount": long_manifest.get("sourcePageCount", 0),
+                "groupSize": long_manifest.get("groupSize", 0),
+                "stale": artifacts.long_stale(long_manifest, share_revision, cards_hash),
+                "manifestHash": self._share_manifest_hash(share_root, share_id, share_revision, long=True),
+                "images": [
+                    {"file": f"{img['index']:02d}.png", "pages": img["pages"], "height": img["height"]}
+                    for img in long_manifest.get("publishImages", [])
+                ],
+            }
+        except artifacts.ArtifactError:
+            payload["long"] = {"generated": False}
         self.send_json({"ok": True, "images": payload})
 
     def handle_share_images_generate(self) -> None:
@@ -1452,6 +1474,72 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         try:
             target = artifacts.safe_resolve(share_root, share_id, share_revision, name)
+            payload = target.read_bytes()
+        except artifacts.ArtifactError as error:
+            raise StudioError(error.code, error.message) from error
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def handle_share_images_generate_long(self) -> None:
+        from share_publisher import artifacts
+        from share_publisher import longimage
+        from share_publisher.render import generate_long_cards
+
+        data = self.read_json_body(MAX_RENDER_BYTES)
+        rel_path = str(data.get("path") or "")
+        item, share_root = self._share_item_meta(rel_path)
+        fm = item["frontMatter"]
+        share_id = str(fm.get("shareId") or "")
+        share_revision = str(fm.get("shareRevision") or "")
+        cards_dir = artifacts.artifact_dir(share_root, share_id, share_revision)
+        out_dir = artifacts.long_artifact_dir(share_root, share_id, share_revision)
+        try:
+            manifest = generate_long_cards(
+                cards_dir, out_dir, share_id=share_id, share_revision=share_revision,
+                constraints=longimage.env_constraints(),
+            )
+        except (artifacts.ArtifactError, longimage.LongImageError) as error:
+            raise StudioError(error.code, error.message) from error
+        self.send_json({
+            "ok": True,
+            "long": {
+                "generated": True,
+                "imageCount": manifest["imageCount"],
+                "sourcePageCount": manifest["sourcePageCount"],
+                "groupSize": manifest["groupSize"],
+                "stale": False,
+                "manifestHash": self._share_manifest_hash(share_root, share_id, share_revision, long=True),
+                "images": [
+                    {"file": f"{img['index']:02d}.png", "pages": img["pages"], "height": img["height"]}
+                    for img in manifest["publishImages"]
+                ],
+            },
+        })
+
+    def handle_share_images_long_file(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        rel_path = (query.get("path") or [""])[0]
+        name = (query.get("name") or [""])[0]
+        item, share_root = self._share_item_meta(rel_path)
+        share_id = str(item["frontMatter"].get("shareId") or "")
+        share_revision = str(item["frontMatter"].get("shareRevision") or "")
+        from share_publisher import artifacts
+
+        try:
+            manifest = artifacts.read_long_manifest(share_root, share_id, share_revision)
+            target = None
+            for img in manifest.get("publishImages", []):
+                if f"{img['index']:02d}.png" == name:
+                    from share_publisher.artifacts import safe_resolve
+
+                    target = safe_resolve(share_root, share_id, share_revision, name)
+                    break
+            if target is None:
+                raise artifacts.ArtifactError("not-found", "长图文件不在 manifest 中。")
             payload = target.read_bytes()
         except artifacts.ArtifactError as error:
             raise StudioError(error.code, error.message) from error

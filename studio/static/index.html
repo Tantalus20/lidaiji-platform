@@ -670,6 +670,24 @@
         <label class="radio-inline"><input type="radio" name="shareMode" value="image-excerpt-link"> 图片节选 + 链接</label>
         <label class="radio-inline"><input type="radio" name="shareMode" value="image-full-link"> 图片全文 + 链接</label>
       </div>
+      <div id="shareLongPanel" class="hidden">
+        <p class="meta-text" id="shareLongStatus"></p>
+        <div class="actions">
+          <button id="shareLongGenerate" class="primary small" type="button">生成长图</button>
+          <button id="shareLongPreview" class="secondary small hidden" type="button">预览长图</button>
+          <span id="shareLongStatus2" class="preview-status"></span>
+        </div>
+        <div id="shareLongGrid" class="share-image-grid hidden"></div>
+        <div id="shareLongViewer" class="share-image-viewer hidden">
+          <img id="shareLongViewerImg" alt="长图预览">
+          <div class="actions">
+            <button id="shareLongPrev" class="secondary small" type="button">上一张</button>
+            <span id="shareLongPage" class="meta-text"></span>
+            <button id="shareLongNext" class="secondary small" type="button">下一张</button>
+            <button id="shareLongClose" class="secondary small" type="button">关闭</button>
+          </div>
+        </div>
+      </div>
       <div id="shareImagePanel" class="hidden">
         <p class="meta-text" id="shareImageStatus">图片未生成</p>
         <div class="actions">

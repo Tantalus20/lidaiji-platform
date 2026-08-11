@@ -981,3 +981,6 @@ button.small, a.button.small { padding: 0.2rem 0.7rem; font-size: 0.85rem; }
 .share-image-viewer { margin-top: 0.8rem; padding: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised); }
 .share-image-viewer img { display: block; max-width: 100%; max-height: 60vh; margin: 0 auto 0.6rem; }
 .share-image-viewer .actions { justify-content: center; }
+
+/* 长图（V0.3） */
+.long-info { font-size: 0.82rem; color: var(--ink-soft); }
