@@ -152,7 +152,7 @@ def run_qzone_stage(db: pubdb.PublisherDB, base_url: str, share_root: Path, adap
                 print(f"QQ 已提交待反查（{record['publication_id']}）：{outcome.message}")
         else:
             db.mark_submitted(record["publication_id"], code="no-post-id")
-            print(f"QQ 已提交待反查（{record['publication_id']}）：未获得说说标识。")
+            print(f"QQ 已提交待反查（{record['publication_id']}）：{outcome.message}")
         db.touch_attempt(record["publication_id"])
 
 
