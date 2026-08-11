@@ -27,6 +27,12 @@ class SharePublishError(Exception):
         self.message = message
 
 
+def _image_excerpt_count() -> int:
+    import os
+
+    return max(1, int(os.environ.get("SHARE_IMAGE_EXCERPT_COUNT", "6")))
+
+
 def _image_max_count() -> int:
     """QQ 单条说说图片上限（真机实测：>9 会被拆成多条单图说说）→ 硬上限 9。"""
     import os
@@ -133,15 +139,25 @@ class SharePublicationService:
             errors = artifacts.verify_artifact(self.share_root, share_id, share_revision)
             if errors:
                 raise SharePublishError("artifact-corrupt", "；".join(errors))
-            if mode == pubdb.MODE_IMAGE_FULL:
-                limit = _image_max_count()
-                if manifest.get("pageCount", 0) > limit:
+            limit = _image_max_count()
+            if manifest.get("pageCount", 0) > limit and mode == pubdb.MODE_IMAGE_FULL:
+                raise SharePublishError(
+                    "too-many-images",
+                    f"图片全文需要 {manifest['pageCount']} 张，超过 QQ 单条安全上限 {limit} 张；"
+                    f"请改用图片节选或摘要+链接。",
+                )
+            if mode == pubdb.MODE_IMAGE_EXCERPT:
+                excerpt = min(_image_excerpt_count(), manifest.get("pageCount", 0))
+                if excerpt > limit:
                     raise SharePublishError(
                         "too-many-images",
-                        f"图片全文需要 {manifest['pageCount']} 张，超过 QQ 单条安全上限 {limit} 张；"
-                        f"请改用图片节选或摘要+链接。",
+                        f"图片节选 {excerpt} 张超过 QQ 单条安全上限 {limit} 张。",
                     )
-            for name in artifacts.page_names(manifest):
+            if mode == pubdb.MODE_IMAGE_EXCERPT:
+                names = artifacts.page_names(manifest)[: _image_excerpt_count()]
+            else:
+                names = artifacts.page_names(manifest)[: _image_max_count()]
+            for name in names:
                 target = artifacts.safe_resolve(self.share_root, share_id, share_revision, name)
                 image_hashes.append(artifacts.sha256_file(target))
         try:
