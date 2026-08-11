@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 
 QZONE_COOKIE_DOMAIN = "qzone.qq.com"
 QZONE_PUBLISH_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
+QZONE_LIST_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
+QZONE_DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_del_feeds_v6"
 QZONE_UPLOAD_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
 QZONE_REFERRER = "https://user.qzone.qq.com/{uin}/infocenter"
 HTTP_TIMEOUT = 30.0
@@ -160,6 +162,23 @@ class _RealTransport:
                 "已标记为「已提交、待人工确认」，请勿直接重发。",
             ) from error
 
+    def qzone_get(self, url: str, headers: dict) -> str:
+        """QZone GET（JSONP/JSON 读取接口）。"""
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return response.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as error:
+            raise QzoneAdapterError(
+                "qzone-http-error",
+                f"QZone 接口返回 {error.code}（{redact(error.reason)}）。",
+            ) from error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            raise QzoneAdapterError(
+                "qzone-ambiguous",
+                "QZone 请求连接中断/超时，无法确认 QQ 是否已接收。",
+            ) from error
+
 
 def _parse_json(body: str, source: str) -> dict:
     try:
@@ -173,6 +192,14 @@ def _parse_json(body: str, source: str) -> dict:
     return parsed
 
 
+def _parse_jsonp(body: str, callback: str, source: str = "QZone") -> dict:
+    """解析 JSONP（callback({...})）或纯 JSON 响应。"""
+    text = body.strip()
+    if text.startswith(callback + "(") and text.endswith(");"):
+        text = text[len(callback) + 1 : -2]
+    return _parse_json(text, source)
+
+
 class QzoneAdapter:
     """NapCat Cookie → QZone 文字说说发布；每次发布动态获取最新 Cookie。"""
 
@@ -180,6 +207,16 @@ class QzoneAdapter:
         config = config or QzoneAdapterConfig()
         self.config = config
         self._transport = config.transport or _RealTransport(config.timeout, config.access_token)
+
+    def fetch_login_info(self) -> dict:
+        """NapCat 当前登录账号（清理工具守卫用；只读）。"""
+        if not self.config.napcat_http_url:
+            raise QzoneAdapterError("not-configured", "缺少 NapCat HTTP 地址配置。")
+        login = self._transport.napcat_call(self.config.napcat_http_url, "get_login_info", {})
+        if str(login.get("status")) != "ok":
+            raise QzoneAdapterError("napcat-not-logged-in", "NapCat 未登录或返回异常。")
+        data = login.get("data") or {}
+        return {"user_id": str(data.get("user_id") or ""), "nickname": str(data.get("nickname") or "")}
 
     def fetch_cookie(self) -> str:
         """通过 NapCat 动态取得当前 QQ 空间 Cookie（不落盘、不进日志）。"""
@@ -221,6 +258,86 @@ class QzoneAdapter:
             if name == key:
                 return value
         return ""
+
+    def _gtk_from_cookie(self, cookie: str) -> str:
+        skey = self._cookie_field(cookie, "p_skey") or self._cookie_field(cookie, "skey")
+        if not skey:
+            raise QzoneAdapterError("cookie-invalid", "Cookie 缺少 p_skey/skey，可能已过期。")
+        return compute_gtk(skey)
+
+    def _qzone_headers(self, cookie: str) -> dict:
+        uin = self.config.qq_account
+        return {
+            "Cookie": cookie,
+            "Origin": "https://user.qzone.qq.com",
+            "Referer": QZONE_REFERRER.format(uin=uin),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+
+    def list_own_posts(self, cookie: str, page_size: int = 40, max_pages: int = 5) -> list[dict]:
+        """拉取自己的全部说说（真机验证：emotion_cgi_msglist_v6，msglist 在顶层）。
+
+        返回条目：{tid, content, conlist, created_time, ugc_right, secret, name}。
+        """
+        uin = self.config.qq_account
+        gtk = self._gtk_from_cookie(cookie)
+        headers = self._qzone_headers(cookie)
+        posts: list[dict] = []
+        for page in range(max_pages):
+            url = (
+                f"{QZONE_LIST_URL}?uin={uin}&ftype=0&sort=1&pos={len(posts)}"
+                f"&num={page_size}&replynum=20&g_tk={gtk}&callback=cb_lidaji"
+            )
+            body = self._transport.qzone_get(url, headers)
+            payload = _parse_jsonp(body, "cb_lidaji")
+            if str(payload.get("code", "")) != "0":
+                raise QzoneAdapterError(
+                    "qzone-list-rejected", f"QZone 拒绝动态列表请求（{redact(str(payload.get('message')))}）。"
+                )
+            batch = payload.get("msglist") or []
+            if not batch:
+                break
+            for item in batch:
+                if isinstance(item, dict) and item.get("tid"):
+                    posts.append({
+                        "tid": str(item["tid"]),
+                        "content": str(item.get("content") or ""),
+                        "conlist": item.get("conlist") or [],
+                        "created_time": item.get("created_time"),
+                        "ugc_right": item.get("ugc_right"),
+                        "secret": item.get("secret"),
+                        "name": str(item.get("name") or ""),
+                    })
+            if len(batch) < page_size:
+                break
+        return posts
+
+    def delete_post(self, post_id: str, cookie: str) -> bool:
+        """删除一条自己的说说（公开协议 emotion_cgi_del_feeds_v6）。
+
+        注意（真机结论）：删除接口在当前会话上返回 HTTP 500，无法安全自动删除；
+        本方法如实返回/抛出失败，绝不在不确定时报告成功。
+        """
+        uin = self.config.qq_account
+        gtk = self._gtk_from_cookie(cookie)
+        payload = {
+            "hostuin": uin,
+            "uin": uin,
+            "tid": str(post_id),
+            "code_version": "1",
+            "format": "fs",
+            "qzreferrer": QZONE_REFERRER.format(uin=uin),
+        }
+        url = f"{QZONE_DELETE_URL}?g_tk={gtk}"
+        body = self._transport.qzone_post_form(
+            url, urllib.parse.urlencode(payload).encode("utf-8"), self._qzone_headers(cookie)
+        )
+        if '"code":0' not in body and '"code": 0' not in body:
+            raise QzoneAdapterError(
+                "qzone-delete-rejected",
+                f"QZone 删除接口未确认删除（{redact(body[:160])}）。",
+            )
+        return True
 
     def publish_text(self, text: str, cookie: str) -> PublishOutcome:
         """发布纯文字说说；任何异常都先脱敏再抛出。"""
