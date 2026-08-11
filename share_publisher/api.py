@@ -59,7 +59,7 @@ def _read_long_for_publish(share_root, share_id, share_revision) -> dict:
     for img in images:
         name = f"{img['index']:02d}.png"
         try:
-            target = artifacts.safe_resolve(share_root, share_id, share_revision, name)
+            target = artifacts.safe_resolve(share_root, share_id, share_revision, name, long=True)
             if artifacts.sha256_file(target) != img.get("sha256"):
                 raise SharePublishError(
                     "PUBLICATION_SNAPSHOT_TAMPERED",
@@ -166,22 +166,13 @@ class SharePublicationService:
                     "artifact-stale",
                     "图片已过期（正文已修改），请重新生成图片后再发布。",
                 )
-            actual_hash = artifacts.sha256_file(
-                artifacts.artifact_dir(self.share_root, share_id, share_revision) / artifacts.MANIFEST_NAME
-            )
-            if artifact_manifest_hash and actual_hash != artifact_manifest_hash:
-                raise SharePublishError(
-                    "artifact-changed",
-                    "图片 manifest 与预览不一致，请重新生成后再发布。",
-                )
-            errors = artifacts.verify_artifact(self.share_root, share_id, share_revision)
-            if errors:
-                raise SharePublishError("artifact-corrupt", "；".join(errors))
             limit = _image_max_count()
             artifact_mode = "cards"
-            frozen_manifest_hash = artifact_manifest_hash or actual_hash
-            if manifest.get("pageCount", 0) > limit and mode == pubdb.MODE_IMAGE_FULL:
-                # V0.3：>9 页全文 → 使用长图 artifact（最终图片 ≤9）
+            use_long = manifest.get("pageCount", 0) > limit and mode == pubdb.MODE_IMAGE_FULL
+            if use_long:
+                # V0.3：>9 页全文 → 使用长图 artifact（最终图片 ≤9）。
+                # 先判断路径再校验哈希：UI 传的是长图 manifest 哈希，
+                # 不能先与卡片 manifest 哈希比对（否则长图发布永远失败）。
                 long_manifest = _read_long_for_publish(self.share_root, share_id, share_revision)
                 long_hash = artifacts.sha256_file(
                     artifacts.long_artifact_dir(self.share_root, share_id, share_revision) / artifacts.MANIFEST_NAME
@@ -199,16 +190,29 @@ class SharePublicationService:
                         f"长图 {len(names)} 张仍超过 QQ 单条安全上限 {limit} 张。",
                     )
                 artifact_mode = "long-cards"
-            elif mode == pubdb.MODE_IMAGE_EXCERPT:
-                excerpt = min(_image_excerpt_count(), manifest.get("pageCount", 0))
-                if excerpt > limit:
-                    raise SharePublishError(
-                        "too-many-images",
-                        f"图片节选 {excerpt} 张超过 QQ 单条安全上限 {limit} 张。",
-                    )
-                names = artifacts.page_names(manifest)[: excerpt]
             else:
-                names = artifacts.page_names(manifest)[: limit]
+                actual_hash = artifacts.sha256_file(
+                    artifacts.artifact_dir(self.share_root, share_id, share_revision) / artifacts.MANIFEST_NAME
+                )
+                if artifact_manifest_hash and artifact_manifest_hash != actual_hash:
+                    raise SharePublishError(
+                        "artifact-changed",
+                        "图片 manifest 与预览不一致，请重新生成后再发布。",
+                    )
+                errors = artifacts.verify_artifact(self.share_root, share_id, share_revision)
+                if errors:
+                    raise SharePublishError("artifact-corrupt", "；".join(errors))
+                frozen_manifest_hash = artifact_manifest_hash or actual_hash
+                if mode == pubdb.MODE_IMAGE_EXCERPT:
+                    excerpt = min(_image_excerpt_count(), manifest.get("pageCount", 0))
+                    if excerpt > limit:
+                        raise SharePublishError(
+                            "too-many-images",
+                            f"图片节选 {excerpt} 张超过 QQ 单条安全上限 {limit} 张。",
+                        )
+                    names = artifacts.page_names(manifest)[: excerpt]
+                else:
+                    names = artifacts.page_names(manifest)[: limit]
             for name in names:
                 target = artifacts.safe_resolve(self.share_root, share_id, share_revision, name)
                 image_hashes.append(artifacts.sha256_file(target))

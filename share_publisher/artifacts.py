@@ -60,9 +60,12 @@ def long_stale(manifest: dict, current_revision: str, current_cards_hash: str) -
     )
 
 
-def safe_resolve(share_root: Path, share_id: str, share_revision: str, name: str) -> Path:
-    """把请求的文件名解析为 artifact 根内的绝对路径（防穿越/符号链接）。"""
-    root = artifact_dir(share_root, share_id, share_revision).resolve()
+def safe_resolve(share_root: Path, share_id: str, share_revision: str, name: str, long: bool = False) -> Path:
+    """把请求的文件名解析为 artifact 根内的绝对路径（防穿越/符号链接）。
+
+    long=True 时解析到长图目录（qzone-long-cards-v1），否则为卡片目录。
+    """
+    root = (long_artifact_dir if long else artifact_dir)(share_root, share_id, share_revision).resolve()
     text = str(name or "").strip()
     if not text or "/" in text or "\\" in text or text in (".", ".."):
         raise ArtifactError("invalid-path", "artifact 文件名不合法。")

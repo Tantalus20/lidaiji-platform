@@ -225,7 +225,7 @@ def _verify_long_snapshot(share_root, record) -> list[str]:
         name = f"{img['index']:02d}.png"
         names.append(name)
         try:
-            target = safe_resolve(share_root, record["share_id"], record["share_revision"], name)
+            target = safe_resolve(share_root, record["share_id"], record["share_revision"], name, long=True)
             if sha256_file(target) != img.get("sha256"):
                 raise qzone_mod.QzoneAdapterError(
                     "PUBLICATION_SNAPSHOT_TAMPERED", f"长图 {name} 哈希不一致，拒绝发布。"

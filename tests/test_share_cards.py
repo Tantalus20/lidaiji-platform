@@ -415,13 +415,63 @@ class LongCardsE2ETestCase(unittest.TestCase):
 
         generate_long_cards(self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
                             constraints=longimage.LongImageConstraints())
-        # 篡改一张长图
+        from share_publisher.api import _read_long_for_publish
+
+        # 未篡改：必须通过完整性校验
+        _read_long_for_publish(self.share_root, self.share_id, self.rev)
+        # 篡改一张长图：必须拒绝
         (self.long_dir / "01.png").write_bytes(b"tampered")
         with self.assertRaises(SharePublishError) as ctx:
-            from share_publisher.api import _read_long_for_publish
-
             _read_long_for_publish(self.share_root, self.share_id, self.rev)
         self.assertEqual(ctx.exception.code, "PUBLICATION_SNAPSHOT_TAMPERED")
+
+    def test_create_long_path_accepts_long_hash(self):
+        # 回归：create() 对 >9 页全文必须接受「长图 manifest 哈希」，
+        # 不得先与卡片 manifest 哈希比对而拒绝（LQ01 真机轮发现的缺陷）。
+        from share_publisher import longimage
+        from share_publisher.render import generate_long_cards
+
+        self._build_cards(10)
+        generate_long_cards(
+            self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
+            constraints=longimage.LongImageConstraints(),
+        )
+        long_hash = artifacts.sha256_file(self.long_dir / artifacts.MANIFEST_NAME)
+        item_dir = self.share_root / "items" / self.share_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        from studio import share as share_mod
+
+        (item_dir / "index.md").write_text(share_mod.render_source(
+            {"title": "t", "author": "a", "date": "2026-08-10", "slug": "long-test",
+             "draft": False, "shareKind": "other", "rightsMode": "original",
+             "shareId": self.share_id, "shareRevision": self.rev},
+            "正文。\n" * 40,
+        ), encoding="utf-8")
+        os.environ["LIDAIJI_SHARE_CONTENT_ROOT"] = str(self.share_root)
+        try:
+            from share_publisher.api import SharePublicationService, SharePublishError
+            from share_publisher import db as pubdb
+
+            with SharePublicationService(Path("/Users/haminster/Projects/lidaiji-split/lidaiji-platform")) as svc:
+                r = svc.create(
+                    "items/sh-20260810-000001/index.md", "测试", pubdb.to_utc_iso(pubdb.utcnow()),
+                    mode=pubdb.MODE_IMAGE_FULL, artifact_manifest_hash=long_hash,
+                )
+                pub = r["publication"]
+                self.assertEqual(pub["mode"], pubdb.MODE_IMAGE_FULL)
+                self.assertEqual(len(json.loads(pub["image_hashes_json"])), 5)
+                self.assertEqual(json.loads(pub["metadata_json"])["artifactMode"], "long-cards")
+                # 冻结哈希 = 长图 manifest 哈希
+                self.assertEqual(pub["artifact_manifest_hash"], long_hash)
+                # 错误的长图哈希必须被拒绝
+                with self.assertRaises(SharePublishError) as ctx:
+                    svc.create(
+                        "items/sh-20260810-000001/index.md", "测试", pubdb.to_utc_iso(pubdb.utcnow()),
+                        mode=pubdb.MODE_IMAGE_FULL, artifact_manifest_hash="wrong-hash",
+                    )
+                self.assertEqual(ctx.exception.code, "artifact-changed")
+        finally:
+            os.environ.pop("LIDAIJI_SHARE_CONTENT_ROOT", None)
 
     def test_small_pages_no_long_needed(self):
         # 1-9 页：cards 即可，create 不会要求长图

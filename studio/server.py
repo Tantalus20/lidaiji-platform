@@ -1536,7 +1536,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if f"{img['index']:02d}.png" == name:
                     from share_publisher.artifacts import safe_resolve
 
-                    target = safe_resolve(share_root, share_id, share_revision, name)
+                    target = safe_resolve(share_root, share_id, share_revision, name, long=True)
                     break
             if target is None:
                 raise artifacts.ArtifactError("not-found", "长图文件不在 manifest 中。")
