@@ -327,11 +327,12 @@ class QzoneAdapterTestCase(unittest.TestCase):
 
 
 class MultiImagePayloadTestCase(unittest.TestCase):
-    """P0 多图协议纠偏：payload 形状回归（对照 MIT 参考 onebot-qzone）。
+    """多图协议回归：payload 形状（V0.2 真机验证形态 14b6141，IQ02 六图单帖）。
 
-    - richval 条目数 == 图片数（TAB 分隔）
-    - pic_bo 为 "b1,b2,…\tb1,b2,…" 双段、不含 '&'
-    - pic_template == tpl-{N}-1、richtype=1、subrichtype=1
+    - richval 条目数 == 图片数（TAB 分隔，每条 10 字段）
+    - pic_bo 为逗号拼接单段、不含 '&'
+    - richtype=1；无 pic_template/subrichtype/special_url（MIT 参考格式已
+      经真机证伪：1 帖+逐图拆帖，见 LQ01 轮）
     - publish_v6 恰好 1 次
     - >9 上传前拒绝
     """
@@ -388,19 +389,20 @@ class MultiImagePayloadTestCase(unittest.TestCase):
             publishes = sum(1 for k, _ in spy.calls if k == "publish")
             self.assertEqual(uploads, count, f"{count}图 upload 数")
             self.assertEqual(publishes, 1, f"{count}图 publish_v6 必须恰好 1 次")
-            self.assertEqual(p["pic_template"], f"tpl-{count}-1", f"{count}图 pic_template")
+            self.assertNotIn("pic_template", p, f"{count}图不得携带 pic_template")
+            self.assertNotIn("subrichtype", p, f"{count}图不得携带 subrichtype")
+            self.assertNotIn("special_url", p, f"{count}图不得携带 special_url")
             self.assertEqual(p.get("richtype", ""), "1", f"{count}图 richtype")
-            self.assertEqual(p.get("subrichtype", ""), "1", f"{count}图 subrichtype")
             rich_items = p["richval"].split("\t")
             self.assertEqual(len(rich_items), count, f"{count}图 richval 条目数")
             for item in rich_items:
                 fields = item.split(",")
                 self.assertEqual(len(fields), 10, f"richval 每条 10 字段，实际 {len(fields)}")
-            self.assertEqual(p["pic_bo"].count("\t"), 1, f"{count}图 pic_bo 双段")
-            bo_parts = p["pic_bo"].split("\t")
-            self.assertEqual(bo_parts[0], bo_parts[1], "pic_bo 两段一致")
-            self.assertNotIn("&", bo_parts[0], "pic_bo 不得含 &（bo 截断）")
-            self.assertNotIn("BO_CLEAN_1&extra", bo_parts[0], "bo 提取必须截断在 &")
+            self.assertNotIn("\t", p["pic_bo"], f"{count}图 pic_bo 必须单段")
+            bo_list = p["pic_bo"].split(",")
+            self.assertEqual(len(bo_list), count, f"{count}图 pic_bo 条目数")
+            self.assertNotIn("&", p["pic_bo"], "pic_bo 不得含 &（bo 截断）")
+            self.assertNotIn("BO_CLEAN_1&extra", p["pic_bo"], "bo 提取必须截断在 &")
 
     def test_visibility_fields(self):
         for visibility, expected in [("public", {}), ("friends", {"who_can_see": "1"}),

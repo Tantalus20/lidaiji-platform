@@ -340,19 +340,15 @@ class QzoneAdapter:
             "qzreferrer": QZONE_REFERRER.format(uin=uin),
         }
         if pic_ids and isinstance(pic_ids[0], tuple):
-            # 多图结构（MIT 参考 onebot-qzone 真机验证的完整形态）：
-            # pic_template=tpl-{N}-1 · richtype=1 · subrichtype=1 · special_url=''
-            # richval：每图一条 ",albumid,lloc,sloc,type,h,w,,h,w" 以 TAB 分隔
-            # pic_bo：逗号拼接列表，以 TAB 重复一次（"b1,b2	b1,b2"）
-            count = len(pic_ids[:9])
+            # 多图结构（V0.2 真机验证形态 14b6141：IQ02 六图单帖 PASS）：
+            # richtype=1 · pic_bo 逗号拼接（单段，不含 '&'）· richval 每图一条 TAB 拼接。
+            # 注：974ab24a 曾按 MIT 参考改为 pic_template/subrichtype/special_url +
+            # pic_bo 双段，该格式从未真机验证，真机表现为 1 帖+逐图拆帖（LQ01 轮）。
             pic_bos = ",".join(pic[0] for pic in pic_ids[:9])
             richvals = "\t".join(pic[1] for pic in pic_ids[:9])
-            payload["pic_template"] = f"tpl-{count}-1"
+            payload["pic_bo"] = pic_bos
             payload["richtype"] = "1"
-            payload["subrichtype"] = "1"
-            payload["special_url"] = ""
             payload["richval"] = richvals
-            payload["pic_bo"] = f"{pic_bos}\t{pic_bos}"
         else:
             payload["richtype"] = "1"
             payload["richval"] = str(pic_ids[0])
