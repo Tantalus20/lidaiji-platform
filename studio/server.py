@@ -616,6 +616,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/system/status":
                 self.handle_status()
+            elif path == "/api/stats/views":
+                self.handle_stats_views()
             elif path == "/api/import/asset":
                 self.handle_asset()
             elif path == "/api/articles":
@@ -893,6 +895,29 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def handle_articles(self) -> None:
         self.send_json({"ok": True, "articles": articles.scan_content(self.state.project_root)})
+
+    def handle_stats_views(self) -> None:
+        """只读代理：批量浏览数（统计服务，stats V0.1）。
+
+        Studio 对浏览统计仅允许查看；本接口只转发 GET，不做任何修改。
+        """
+        import json as _json
+        import urllib.request as _request
+
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        namespace = (query.get("namespace") or [""])[0]
+        if namespace not in ("works", "share"):
+            self.send_json({"ok": False, "error": "命名空间不存在。", "items": {}})
+            return
+        base = os.environ.get("LIDAIJI_STATS_BASE", "http://127.0.0.1:4317")
+        try:
+            with _request.urlopen(
+                f"{base}/api/stats/views?namespace={namespace}", timeout=8
+            ) as response:
+                payload = _json.loads(response.read().decode("utf-8", "replace"))
+            self.send_json({"ok": True, "namespace": namespace, "items": payload.get("items", {})})
+        except Exception:
+            self.send_json({"ok": False, "error": "统计服务暂时不可用。", "items": {}})
 
     def handle_articles_search(self) -> None:
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)

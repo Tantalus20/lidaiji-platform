@@ -4,6 +4,7 @@
 
 const state = {
   articles: [],
+  viewCounts: {},
   searchQuery: "",
   searchResults: null,
   // Word 导入向导状态

@@ -10,6 +10,10 @@ const { createNotificationTask } = require("./notify");
 const {
   fingerprint, parseCookies, randomToken, safeText, sha256, verifyPassword,
 } = require("./security");
+const {
+  isBotUserAgent, isValidContentId, validateIdentity, recordView, readView, batchCounts,
+  createStatsRateLimiter,
+} = require("./stats");
 
 // 版本单一来源：healthz 报告 package.json 的版本，不硬编码。
 const SERVICE_VERSION = require("../package.json").version;
@@ -339,8 +343,43 @@ function moderate(request, response, db, session, commentId, action, reason = ""
   json(response, 200, { ok: true, id: commentId, status }, { "Cache-Control": "no-store" });
 }
 
-function createApp({ db, config, manifest, health = {} }) {
+function createApp({ db, config, manifest = { articles: [] }, health = {}, statsDb, shareManifest = { items: [] } }) {
   cleanup(db);
+  const worksArticleIds = new Set((manifest.articles || []).map((article) => article.articleId).filter(Boolean));
+  const shareIds = new Set((shareManifest.items || []).map((item) => item.shareId).filter(Boolean));
+  const statsLimiter = createStatsRateLimiter(config.rate.statsPerMinute);
+  setInterval(() => statsLimiter.prune(), 5 * 60_000).unref();
+
+  // 统计处理：返回 404 表示内容不存在（fail-closed）；bot 只读不计数。
+  const handleStatsView = async (request, response, namespace, contentId, isPost) => {
+    const headers = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" };
+    if (!validateIdentity(namespace, contentId, worksArticleIds, shareIds)) {
+      return json(response, 404, { ok: false, error: "内容不存在或未公开。" }, headers);
+    }
+    const nowIso = new Date().toISOString();
+    try {
+      let views;
+      if (isPost) {
+        const userAgent = String(request.headers["user-agent"] || "");
+        const bot = isBotUserAgent(userAgent);
+        if (bot) {
+          views = readView(statsDb, namespace, contentId);
+        } else {
+          if (!statsLimiter.allowed(clientAddress(request, config))) {
+            return json(response, 429, { ok: false, error: "请求过于频繁。" }, headers);
+          }
+          views = recordView(statsDb, namespace, contentId, nowIso);
+        }
+      } else {
+        views = readView(statsDb, namespace, contentId);
+      }
+      return json(response, 200, { ok: true, namespace, contentId, views }, headers);
+    } catch (error) {
+      // 统计失败绝不影响评论/正文：只返回当前数字或 500，页面端降级为「浏览 —」
+      return json(response, 500, { ok: false, error: "统计服务暂时不可用。" }, headers);
+    }
+  };
+
   return http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, config.publicOrigin);
@@ -354,7 +393,24 @@ function createApp({ db, config, manifest, health = {} }) {
           version: SERVICE_VERSION,
           chapterReviewBot: { configured: Boolean(botToken), state: botState },
           manifest: health.manifest || null,
+          stats: health.stats || null,
         }, { "Cache-Control": "no-store" });
+      }
+      // -- 逐篇浏览统计（stats V0.1） --------------------------------------
+      if (method === "GET" && url.pathname === "/api/stats/views" && url.searchParams.get("namespace")) {
+        const namespace = url.searchParams.get("namespace");
+        if (!["works", "share"].includes(namespace)) {
+          return json(response, 404, { ok: false, error: "命名空间不存在。" }, { "Cache-Control": "no-store" });
+        }
+        try {
+          return json(response, 200, { ok: true, namespace, items: batchCounts(statsDb, namespace) }, { "Cache-Control": "no-store" });
+        } catch (error) {
+          return json(response, 500, { ok: false, error: "统计服务暂时不可用。" }, { "Cache-Control": "no-store" });
+        }
+      }
+      let statsMatch = url.pathname.match(/^\/api\/stats\/views\/([A-Za-z0-9._\-]{1,30})\/([A-Za-z0-9._\-]{1,120})$/);
+      if (statsMatch && (method === "POST" || method === "GET")) {
+        return await handleStatsView(request, response, statsMatch[1], statsMatch[2], method === "POST");
       }
       if (method === "GET" && url.pathname === "/admin/comments/") {
         return html(response, 200, fs.readFileSync(path.join(ADMIN_DIR, "index.html"), "utf8"));

@@ -51,6 +51,7 @@
   // studio/app/state.mjs
   var state = {
     articles: [],
+    viewCounts: {},
     searchQuery: "",
     searchResults: null,
     // Word 导入向导状态
@@ -1836,7 +1837,8 @@
     card.appendChild(head);
     const meta = document.createElement("p");
     meta.className = "meta-text";
-    meta.textContent = `\u7EA6 ${article.wordCount} \u5B57 \xB7 \u53D1\u5E03 ${formatDate(article.date)} \xB7 \u6700\u540E\u4FEE\u6539 ${formatDate(article.lastmod) || formatDate(article.modified)}`;
+    const statsText = article.articleId && state.viewCounts && typeof state.viewCounts[article.articleId] === "number" ? ` \xB7 \u6D4F\u89C8 ${state.viewCounts[article.articleId]}` : "";
+    meta.textContent = `\u7EA6 ${article.wordCount} \u5B57 \xB7 \u53D1\u5E03 ${formatDate(article.date)} \xB7 \u6700\u540E\u4FEE\u6539 ${formatDate(article.lastmod) || formatDate(article.modified)}${statsText}`;
     card.appendChild(meta);
     if (article.missingAnchors > 0) {
       const warn = document.createElement("p");
@@ -1992,8 +1994,19 @@
     } catch (error) {
       globalError(error.message);
     }
+    loadViewCounts();
     refreshPreviewStatus();
     loadFeedbackCard();
+  }
+  async function loadViewCounts() {
+    try {
+      const payload = await apiGet("/api/stats/views?namespace=works");
+      state.viewCounts = payload.items || {};
+    } catch (_error) {
+      state.viewCounts = {};
+    }
+    renderGroups();
+    if (state.searchQuery.trim()) runSearch();
   }
   $("#searchInput").addEventListener("input", () => {
     state.searchQuery = $("#searchInput").value;
