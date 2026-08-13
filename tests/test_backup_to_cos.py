@@ -203,6 +203,45 @@ class TestBackupNormalFlow(unittest.TestCase, BackupArchiveTests):
         self.assertEqual(verify.returncode, 0, verify.stderr)
         self.assertIn("VERIFY_OK", verify.stdout)
 
+    def test_15_stats_sqlite_auto_included_in_backup(self):
+        # 浏览统计库 stats.sqlite3 落于 COMMENTS_DATA_DIR（*.sqlite3）→ 自动进入
+        # 现有一致性备份链（sqlite3 .backup + integrity + manifest v2 + validate-only），
+        # 无需修改备份脚本。验证：归档含 stats 备份、manifest 记录 SHA、恢复后数据仍在。
+        db = self.fx.data_dir / "stats.sqlite3"
+        con = sqlite3.connect(db)
+        con.execute(
+            "CREATE TABLE content_views (namespace TEXT NOT NULL, content_id TEXT NOT NULL, "
+            "view_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
+            "PRIMARY KEY (namespace, content_id));"
+        )
+        con.execute("INSERT INTO content_views VALUES ('works','article-abc123',327,'2026-08-13T00:00:00Z','2026-08-13T00:00:00Z');")
+        con.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);")
+        con.execute("INSERT INTO schema_migrations VALUES (1, '2026-08-13T00:00:00Z');")
+        con.commit()
+        con.close()
+
+        self.fx.run()  # COS_BACKUP_VALIDATE_ONLY=1：本地生成+复验，不上传
+
+        manifest = json.loads((self.fx.keep_dir / "backup-manifest.json").read_text(encoding="utf-8"))
+        stats_entry = next((d for d in manifest["databases"] if "stats" in d["name"]), None)
+        self.assertIsNotNone(stats_entry, "manifest 必须包含 stats.sqlite3 备份记录")
+        self.assertIn("schemaMigrations", stats_entry)
+        self.assertGreaterEqual(len(stats_entry["sha256"]), 64)
+
+        archive = self.fx.kept_archive()
+        members = subprocess.run(["tar", "-tzf", str(archive)], capture_output=True, text=True).stdout
+        self.assertTrue(any("sqlite-backups/" in l and "stats" in l for l in members.splitlines()),
+                        "归档必须含 stats.sqlite3 一致性副本")
+
+        # 恢复抽查：解压后 stats 数据完整（浏览计数 327 保留）
+        extracted = self.extract(archive)
+        backup_file = next((p for p in (extracted / "sqlite-backups").glob("*stats*") if p.suffix == ".sqlite3"), None)
+        self.assertIsNotNone(backup_file)
+        restored = sqlite3.connect(backup_file)
+        row = restored.execute("SELECT view_count FROM content_views WHERE namespace='works' AND content_id='article-abc123'").fetchone()
+        restored.close()
+        self.assertEqual(row[0], 327, "恢复后浏览统计必须仍在")
+
     def test_02_site_and_comments_separately_verified(self):
         self.fx.run()
         manifest = json.loads((self.fx.keep_dir / "backup-manifest.json").read_text(encoding="utf-8"))
