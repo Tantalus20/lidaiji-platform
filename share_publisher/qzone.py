@@ -193,7 +193,7 @@ def _parse_json(body: str, source: str) -> dict:
 
 
 def _parse_jsonp(body: str, callback: str, source: str = "QZone") -> dict:
-    """解析 JSONP（callback({...})）或纯 JSON 响应。"""
+    """解析 JSONP（callback({...})）或纯 JSON 响应（容忍尾随空白）。"""
     text = body.strip()
     if text.startswith(callback + "(") and text.endswith(");"):
         text = text[len(callback) + 1 : -2]
@@ -307,6 +307,14 @@ class QzoneAdapter:
                         "ugc_right": item.get("ugc_right"),
                         "secret": item.get("secret"),
                         "name": str(item.get("name") or ""),
+                        # 诊断字段（区分相册/资源 feed 与说说 mood feed）：
+                        # 参考值：说说 appid=311；相册/资源层 feed appid=4
+                        "appid": item.get("appid"),
+                        "source_appid": item.get("source_appid"),
+                        "typeid": item.get("typeid"),
+                        "albumid": item.get("albumid"),
+                        "pic": item.get("pic"),
+                        "wbid": item.get("wbid"),
                     })
             if len(batch) < page_size:
                 break

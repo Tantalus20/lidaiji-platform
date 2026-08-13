@@ -52,6 +52,11 @@ class Candidate:
     marker: str
     created_time: object
     title: str
+    appid: object = None
+    source_appid: object = None
+    typeid: object = None
+    albumid: object = None
+    wbid: object = None
 
     def created_label(self) -> str:
         if isinstance(self.created_time, (int, float)) and self.created_time:
@@ -112,6 +117,11 @@ def discover_candidates(adapter, cookie: str, max_pages: int = 5, page_size: int
             marker=matched.group(1),
             created_time=post.get("created_time"),
             title=title,
+            appid=post.get("appid"),
+            source_appid=post.get("source_appid"),
+            typeid=post.get("typeid"),
+            albumid=post.get("albumid"),
+            wbid=post.get("wbid"),
         ))
     candidates.sort(key=lambda c: c.created_time or 0)
     return candidates
@@ -139,24 +149,28 @@ def run_cleanup(adapter, *, confirm: bool = False, max_pages: int = 5, page_size
     return result
 
 
-def format_candidate(index: int, candidate: Candidate) -> str:
-    return (
-        f"[{index}]\n"
-        f"post_id:   {candidate.tid}\n"
-        f"marker:    LIDAIJI_TEST:{candidate.marker}\n"
-        f"created:   {candidate.created_label()}\n"
-        f"title:     {candidate.title}"
-    )
+def format_candidate(index: int, candidate: Candidate, diag: bool = False) -> str:
+    lines = [
+        f"[{index}]",
+        f"post_id:   {candidate.tid}",
+        f"marker:    LIDAIJI_TEST:{candidate.marker}",
+        f"created:   {candidate.created_label()}",
+        f"title:     {candidate.title}",
+    ]
+    if diag:
+        lines.append(f"appid:     {candidate.appid} | typeid: {candidate.typeid} | albumid: {candidate.albumid}")
+        lines.append(f"source_appid: {candidate.source_appid} | wbid: {candidate.wbid}")
+    return "\n".join(lines)
 
 
-def render(result: CleanupResult) -> str:
+def render(result: CleanupResult, diag: bool = False) -> str:
     """把结果渲染为脱敏文本（测试断言与 CLI 共用）。"""
     lines: list[str] = []
     if result.candidates:
         lines.append("发现测试动态：")
         lines.append("")
         for index, candidate in enumerate(result.candidates, start=1):
-            lines.append(format_candidate(index, candidate))
+            lines.append(format_candidate(index, candidate, diag=diag))
             lines.append("")
         lines.append(f"共 {result.found} 条。")
         if result.dry_run:
@@ -193,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, default=ROOT)
     parser.add_argument("--confirm", action="store_true", help="确认删除（缺省为 dry-run，绝不删除）")
     parser.add_argument("--max-pages", type=int, default=5, help="列表最多翻页数（默认 5）")
+    parser.add_argument("--diag", action="store_true", help="诊断模式：打印 appid/typeid/albumid 等原始字段")
     args = parser.parse_args(argv)
 
     print(f"{TOOL_VERSION}")
@@ -205,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     except CleanupError as error:
         print(error)
         return 2
-    print(render(result))
+    print(render(result, diag=args.diag))
     if args.confirm and result.failed:
         return 1
     return 0
