@@ -32,6 +32,7 @@ const shareState = {
   qzoneEnabled: false,
   qzoneConfigured: false,
   pendingHash: "",
+  viewCounts: {},
 };
 
 const shareImage = {
@@ -91,9 +92,11 @@ function renderShareGroups() {
       title.textContent = item.title;
       const meta = document.createElement("span");
       meta.className = "share-row-meta";
+      const statsText = item.shareId && shareState.viewCounts && typeof shareState.viewCounts[item.shareId] === "number"
+        ? ` · 浏览 ${shareState.viewCounts[item.shareId]}` : "";
       meta.textContent =
         `${SHARE_KIND_LABELS[item.shareKind] || item.shareKind} · ${SHARE_RIGHTS_LABELS[item.rightsMode] || item.rightsMode}` +
-        ` · ${item.author || "佚名"} · ${String(item.date || "").slice(0, 10)} · ${item.wordCount} 字`;
+        ` · ${item.author || "佚名"} · ${String(item.date || "").slice(0, 10)} · ${item.wordCount} 字${statsText}`;
       link.append(title, meta);
       row.appendChild(link);
       section.appendChild(row);
@@ -175,7 +178,18 @@ async function loadShareHome() {
   } catch (error) {
     showError($("#shareError"), error.message);
   }
+  loadShareViewCounts();
   refreshSharePreviewStatus();
+}
+
+async function loadShareViewCounts() {
+  try {
+    const payload = await apiGet("/api/stats/views?namespace=share");
+    shareState.viewCounts = payload.items || {};
+  } catch (_error) {
+    shareState.viewCounts = {};
+  }
+  renderShareGroups();
 }
 
 async function refreshSharePreviewStatus() {

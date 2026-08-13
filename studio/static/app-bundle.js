@@ -51,6 +51,7 @@
   // studio/app/state.mjs
   var state = {
     articles: [],
+    viewCounts: {},
     searchQuery: "",
     searchResults: null,
     // Word 导入向导状态
@@ -2013,7 +2014,8 @@
     card.appendChild(head);
     const meta = document.createElement("p");
     meta.className = "meta-text";
-    meta.textContent = `\u7EA6 ${article.wordCount} \u5B57 \xB7 \u53D1\u5E03 ${formatDate(article.date)} \xB7 \u6700\u540E\u4FEE\u6539 ${formatDate(article.lastmod) || formatDate(article.modified)}`;
+    const statsText = article.articleId && state.viewCounts && typeof state.viewCounts[article.articleId] === "number" ? ` \xB7 \u6D4F\u89C8 ${state.viewCounts[article.articleId]}` : "";
+    meta.textContent = `\u7EA6 ${article.wordCount} \u5B57 \xB7 \u53D1\u5E03 ${formatDate(article.date)} \xB7 \u6700\u540E\u4FEE\u6539 ${formatDate(article.lastmod) || formatDate(article.modified)}${statsText}`;
     card.appendChild(meta);
     if (article.missingAnchors > 0) {
       const warn = document.createElement("p");
@@ -2169,8 +2171,19 @@
     } catch (error) {
       globalError(error.message);
     }
+    loadViewCounts();
     refreshPreviewStatus();
     loadFeedbackCard();
+  }
+  async function loadViewCounts() {
+    try {
+      const payload = await apiGet("/api/stats/views?namespace=works");
+      state.viewCounts = payload.items || {};
+    } catch (_error) {
+      state.viewCounts = {};
+    }
+    renderGroups();
+    if (state.searchQuery.trim()) runSearch();
   }
   $("#searchInput").addEventListener("input", () => {
     state.searchQuery = $("#searchInput").value;
@@ -2991,7 +3004,8 @@
     baseUrl: "",
     qzoneEnabled: false,
     qzoneConfigured: false,
-    pendingHash: ""
+    pendingHash: "",
+    viewCounts: {}
   };
   var shareImage = {
     files: [],
@@ -3048,7 +3062,8 @@
         title.textContent = item.title;
         const meta = document.createElement("span");
         meta.className = "share-row-meta";
-        meta.textContent = `${SHARE_KIND_LABELS[item.shareKind] || item.shareKind} \xB7 ${SHARE_RIGHTS_LABELS[item.rightsMode] || item.rightsMode} \xB7 ${item.author || "\u4F5A\u540D"} \xB7 ${String(item.date || "").slice(0, 10)} \xB7 ${item.wordCount} \u5B57`;
+        const statsText = item.shareId && shareState.viewCounts && typeof shareState.viewCounts[item.shareId] === "number" ? ` \xB7 \u6D4F\u89C8 ${shareState.viewCounts[item.shareId]}` : "";
+        meta.textContent = `${SHARE_KIND_LABELS[item.shareKind] || item.shareKind} \xB7 ${SHARE_RIGHTS_LABELS[item.rightsMode] || item.rightsMode} \xB7 ${item.author || "\u4F5A\u540D"} \xB7 ${String(item.date || "").slice(0, 10)} \xB7 ${item.wordCount} \u5B57${statsText}`;
         link.append(title, meta);
         row.appendChild(link);
         section.appendChild(row);
@@ -3125,7 +3140,17 @@
     } catch (error) {
       showError($("#shareError"), error.message);
     }
+    loadShareViewCounts();
     refreshSharePreviewStatus();
+  }
+  async function loadShareViewCounts() {
+    try {
+      const payload = await apiGet("/api/stats/views?namespace=share");
+      shareState.viewCounts = payload.items || {};
+    } catch (_error) {
+      shareState.viewCounts = {};
+    }
+    renderShareGroups();
   }
   async function refreshSharePreviewStatus() {
     try {

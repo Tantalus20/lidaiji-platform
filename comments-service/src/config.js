@@ -14,6 +14,8 @@ function loadConfig(overrides = {}) {
     port: integer(overrides.port ?? process.env.COMMENTS_PORT, 4317, 1, 65535),
     dataDir,
     database: overrides.database || process.env.COMMENTS_DB || path.join(dataDir, "comments.sqlite3"),
+    statsDatabase: overrides.statsDatabase || process.env.COMMENTS_STATS_DB || path.join(dataDir, "stats.sqlite3"),
+    shareManifest: overrides.shareManifest || process.env.SHARE_MANIFEST || path.join(dataDir, "share-identity-manifest.json"),
     staticDir: overrides.staticDir || process.env.COMMENTS_STATIC_DIR || "",
     publicOrigin: String(overrides.publicOrigin || process.env.COMMENTS_PUBLIC_ORIGIN || "http://127.0.0.1:1313").replace(/\/$/, ""),
     hmacSecret: overrides.hmacSecret || process.env.COMMENTS_HMAC_SECRET || "development-only-secret-change-before-production",
@@ -29,6 +31,7 @@ function loadConfig(overrides = {}) {
       hour: integer(overrides.rateHour ?? process.env.COMMENTS_RATE_HOUR, 15, 1, 1000),
       day: integer(overrides.rateDay ?? process.env.COMMENTS_RATE_DAY, 50, 1, 5000),
       loginTenMinutes: integer(overrides.loginTenMinutes ?? process.env.COMMENTS_LOGIN_RATE, 8, 1, 100),
+      statsPerMinute: integer(overrides.statsPerMinute ?? process.env.STATS_RATE_PER_MINUTE, 120, 1, 10000),
     }),
   });
 }

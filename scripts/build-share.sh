@@ -91,6 +91,10 @@ PY
 
 SITE_DIR="$CANDIDATE/site" node "$ROOT/tests/check-share-site.mjs" "$ROOT"
 
+# 浏览统计身份清单（V1）：items/<shareId>/index.md → shareId/slug/title/draft，
+# 草稿剔除；供 stats 服务校验 share 身份（存在即 published）。
+"$PYTHON" "$ROOT/scripts/build-share-identity-manifest.py" "$ROOT" "$OUT/share-identity-manifest.json"
+
 # 原子切换：current → previous，candidate → current（均为符号链接，指向不可变候选）
 if [[ -L "$CURRENT" ]]; then
   rm -f "$PREVIOUS"

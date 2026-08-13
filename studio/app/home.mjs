@@ -38,7 +38,9 @@ function articleCard(article, snippet) {
 
   const meta = document.createElement("p");
   meta.className = "meta-text";
-  meta.textContent = `约 ${article.wordCount} 字 · 发布 ${formatDate(article.date)} · 最后修改 ${formatDate(article.lastmod) || formatDate(article.modified)}`;
+  const statsText = article.articleId && state.viewCounts && typeof state.viewCounts[article.articleId] === "number"
+    ? ` · 浏览 ${state.viewCounts[article.articleId]}` : "";
+  meta.textContent = `约 ${article.wordCount} 字 · 发布 ${formatDate(article.date)} · 最后修改 ${formatDate(article.lastmod) || formatDate(article.modified)}${statsText}`;
   card.appendChild(meta);
   if (article.missingAnchors > 0) {
     const warn = document.createElement("p");
@@ -200,8 +202,20 @@ async function loadHome() {
   } catch (error) {
     globalError(error.message);
   }
+  loadViewCounts();
   refreshPreviewStatus();
   loadFeedbackCard();
+}
+
+async function loadViewCounts() {
+  try {
+    const payload = await apiGet("/api/stats/views?namespace=works");
+    state.viewCounts = payload.items || {};
+  } catch (_error) {
+    state.viewCounts = {};
+  }
+  renderGroups();
+  if (state.searchQuery.trim()) runSearch();
 }
 
 $("#searchInput").addEventListener("input", () => {

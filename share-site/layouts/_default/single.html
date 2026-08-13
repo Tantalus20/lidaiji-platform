@@ -1,5 +1,5 @@
 {{ define "main" }}
-<article class="reading-layout">
+<article class="reading-layout" data-share-id="{{ .Params.shareId }}">
   <div class="article-main">
     <header class="article-header">
       <p class="eyebrow">{{ partial "kind-label.html" . }}<span class="header-kind"> {{ with .Params.rightsMode }}· {{ partial "rights-label.html" . }}{{ end }}</span></p>
@@ -13,6 +13,7 @@
       <p class="article-byline">
         <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "2006年1月2日" }}</time>
         · 全文 {{ .WordCount }} 字 · 约 {{ .ReadingTime }} 分钟
+        {{ with .Params.shareId }}· 浏览 <span data-view-count>—</span> 次{{ end }}
       </p>
       <div class="reader-tools" hidden>
         <span class="reader-tools-label" id="reader-font-label">字号</span>

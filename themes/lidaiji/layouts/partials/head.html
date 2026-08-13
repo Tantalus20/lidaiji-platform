@@ -17,6 +17,13 @@
     <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
   {{ end }}
 {{ end }}
+{{ if and .IsPage .Params.articleId }}
+  {{ with resources.Get "js/view-stats.js" }}
+    {{ with . | minify | fingerprint "sha384" }}
+      <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
+    {{ end }}
+  {{ end }}
+{{ end }}
 {{ if eq .Layout "search" }}
   {{ with resources.Get "js/search.js" }}
     {{ with . | minify | fingerprint "sha384" }}

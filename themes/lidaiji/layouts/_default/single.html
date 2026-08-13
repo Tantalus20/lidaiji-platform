@@ -5,7 +5,7 @@
   {{ if reflect.IsMap . }}{{ $commentMode = index . "paragraph" }}{{ end }}
 {{ end }}
 {{ $commentsOn := and .Site.Params.comments.enabled .Site.Params.comments.paragraphComments $commentMode .Params.articleId }}
-<article class="reading-layout">
+<article class="reading-layout" data-article-id="{{ .Params.articleId }}">
   <div class="article-main">
     <header class="article-header">
       <p class="eyebrow">{{ with .Params.collections }}《{{ index . 0 }}》{{ else }}{{ .Section }}{{ end }}</p></p>
@@ -28,6 +28,7 @@
         <time datetime="{{ $.Date.Format "2006-01-02" }}">{{ $.Date.Format "2006年1月2日" }}</time> 写于
         {{- if ne ($.Lastmod.Format "2006-01-02") ($.Date.Format "2006-01-02") }} · 修订于 <time datetime="{{ $.Lastmod.Format "2006-01-02" }}">{{ $.Lastmod.Format "2006年1月2日" }}</time>{{ end }}
         · 全文 {{ .WordCount }} 字 · 约 {{ .ReadingTime }} 分钟
+        {{ with .Params.articleId }}· 浏览 <span data-view-count>—</span> 次{{ end }}
       </p>
       <div class="reader-tools" hidden>
         <span class="reader-tools-label" id="reader-font-label">字号</span>
