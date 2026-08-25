@@ -381,6 +381,43 @@ class MultiImagePayloadTestCase(unittest.TestCase):
 
         return {k: _up.unquote_plus(v) for k, v in params.items()}
 
+    def test_upload_form_includes_refer_shuoshuo(self):
+        """上传表单必须声明 refer=shuoshuo（说说附件）。
+
+        缺省时 QQ 把图片当独立相册照片，每张生成一条相册动态（1+N 刷屏根因，
+        2026-08-25 官方对照实验证实：无 refer 产生 appid=4 动态，加 refer 为 0）。
+        """
+        import json as _json
+        import urllib.parse as _up
+
+        captured = []
+
+        class Spy:
+            def napcat_call(self, base, action, params):
+                if action == "get_credentials":
+                    return {"status": "ok", "data": {"cookies": "uin=o1; p_skey=abcdef0123456789; skey=abcdef0123456789"}}
+                return {"status": "ok", "data": {"user_id": "1"}}
+            def qzone_upload_multipart(self, url, data, headers):
+                captured.append(data.decode())
+                return _json.dumps({
+                    "ret": 0,
+                    "data": {"url": "https://up.qzone.qq.com/x?q=1&bo=BO_1&extra=2",
+                             "albumid": "ALB1", "lloc": "L1", "sloc": "S1",
+                             "type": "0", "height": 100, "width": 100},
+                })
+            def qzone_post_form(self, url, data, headers):
+                return _json.dumps({"code": 0})
+
+        ad = qzone_mod.QzoneAdapter(qzone_mod.QzoneAdapterConfig(
+            napcat_http_url="http://x", qq_account="1", transport=Spy()))
+        cookie = ad.fetch_cookie()
+        ad.upload_image(b"\x89PNG\r\n\x1a\n" + b"x", cookie)
+        assert captured, "上传请求未被捕获"
+        params = dict(x.split("=", 1) for x in captured[0].split("&"))
+        decoded = {k: _up.unquote_plus(v) for k, v in params.items()}
+        self.assertEqual(decoded.get("refer"), "shuoshuo", "上传必须带 refer=shuoshuo")
+        self.assertEqual(decoded.get("albumtype"), "7")
+
     def test_payload_shapes_2_6_9(self):
         for count in (1, 2, 6, 9):
             spy, params = self._capture(count)

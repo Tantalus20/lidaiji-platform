@@ -418,6 +418,10 @@ class QzoneAdapter:
             "filename": "filename",
             "uploadtype": "1",
             "albumtype": "7",
+            # 关键：声明为「说说附件」（官方网页同参数）。缺省时 QQ 把图片当
+            # 独立相册照片，每张生成一条 appid=4 相册动态（1+N 刷屏的根因，
+            # 2026-08-25 对照实验证实：无 refer Δ=2，refer=shuoshuo Δ=0）。
+            "refer": "shuoshuo",
             "skey": skey,
             "uin": uin,
             "p_skey": p_skey,
