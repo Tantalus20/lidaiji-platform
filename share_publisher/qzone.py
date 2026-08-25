@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 QZONE_COOKIE_DOMAIN = "qzone.qq.com"
 QZONE_PUBLISH_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6"
 QZONE_LIST_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6"
-QZONE_DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_del_feeds_v6"
+QZONE_DELETE_URL = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_delete_v6"
 QZONE_UPLOAD_URL = "https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image"
 QZONE_REFERRER = "https://user.qzone.qq.com/{uin}/infocenter"
 HTTP_TIMEOUT = 30.0
@@ -321,10 +321,10 @@ class QzoneAdapter:
         return posts
 
     def delete_post(self, post_id: str, cookie: str) -> bool:
-        """删除一条自己的说说（公开协议 emotion_cgi_del_feeds_v6）。
+        """删除一条自己的说说（真机验证：emotion_cgi_delete_v6，2026-08-25）。
 
-        注意（真机结论）：删除接口在当前会话上返回 HTTP 500，无法安全自动删除；
-        本方法如实返回/抛出失败，绝不在不确定时报告成功。
+        注意：emotion_cgi_del_feeds_v6 是日志/相册类端点（对说说恒 HTTP 500）；
+        说说删除的正确端点是 emotion_cgi_delete_v6（code:0 即成功）。
         """
         uin = self.config.qq_account
         gtk = self._gtk_from_cookie(cookie)
