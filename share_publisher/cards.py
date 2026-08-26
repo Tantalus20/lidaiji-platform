@@ -150,10 +150,15 @@ body {{
 
 
 # 连续长图模式（V0.4）：解除固定页高，正文自然流式排布，末尾域名脚注一次。
-CONTINUOUS_CSS = f"""
-html, body {{ width: {CARD_WIDTH}px; height: auto; background: var(--paper); color: var(--ink); }}
-#page-content {{ width: {CARD_WIDTH}px; height: auto; padding: 72px 96px 56px; box-sizing: border-box; }}
+# 可指定渲染宽度与字号（QQ 动态对高图仅下发 640 宽 → 长图按 640 宽设计字号）。
+def continuous_css(width: int, font_size: int) -> str:
+    return f"""
+html, body {{ width: {width}px; height: auto; }}
+body {{ overflow: visible; padding: 28px; }}
+#page-content {{ width: {width - 56}px; height: auto; }}
 #body-wrap {{ overflow: visible; }}
+.article-content {{ font-size: {font_size}px; }}
+#page-title h1 {{ font-size: {int(font_size * 1.5)}px; }}
 """
 
 
@@ -164,6 +169,8 @@ def continuous_html(
     byline: str = "",
     site_domain: str = "read.历代纪.cn",
     test_mode: bool = False,
+    width: int = CARD_WIDTH,
+    font_size: int = 30,
 ) -> str:
     """整篇连续长页 HTML（无分页、无页码；域名脚注仅末尾一次）。"""
     title_block = ""
@@ -173,7 +180,7 @@ def continuous_html(
     badge = '<div class="test-badge">Share V0.2 测试</div>' if test_mode else ""
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
-<style>{CARD_CSS}</style><style>{CONTINUOUS_CSS}</style></head>
+<style>{CARD_CSS}</style><style>{continuous_css(width, font_size)}</style></head>
 <body>
 {badge}
 <div id="page-content">

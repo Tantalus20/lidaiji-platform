@@ -192,6 +192,8 @@ def generate_long_cards(
     test_mode: bool = False,
     max_segments: int = 9,
     segment_target_height: int = 5200,
+    long_width: int = 640,
+    long_font_size: int = 22,
 ) -> dict:
     """整篇连续渲染为一条无缝长画布 → 按块边界切成 ≤max_segments 段 → 写 long manifest。
 
@@ -233,13 +235,14 @@ def generate_long_cards(
             raise RenderError("chromium-launch-failed", f"Chromium 启动失败：{error}") from error
         try:
             page = browser.new_page(
-                viewport={"width": cards.CARD_WIDTH, "height": cards.CARD_HEIGHT},
+                viewport={"width": long_width, "height": 1400},
                 device_scale_factor=cards.DEVICE_SCALE,
             )
             page.set_content(
                 cards.continuous_html(
                     blocks_html(blocks),
                     title=title, byline=byline, site_domain=site_domain, test_mode=test_mode,
+                    width=long_width, font_size=long_font_size,
                 )
             )
             page.wait_for_timeout(60)
@@ -262,7 +265,7 @@ def generate_long_cards(
     from PIL import Image
 
     img = Image.open(_io.BytesIO(full_png))
-    W_target = cards.CARD_WIDTH * cards.DEVICE_SCALE
+    W_target = long_width * cards.DEVICE_SCALE
     if img.width != W_target:
         img = img.crop((0, 0, W_target, img.height))  # 防横向溢出（滚动条/绝对定位元素）
     W, H = img.size
@@ -282,11 +285,14 @@ def generate_long_cards(
     for i in range(len(cuts) - 1):
         y0, y1 = cuts[i], cuts[i + 1]
         seg = img.crop((0, y0, W, y1))
+        if W > long_width:
+            # 2x 渲染 → LANCZOS 高质量缩到下发宽度（QQ 对高图仅下发 640 宽）
+            seg = seg.resize((long_width, round(seg.height * long_width / W)), Image.LANCZOS)
         name = f"{i + 1:02d}.png"
         seg.save(out_dir / name, format="PNG")
         entry = {
             "index": i + 1,
-            "width": W,
+            "width": seg.width,
             "height": seg.height,
             "bytes": (out_dir / name).stat().st_size,
             "sha256": sha256_file(out_dir / name),

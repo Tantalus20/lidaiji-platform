@@ -200,12 +200,10 @@ class RealRenderLongTestCase(unittest.TestCase):
         self.assertEqual(long_manifest["sourceArtifactHash"], __import__("hashlib").sha256((cards_dir / "manifest.json").read_bytes()).hexdigest())
         from PIL import Image
 
-        first = Image.open(cards_dir / "01.png")
-        expected_width = first.width
-        first.close()
         for img in long_manifest["publishImages"]:
             composed = Image.open(out / f"{img['index']:02d}.png")
-            self.assertEqual(composed.size, (expected_width, img["height"]))
+            self.assertEqual(composed.size, (img["width"], img["height"]))
+            self.assertEqual(composed.size[0], 640, "长图段宽 = QQ 下发上限 640")
             composed.close()
 
 
