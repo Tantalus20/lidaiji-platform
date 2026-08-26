@@ -40,6 +40,11 @@ def long_artifact_dir(share_root: Path, share_id: str, share_revision: str) -> P
     return share_root / "artifacts" / share_id / share_revision / LONG_TEMPLATE_VERSION
 
 
+def long_manifest_exists(share_root: Path, share_id: str, share_revision: str) -> bool:
+    """长图 manifest 是否已生成（路径存在性，不校验内容）。"""
+    return (long_artifact_dir(share_root, share_id, share_revision) / MANIFEST_NAME).is_file()
+
+
 def read_long_manifest(share_root: Path, share_id: str, share_revision: str) -> dict:
     manifest_path = long_artifact_dir(share_root, share_id, share_revision) / MANIFEST_NAME
     if not manifest_path.is_file():

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -24,11 +25,15 @@ def main() -> int:
         return 1
     items_dir = root / "items"
     if not items_dir.is_dir():
-        print(
-            f"分享内容校验失败：分享内容根为空（{root}）。请先在 Author Studio「长文分享」新建并保存分享。",
-            file=sys.stderr,
-        )
-        return 1
+        # 空内容默认拒绝（防误发布）；显式 SHARE_ALLOW_EMPTY=1 允许
+        # 刻意清空（如测试内容全部下线）。空站仅含壳页面，不含任何分享。
+        if os.environ.get("SHARE_ALLOW_EMPTY") != "1":
+            print(
+                f"分享内容校验失败：分享内容根为空（{root}）。请先在 Author Studio「长文分享」新建并保存分享。",
+                file=sys.stderr,
+            )
+            return 1
+        print("分享内容为空（SHARE_ALLOW_EMPTY=1）：按空站构建。")
     errors = share.validate_all(project_root)
     if errors:
         print(f"分享内容校验失败：{len(errors)} 项。", file=sys.stderr)

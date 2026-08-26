@@ -162,7 +162,10 @@ if (published.length >= 2) {
   const countLinks = [...htmlFiles].filter((f) => read(f).includes("article-pager")).length;
   assert(countLinks === published.length, `上下篇导航页数不符：${countLinks}/${published.length}`);
 } else {
-  assert(published.length > 0, "没有已发布分享用于结构检查");
+  assert(
+    published.length > 0 || process.env.SHARE_ALLOW_EMPTY === "1",
+    "没有已发布分享用于结构检查（刻意清空请设 SHARE_ALLOW_EMPTY=1）",
+  );
 }
 
 const categoryTerms = new Set();

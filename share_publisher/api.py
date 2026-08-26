@@ -168,7 +168,12 @@ class SharePublicationService:
                 )
             limit = _image_max_count()
             artifact_mode = "cards"
-            use_long = manifest.get("pageCount", 0) > limit and mode == pubdb.MODE_IMAGE_FULL
+            # 长图路径触发：卡片页数超上限，或已存在有效长图 manifest
+            # （超长文卡片无法全量渲染（>30 页拒绝），以长图 manifest 为准）
+            use_long = mode == pubdb.MODE_IMAGE_FULL and (
+                manifest.get("pageCount", 0) > limit
+                or artifacts.long_manifest_exists(self.share_root, share_id, share_revision)
+            )
             if use_long:
                 # V0.3：>9 页全文 → 使用长图 artifact（最终图片 ≤9）。
                 # 先判断路径再校验哈希：UI 传的是长图 manifest 哈希，
@@ -214,7 +219,10 @@ class SharePublicationService:
                 else:
                     names = artifacts.page_names(manifest)[: limit]
             for name in names:
-                target = artifacts.safe_resolve(self.share_root, share_id, share_revision, name)
+                target = artifacts.safe_resolve(
+                    self.share_root, share_id, share_revision, name,
+                    long=(artifact_mode == "long-cards"),
+                )
                 image_hashes.append(artifacts.sha256_file(target))
             metadata["artifactMode"] = artifact_mode
             metadata["imageNames"] = names
