@@ -262,6 +262,9 @@ def generate_long_cards(
     from PIL import Image
 
     img = Image.open(_io.BytesIO(full_png))
+    W_target = cards.CARD_WIDTH * cards.DEVICE_SCALE
+    if img.width != W_target:
+        img = img.crop((0, 0, W_target, img.height))  # 防横向溢出（滚动条/绝对定位元素）
     W, H = img.size
     scale = cards.DEVICE_SCALE
     tops = sorted({int(t * scale) for t in bounds["tops"] if t * scale > 400 and t * scale < H - 400})

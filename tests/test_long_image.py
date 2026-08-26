@@ -188,16 +188,16 @@ class RealRenderLongTestCase(unittest.TestCase):
         cards_dir = Path(self.temp.name) / "cards"
         man = generate_cards(md, title="长图渲染测试", byline="站主", out_dir=cards_dir, test_mode=True)
         self.assertGreater(man["pageCount"], 9)
-        # 长图合成（≤9 张）
-        from share_publisher import longimage
+        # 连续长图（≤9 段；段宽恒等于卡片宽，段高 ≤ 目标）
         from share_publisher.render import generate_long_cards
 
         out = Path(self.temp.name) / "long"
         long_manifest = generate_long_cards(
-            cards_dir, out, constraints=longimage.LongImageConstraints(),
+            md, out, cards_dir=cards_dir, title="长图渲染测试", byline="站主", test_mode=True,
         )
         self.assertLessEqual(long_manifest["imageCount"], 9)
-        self.assertEqual(long_manifest["sourcePageCount"], man["pageCount"])
+        self.assertEqual(long_manifest["mode"], "continuous-v1")
+        self.assertEqual(long_manifest["sourceArtifactHash"], __import__("hashlib").sha256((cards_dir / "manifest.json").read_bytes()).hexdigest())
         from PIL import Image
 
         first = Image.open(cards_dir / "01.png")
