@@ -286,7 +286,7 @@ class PublicationImageModeTestCase(unittest.TestCase):
             # 先准备 artifact（供 runner 读取）
             art_dir = artifacts.artifact_dir(Path(self.temp.name) / "share", record["share_id"], record["share_revision"])
             art_dir.mkdir(parents=True)
-            (art_dir / "01.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"x")
+            (art_dir / "01.png").write_bytes(_tiny_png())
             artifacts.write_manifest(art_dir, {
                 "templateVersion": "qzone-card-v1",
                 "rendererVersion": "share-card-renderer-1",
@@ -403,42 +403,46 @@ class LongCardsE2ETestCase(unittest.TestCase):
         }
         return artifacts.write_manifest(self.cards_dir, manifest)
 
-    def test_generate_long_and_freeze(self):
+    def test_generate_long_continuous_and_freeze(self):
+        try:
+            from playwright.sync_api import sync_playwright  # noqa: F401
+        except ImportError:
+            self.skipTest("本机未安装 playwright")
         cards_hash = self._build_cards(10)
-        from share_publisher import longimage
         from share_publisher.render import generate_long_cards
 
+        md = "\n\n".join(f"第{i}段。" + "连续渲染验证" * 60 for i in range(30))
         long_manifest = generate_long_cards(
-            self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
-            constraints=longimage.LongImageConstraints(),
+            md, self.long_dir, cards_dir=self.cards_dir,
+            share_id=self.share_id, share_revision=self.rev,
+            title="连续长图", byline="站主", segment_target_height=1200,
         )
-        self.assertEqual(long_manifest["imageCount"], 5)
-        self.assertEqual(long_manifest["groupSize"], 2)
+        self.assertGreaterEqual(long_manifest["imageCount"], 2)
+        self.assertLessEqual(long_manifest["imageCount"], 9)
+        self.assertEqual(long_manifest["mode"], "continuous-v1")
         self.assertEqual(long_manifest["sourceArtifactHash"], cards_hash)
-        self.assertEqual(len(long_manifest["publishImages"]), 5)
-        self.assertEqual(long_manifest["publishImages"][0]["pages"], [1, 2])
-        # 每张 SHA 可复验
         for img in long_manifest["publishImages"]:
             self.assertEqual(
                 artifacts.sha256_file(self.long_dir / f"{img['index']:02d}.png"), img["sha256"]
             )
-        # stale：cards 变化 → long stale
-        self._build_cards(10)  # 重新生成同内容 cards（hash 相同）
-        cards_hash2 = artifacts.sha256_file(self.cards_dir / artifacts.MANIFEST_NAME)
-        self.assertEqual(cards_hash, cards_hash2, "同内容 cards 哈希稳定")
-        # 重建不同页数（manifest 变化）→ long stale；同页数重建 → 不 stale
+        # stale：cards manifest 变化 → long stale
         self._build_cards(12)
         cards_hash4 = artifacts.sha256_file(self.cards_dir / artifacts.MANIFEST_NAME)
         self.assertTrue(artifacts.long_stale(long_manifest, self.rev, cards_hash4))
         self.assertFalse(artifacts.long_stale(long_manifest, self.rev, cards_hash))
 
     def test_tamper_rejected(self):
+        try:
+            from playwright.sync_api import sync_playwright  # noqa: F401
+        except ImportError:
+            self.skipTest("本机未安装 playwright")
         self._build_cards(10)
-        from share_publisher import longimage
         from share_publisher.render import generate_long_cards
 
-        generate_long_cards(self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
-                            constraints=longimage.LongImageConstraints())
+        md = "\n\n".join(f"第{i}段。" + "连续渲染验证" * 80 for i in range(20))
+        generate_long_cards(md, self.long_dir, cards_dir=self.cards_dir,
+                            share_id=self.share_id, share_revision=self.rev,
+                            segment_target_height=1200)
         from share_publisher.api import _read_long_for_publish
 
         # 未篡改：必须通过完整性校验
@@ -452,13 +456,16 @@ class LongCardsE2ETestCase(unittest.TestCase):
     def test_create_long_path_accepts_long_hash(self):
         # 回归：create() 对 >9 页全文必须接受「长图 manifest 哈希」，
         # 不得先与卡片 manifest 哈希比对而拒绝（LQ01 真机轮发现的缺陷）。
-        from share_publisher import longimage
+        try:
+            from playwright.sync_api import sync_playwright  # noqa: F401
+        except ImportError:
+            self.skipTest("本机未安装 playwright")
         from share_publisher.render import generate_long_cards
 
         self._build_cards(10)
         generate_long_cards(
-            self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
-            constraints=longimage.LongImageConstraints(),
+            "长图正文。\n" * 400, self.long_dir, cards_dir=self.cards_dir,
+            share_id=self.share_id, share_revision=self.rev,
         )
         long_hash = artifacts.sha256_file(self.long_dir / artifacts.MANIFEST_NAME)
         item_dir = self.share_root / "items" / self.share_id
@@ -483,7 +490,7 @@ class LongCardsE2ETestCase(unittest.TestCase):
                 )
                 pub = r["publication"]
                 self.assertEqual(pub["mode"], pubdb.MODE_IMAGE_FULL)
-                self.assertEqual(len(json.loads(pub["image_hashes_json"])), 5)
+                self.assertGreaterEqual(len(json.loads(pub["image_hashes_json"])), 1)
                 self.assertEqual(json.loads(pub["metadata_json"])["artifactMode"], "long-cards")
                 # 冻结哈希 = 长图 manifest 哈希
                 self.assertEqual(pub["artifact_manifest_hash"], long_hash)
@@ -500,14 +507,19 @@ class LongCardsE2ETestCase(unittest.TestCase):
     def test_upload_uses_long_artifact_for_long_mode(self):
         # 回归：long-cards 模式的上传循环必须读取长图目录的图片（LQ01 真机轮：
         # 校验走了长图，上传却读了卡片目录，结果发出去的是短图）。
-        from share_publisher import longimage
+        try:
+            from playwright.sync_api import sync_playwright  # noqa: F401
+        except ImportError:
+            self.skipTest("本机未安装 playwright")
         from share_publisher.render import generate_long_cards
         from share_publisher import __main__ as pubmain
 
         self._build_cards(10)
+        md = "\n\n".join(f"第{i}段。" + "连续渲染验证" * 60 for i in range(20))
         generate_long_cards(
-            self.cards_dir, self.long_dir, share_id=self.share_id, share_revision=self.rev,
-            constraints=longimage.LongImageConstraints(),
+            md, self.long_dir, cards_dir=self.cards_dir,
+            share_id=self.share_id, share_revision=self.rev,
+            segment_target_height=1200,
         )
         long_bytes = (self.long_dir / "01.png").read_bytes()
         card_bytes = (self.cards_dir / "01.png").read_bytes()
@@ -526,24 +538,22 @@ class LongCardsE2ETestCase(unittest.TestCase):
         class FakeRecord(dict):
             pass
 
+        long_manifest_now = artifacts.read_long_manifest(self.share_root, self.share_id, self.rev)
+        names_now = [f"{img['index']:02d}.png" for img in long_manifest_now["publishImages"]]
         record = FakeRecord(
             share_id=self.share_id,
             share_revision=self.rev,
             mode="image-full-link",
-            metadata_json=json.dumps({
-                "artifactMode": "long-cards",
-                "imageNames": [f"{i:02d}.png" for i in range(1, 6)],
-            }),
+            metadata_json=json.dumps({"artifactMode": "long-cards", "imageNames": names_now}),
         )
         names = pubmain._verify_long_snapshot(self.share_root, record)
-        self.assertEqual(names, [f"{i:02d}.png" for i in range(1, 6)])
+        self.assertEqual(names, names_now)
         pic_ids = pubmain._upload_publication_images(FakeAdapter(), "cookie", record, self.share_root)
-        self.assertEqual(len(uploaded), 5)
         for i, blob in enumerate(uploaded):
             self.assertEqual(
                 blob, (self.long_dir / f"{i + 1:02d}.png").read_bytes(), f"第 {i + 1} 张必须来自长图目录"
             )
-            self.assertNotEqual(blob, card_bytes)
+        self.assertEqual(len(pic_ids), len(names))
 
     def test_small_pages_no_long_needed(self):
         # 1-9 页：cards 即可，create 不会要求长图
@@ -575,6 +585,17 @@ class LongCardsE2ETestCase(unittest.TestCase):
 
 
 from share_publisher.api import SharePublishError  # noqa: E402
+
+def _tiny_png():
+    import io as _io
+
+    from PIL import Image as PImage
+
+    buf = _io.BytesIO()
+    PImage.new("RGB", (8, 8), (200, 200, 190)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
 
 if __name__ == "__main__":
     unittest.main()

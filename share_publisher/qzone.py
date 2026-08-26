@@ -404,7 +404,11 @@ class QzoneAdapter:
     # -- 图片上传与图文发布（V0.2） ------------------------------------------
 
     def upload_image(self, png_bytes: bytes, cookie: str) -> tuple[str, str]:
-        """上传单张 PNG 到 QZone（base64 表单，行为参考公开协议），返回 (picbo, richval)。"""
+        """上传单张图到 QZone（base64 表单，行为对齐官方网页），返回 (picbo, richval)。
+
+        官方网页同款高清参数（upload_hd/hd_quality 等）+ JPEG q96 转码：
+        缺省时 QQ 服务端按普通图强压缩，长图会明显变糊（2026-08-25 抓包对照）。
+        """
         if not png_bytes[:8] == b"\x89PNG\r\n\x1a\n":
             raise QzoneAdapterError("upload-not-png", "仅允许上传 PNG 图片。")
         uin = self.config.qq_account
@@ -413,6 +417,17 @@ class QzoneAdapter:
         if not skey:
             raise QzoneAdapterError("cookie-invalid", "Cookie 缺少 p_skey/skey，可能已过期。")
         import base64
+        import io
+
+        # PNG → JPEG q96（官方网页同款转码；白底压平，避免 QQ 二次压缩叠加伪影）
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(png_bytes))
+        if image.mode in ("RGBA", "P"):
+            image = image.convert("RGB")
+        hd = io.BytesIO()
+        image.save(hd, format="JPEG", quality=96)
+        width, height = image.size
 
         form = urllib.parse.urlencode({
             "filename": "filename",
@@ -422,12 +437,20 @@ class QzoneAdapter:
             # 独立相册照片，每张生成一条 appid=4 相册动态（1+N 刷屏的根因，
             # 2026-08-25 对照实验证实：无 refer Δ=2，refer=shuoshuo Δ=0）。
             "refer": "shuoshuo",
+            "exttype": "0",
+            "upload_hd": "1",
+            "hd_width": str(width),
+            "hd_height": str(height),
+            "hd_quality": "96",
             "skey": skey,
             "uin": uin,
+            "p_uin": uin,
             "p_skey": p_skey,
             "output_type": "json",
+            "charset": "utf-8",
+            "output_charset": "utf-8",
             "base64": "1",
-            "picfile": base64.b64encode(png_bytes).decode("ascii"),
+            "picfile": base64.b64encode(hd.getvalue()).decode("ascii"),
         }).encode("utf-8")
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",

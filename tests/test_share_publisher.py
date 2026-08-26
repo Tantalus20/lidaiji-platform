@@ -369,7 +369,13 @@ class MultiImagePayloadTestCase(unittest.TestCase):
         ad = qzone_mod.QzoneAdapter(qzone_mod.QzoneAdapterConfig(
             napcat_http_url="http://x", qq_account="1", transport=spy, visibility=config or "public"))
         cookie = ad.fetch_cookie()
-        png = b"\x89PNG\r\n\x1a\n" + b"x"
+        import io as _io
+
+        from PIL import Image as _PImage
+
+        _buf = _io.BytesIO()
+        _PImage.new("RGB", (8, 8), (200, 200, 190)).save(_buf, format="PNG")
+        png = _buf.getvalue()
         pics = [ad.upload_image(png, cookie) for _ in range(count)]
         ad.publish_text_with_images("测试", cookie, pics)
         payload = [d for k, d in spy.calls if k == "publish"][0]
@@ -411,7 +417,13 @@ class MultiImagePayloadTestCase(unittest.TestCase):
         ad = qzone_mod.QzoneAdapter(qzone_mod.QzoneAdapterConfig(
             napcat_http_url="http://x", qq_account="1", transport=Spy()))
         cookie = ad.fetch_cookie()
-        ad.upload_image(b"\x89PNG\r\n\x1a\n" + b"x", cookie)
+        import io as _io2
+
+        from PIL import Image as _PImage2
+
+        _b2 = _io2.BytesIO()
+        _PImage2.new("RGB", (8, 8), (200, 200, 190)).save(_b2, format="PNG")
+        ad.upload_image(_b2.getvalue(), cookie)
         assert captured, "上传请求未被捕获"
         params = dict(x.split("=", 1) for x in captured[0].split("&"))
         decoded = {k: _up.unquote_plus(v) for k, v in params.items()}
@@ -440,6 +452,45 @@ class MultiImagePayloadTestCase(unittest.TestCase):
             self.assertEqual(len(bo_list), count, f"{count}图 pic_bo 条目数")
             self.assertNotIn("&", p["pic_bo"], "pic_bo 不得含 &（bo 截断）")
             self.assertNotIn("BO_CLEAN_1&extra", p["pic_bo"], "bo 提取必须截断在 &")
+
+    def test_upload_form_official_hd_and_refer(self):
+        """上传表单对齐官方网页：refer=shuoshuo + 高清参数（防糊）。"""
+        import json as _json
+        import urllib.parse as _up
+
+        class Spy:
+            def __init__(self):
+                self.bodies = []
+            def napcat_call(self, base, action, params):
+                if action == "get_credentials":
+                    return {"status": "ok", "data": {"cookies": "uin=o1; p_skey=abcdef0123456789; skey=abcdef0123456789"}}
+                return {"status": "ok", "data": {"user_id": "1"}}
+            def qzone_upload_multipart(self, url, data, headers):
+                self.bodies.append(data.decode())
+                return _json.dumps({"ret": 0, "data": {"url": "https://up.qzone.qq.com/x?bo=B1",
+                                 "albumid": "A", "lloc": "L1", "sloc": "S1", "type": "0",
+                                 "height": 100, "width": 100}})
+            def qzone_post_form(self, url, data, headers):
+                return _json.dumps({"code": 0})
+
+        spy = Spy()
+        ad = qzone_mod.QzoneAdapter(qzone_mod.QzoneAdapterConfig(
+            napcat_http_url="http://x", qq_account="1", transport=spy))
+        cookie = ad.fetch_cookie()
+        import io as _io
+
+        from PIL import Image as _PImage
+
+        buf = _io.BytesIO()
+        _PImage.new("RGB", (1080, 1440), (240, 240, 230)).save(buf, format="PNG")
+        ad.upload_image(buf.getvalue(), cookie)
+        decoded = {k: _up.unquote_plus(v) for k, v in (
+            x.split("=", 1) for x in spy.bodies[0].split("&"))}
+        self.assertEqual(decoded.get("refer"), "shuoshuo")
+        self.assertEqual(decoded.get("upload_hd"), "1")
+        self.assertEqual(decoded.get("hd_quality"), "96")
+        self.assertEqual(decoded.get("hd_width"), "1080")
+        self.assertEqual(decoded.get("hd_height"), "1440")
 
     def test_visibility_fields(self):
         for visibility, expected in [("public", {}), ("friends", {"who_can_see": "1"}),

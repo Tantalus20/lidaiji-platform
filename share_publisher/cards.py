@@ -147,6 +147,46 @@ body {{
 """
 
 
+
+
+# 连续长图模式（V0.4）：解除固定页高，正文自然流式排布，末尾域名脚注一次。
+CONTINUOUS_CSS = f"""
+html, body {{ width: {CARD_WIDTH}px; height: auto; background: var(--paper); color: var(--ink); }}
+#page-content {{ width: {CARD_WIDTH}px; height: auto; padding: 72px 96px 56px; box-sizing: border-box; }}
+#body-wrap {{ overflow: visible; }}
+"""
+
+
+def continuous_html(
+    blocks_html: str,
+    *,
+    title: str = "",
+    byline: str = "",
+    site_domain: str = "read.历代纪.cn",
+    test_mode: bool = False,
+) -> str:
+    """整篇连续长页 HTML（无分页、无页码；域名脚注仅末尾一次）。"""
+    title_block = ""
+    if title:
+        byline_block = f'<p class="byline">{byline}</p>' if byline else ""
+        title_block = f'<div id="page-title"><h1>{title}</h1>{byline_block}</div>'
+    badge = '<div class="test-badge">Share V0.2 测试</div>' if test_mode else ""
+    return f"""<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<style>{CARD_CSS}</style><style>{CONTINUOUS_CSS}</style></head>
+<body>
+{badge}
+<div id="page-content">
+  {title_block}
+  <div id="body-wrap"><div class="article-content">{blocks_html}</div></div>
+  <div id="page-footer">
+    <span>{site_domain}</span>
+    <span>长图 · 历代纪</span>
+  </div>
+</div>
+</body></html>"""
+
+
 def page_html(
     blocks_html: str,
     *,

@@ -180,49 +180,135 @@ def generate_cards(
 
 
 def generate_long_cards(
-    cards_dir: Path,
+    markdown_body: str,
     out_dir: Path,
     *,
+    cards_dir: Path,
     share_id: str = "",
     share_revision: str = "",
-    constraints=None,
+    title: str = "",
+    byline: str = "",
+    site_domain: str = "read.历代纪.cn",
+    test_mode: bool = False,
+    max_segments: int = 9,
+    segment_target_height: int = 5200,
 ) -> dict:
-    """读取 cards artifact → 规划 → 纯拼接合成长图 → 写 long manifest。
+    """整篇连续渲染为一条无缝长画布 → 按块边界切成 ≤max_segments 段 → 写 long manifest。
 
-    out_dir 为 qzone-long-cards-v1 目录；返回 long manifest。
+    V0.4 连续长图（替代整页卡片拼接）：
+    - 无页码、无分页页脚；域名脚注仅末尾一次；
+    - 切点只落在块边界（段落/诗歌/标题间隙），段内零打断；
+    - 段高均衡（目标 segment_target_height 栅格像素），上限 max_segments。
+    cards_dir 仅用于 sourceArtifactHash（stale 判定身份不变）。
     """
+    import math
+
     from share_publisher import artifacts as art
-    from share_publisher import longimage
+    from share_publisher.cards import continuous_html
 
     cards_manifest = _read_cards_manifest(cards_dir)
     source_hash = sha256_file(cards_dir / art.MANIFEST_NAME)
-    page_names = art.page_names(cards_manifest)
-    card_paths: dict[int, Path] = {}
-    for name in page_names:
-        index = int("".join(ch for ch in name if ch.isdigit()) or "0")
-        card_paths[index] = cards_dir / name
-    plan = longimage.plan_long_images(len(page_names), constraints or longimage.env_constraints())
-    results = longimage.compose_long_images(card_paths, plan, out_dir, constraints or longimage.env_constraints())
-    page_hashes = [
-        {"index": i, "sha256": sha256_file(cards_dir / name)}
-        for i, name in enumerate(page_names, start=1)
-    ]
+
+    blocks = parse_blocks(markdown_body)
+    if not blocks:
+        raise RenderError("empty-content", "正文为空，无法生成图片。")
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as error:
+        raise RenderError(
+            "playwright-missing", "本机缺少 Playwright（仅 Mac 开发环境需要；服务器不安装）。"
+        ) from error
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    started = time.monotonic()
+    title_html = ""
+    if title:
+        byline_html = f'<p class="byline">{byline}</p>' if byline else ""
+        title_html = f'<div id="page-title"><h1>{title}</h1>{byline_html}</div>'
+
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch()
+        except Exception as error:
+            raise RenderError("chromium-launch-failed", f"Chromium 启动失败：{error}") from error
+        try:
+            page = browser.new_page(
+                viewport={"width": cards.CARD_WIDTH, "height": cards.CARD_HEIGHT},
+                device_scale_factor=cards.DEVICE_SCALE,
+            )
+            page.set_content(
+                cards.continuous_html(
+                    blocks_html(blocks),
+                    title=title, byline=byline, site_domain=site_domain, test_mode=test_mode,
+                )
+            )
+            page.wait_for_timeout(60)
+
+            bounds = page.evaluate(
+                """() => {
+                  const wrap = document.querySelector('.article-content');
+                  const tops = [...wrap.children].map(el => el.getBoundingClientRect().top + window.scrollY);
+                  const footer = document.getElementById('page-footer').getBoundingClientRect();
+                  return { tops, total: footer.bottom + window.scrollY };
+                }"""
+            )
+            full_png = page.screenshot(full_page=True)
+        finally:
+            browser.close()
+
+    # —— 切点计算（栅格像素；切点必须落在块边界）——
+    import io as _io
+
+    from PIL import Image
+
+    img = Image.open(_io.BytesIO(full_png))
+    W, H = img.size
+    scale = cards.DEVICE_SCALE
+    tops = sorted({int(t * scale) for t in bounds["tops"] if t * scale > 400 and t * scale < H - 400})
+    n_segments = max(1, min(max_segments, math.ceil(H / segment_target_height)))
+    ideal = H / n_segments
+    cuts = [0]
+    for i in range(1, n_segments):
+        target = round(i * ideal)
+        near = [c for c in tops if cuts[-1] + 600 <= c <= H - 600]
+        cut = min(near, key=lambda c: abs(c - target)) if near else min(max(target, cuts[-1] + 600), H - 600)
+        cuts.append(cut)
+    cuts.append(H)
+
+    results = []
+    for i in range(len(cuts) - 1):
+        y0, y1 = cuts[i], cuts[i + 1]
+        seg = img.crop((0, y0, W, y1))
+        name = f"{i + 1:02d}.png"
+        seg.save(out_dir / name, format="PNG")
+        entry = {
+            "index": i + 1,
+            "width": W,
+            "height": seg.height,
+            "bytes": (out_dir / name).stat().st_size,
+            "sha256": sha256_file(out_dir / name),
+        }
+        results.append(entry)
+        del seg
+
     manifest = {
         "templateVersion": art.LONG_TEMPLATE_VERSION,
-        "rendererVersion": art.LONG_RENDERER_VERSION,
+        "rendererVersion": "share-long-composer-2-continuous",
+        "mode": "continuous-v1",
         "shareId": share_id,
         "shareRevision": share_revision,
         "sourceArtifactHash": source_hash,
-        "sourcePageCount": len(page_names),
-        "groupSize": len(plan[0]) if plan else 0,
+        "segmentCount": len(results),
+        "groupSize": 0,
         "imageCount": len(results),
-        "width": results[0]["width"] if results else 0,
-        "separatorPx": (constraints or longimage.env_constraints()).separator_px,
-        "pageCards": page_hashes,
+        "width": W,
+        "fullHeight": H,
+        "cutPoints": cuts,
         "publishImages": results,
         "generatedAt": _now_iso(),
     }
     write_manifest(out_dir, manifest)
+    print(f"连续长图: {H}px → {len(results)} 段，耗时 {time.monotonic() - started:.1f}s")
     return manifest
 
 
