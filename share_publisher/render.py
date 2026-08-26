@@ -63,6 +63,7 @@ def generate_cards(
     site_domain: str = "read.历代纪.cn",
     test_mode: bool = False,
     max_pages: int = cards.MAX_PAGES,
+    excerpt_truncate: bool = False,
 ) -> dict:
     """生成图片卡到 out_dir；返回 manifest dict。
 
@@ -124,11 +125,17 @@ def generate_cards(
                 content_height=usable_height,
                 block_gap=0.6 * 30.0,  # 块间距 ≈ 0.6em
             )
+            full_page_count = len(pages)
+            truncated = False
             if len(pages) > max_pages:
-                raise RenderError(
-                    "too-many-pages",
-                    f"图片将达 {len(pages)} 页，超过单次建议上限 {max_pages} 页；请改用图片节选或摘要+链接。",
-                )
+                if not excerpt_truncate:
+                    raise RenderError(
+                        "too-many-pages",
+                        f"图片将达 {len(pages)} 页，超过单次建议上限 {max_pages} 页；请改用图片节选或摘要+链接。",
+                    )
+                # 超长文节选：保留前 max_pages 页（配合「阅读全文」链接）
+                pages = pages[:max_pages]
+                truncated = True
 
             files = []
             for page_index, page_blocks in enumerate(pages):
@@ -161,6 +168,8 @@ def generate_cards(
         "height": cards.CARD_HEIGHT,
         "deviceScale": cards.DEVICE_SCALE,
         "pageCount": len(pages),
+        "excerpt": truncated,
+        "fullPageCount": full_page_count,
         "siteDomain": site_domain,
         "files": files,
         "generatedAt": _now_iso(),

@@ -342,6 +342,30 @@ class RealRenderTestCase(unittest.TestCase):
         self.assertEqual(manifest["pageCount"], manifest2["pageCount"])
         self.assertEqual([f["name"] for f in manifest["files"]], [f["name"] for f in manifest2["files"]])
 
+    def test_excerpt_truncate_for_long_articles(self):
+        """超长文节选：分页超限时截取前 N 页并标记 excerpt（不拒绝渲染）。"""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("本机未安装 playwright（仅开发机需要）")
+        from share_publisher.render import generate_cards
+
+        # 足够长的正文（远超 max_pages）
+        md = "\n\n".join(f"第{i}段。" + "内容" * 120 for i in range(40))
+        out = Path(self.temp.name) / "cards"
+        from share_publisher.render import RenderError
+        with self.assertRaises(RenderError) as ctx:
+            generate_cards(md, title="t", byline="a", out_dir=out, test_mode=True, max_pages=3)
+        self.assertEqual(ctx.exception.code, "too-many-pages")
+
+        out2 = Path(self.temp.name) / "cards-excerpt"
+        manifest = generate_cards(md, title="t", byline="a", out_dir=out2, test_mode=True,
+                                  max_pages=3, excerpt_truncate=True)
+        self.assertLessEqual(manifest["pageCount"], 3)
+        self.assertTrue(manifest["excerpt"], "manifest 必须标记 excerpt")
+        self.assertGreater(manifest["fullPageCount"], 3, "fullPageCount 记录原始页数")
+        self.assertEqual(len(manifest["files"]), manifest["pageCount"])
+
 
 class LongCardsE2ETestCase(unittest.TestCase):
     """V0.3 长图端到端（本地，零真实网络）：cards → long → 快照 → 发布完整性。"""
