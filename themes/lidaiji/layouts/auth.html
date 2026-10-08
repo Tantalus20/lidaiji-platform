@@ -1,0 +1,26 @@
+{{ define "main" }}
+<section class="auth-page" data-auth-page>
+  <div class="auth-card">
+    <p class="eyebrow">历代纪 · 读者入口</p>
+    <h1>登录后发表评论</h1>
+    <p class="auth-intro">文章和公开评论仍可直接阅读；登录澄清南北账号后，你可以留下段评和章评。登录信息由澄清南北管理，本站不保存密码。</p>
+    <div class="auth-tabs" role="tablist">
+      <button type="button" class="auth-tab is-active" data-auth-tab="login">登录</button>
+      <button type="button" class="auth-tab" data-auth-tab="register">注册</button>
+    </div>
+    <form class="auth-form" data-auth-form="login">
+      <label>用户名<input name="username" autocomplete="username" maxlength="24" required></label>
+      <label>密码<input name="password" type="password" autocomplete="current-password" minlength="8" required></label>
+      <button class="button primary" type="submit">登录</button>
+    </form>
+    <form class="auth-form" data-auth-form="register" hidden>
+      <label>用户名<input name="username" autocomplete="username" maxlength="24" required></label>
+      <label>显示名称（可选）<input name="displayName" autocomplete="nickname" maxlength="40"></label>
+      <label>密码<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="button primary" type="submit">注册并登录</button>
+    </form>
+    <p class="auth-status" data-auth-status role="status"></p>
+    <p class="auth-back"><a data-auth-return href="/">← 返回原页面</a></p>
+  </div>
+</section>
+{{ end }}

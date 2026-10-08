@@ -34,6 +34,32 @@
     return value;
   }
 
+  async function requireReaderLogin() {
+    try {
+      const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) return false;
+      const data = await response.json();
+      return Boolean(data?.user);
+    } catch {
+      return false;
+    }
+  }
+
+  function loginUrl() {
+    return `/login/?return=${encodeURIComponent(location.href)}`;
+  }
+
+  function showLoginRequired() {
+    const message = document.createElement("span");
+    message.textContent = "发表评论需要登录澄清南北账号。";
+    const link = document.createElement("a");
+    link.href = loginUrl();
+    link.textContent = "登录 / 注册后继续";
+    link.className = "comment-login-link";
+    status.replaceChildren(message, " ", link);
+    status.dataset.tone = "error";
+  }
+
   function openPanel(button) {
     trigger = button;
     paragraphId = button.dataset.paragraphId;
@@ -41,12 +67,16 @@
     title.textContent = `本段段评`;
     excerpt.textContent = (paragraph?.textContent || "").trim().slice(0, 180);
     list.replaceChildren();
+    form.hidden = true;
     setStatus("正在读取已公开段评……", "muted");
-    form.hidden = mode !== "open";
-    if (mode === "locked") setStatus("本文段评已锁定，已公开内容仍可阅读。", "muted");
     panel.showModal();
     close.focus();
     fetchComments();
+    if (mode === "locked") setStatus("本文段评已锁定，已公开内容仍可阅读。", "muted");
+    if (mode === "open") requireReaderLogin().then((loggedIn) => {
+      if (loggedIn) form.hidden = false;
+      else showLoginRequired();
+    });
   }
 
   function commentNode(comment) {

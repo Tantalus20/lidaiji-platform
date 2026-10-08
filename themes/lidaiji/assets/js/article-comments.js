@@ -125,7 +125,37 @@
 
   moreButton.addEventListener("click", loadPage);
 
-  function openForm() {
+  async function requireReaderLogin() {
+    try {
+      const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) return false;
+      const data = await response.json();
+      return Boolean(data?.user);
+    } catch {
+      return false;
+    }
+  }
+
+  function loginUrl() {
+    return `/login/?return=${encodeURIComponent(location.href)}`;
+  }
+
+  function showLoginRequired() {
+    const message = document.createElement("span");
+    message.textContent = "发表评论需要登录澄清南北账号。";
+    const link = document.createElement("a");
+    link.href = loginUrl();
+    link.textContent = "登录 / 注册后继续";
+    link.className = "comment-login-link";
+    status.replaceChildren(message, " ", link);
+    status.dataset.tone = "error";
+  }
+
+  async function openForm() {
+    if (!(await requireReaderLogin())) {
+      showLoginRequired();
+      return;
+    }
     form.hidden = false;
     openButton.hidden = true;
     setStatus("");

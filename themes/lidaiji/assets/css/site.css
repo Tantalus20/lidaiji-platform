@@ -2473,3 +2473,27 @@ main {
 .article-content .end-note p {
   margin: 0.25em 0;
 }
+
+/* 账号入口与登录页：登录只用于评论，不阻断公开阅读。 */
+.header-account{display:inline-flex;align-items:center;gap:.45rem;min-height:40px;font-size:.82rem;white-space:nowrap}
+.account-link{color:var(--accent);font-weight:700;text-decoration:none}
+.account-link:hover{text-decoration:underline;text-underline-offset:.2em}
+.account-name{color:var(--ink-soft);font-weight:600}
+.account-logout{border:0;background:transparent;color:var(--ink-faint);font-size:.78rem;cursor:pointer}
+.account-logout:hover{color:var(--danger)}
+.auth-page{width:min(calc(100% - 2rem),520px);margin:0 auto;padding:clamp(3rem,10vh,7rem) 0 6rem}
+.auth-card{padding:clamp(1.5rem,5vw,2.5rem);border:1px solid var(--line);border-top:3px solid var(--accent);border-radius:var(--radius);background:var(--paper-raised);box-shadow:var(--shadow-raised)}
+.auth-card h1{margin:.4rem 0 1rem;font-family:var(--font-serif);font-size:clamp(2rem,6vw,3rem);font-weight:600}
+.auth-intro{color:var(--ink-soft);line-height:1.8}
+.auth-tabs{display:flex;gap:1rem;margin:2rem 0 1.25rem;border-bottom:1px solid var(--line)}
+.auth-tab{padding:.7rem .15rem;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ink-soft);cursor:pointer}
+.auth-tab.is-active{border-color:var(--accent);color:var(--accent);font-weight:700}
+.auth-form{display:grid;gap:1rem}
+.auth-form label{display:grid;gap:.4rem;color:var(--ink-soft);font-size:.88rem}
+.auth-form input{width:100%;min-height:40px;padding:.55rem .7rem;border:1px solid var(--line-strong);border-radius:var(--radius);background:var(--paper);color:var(--ink)}
+.auth-form input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent);outline:0}
+.auth-status{min-height:1.5em;margin:1rem 0 0;color:var(--accent)}
+.auth-status[data-tone="error"]{color:var(--danger)}
+.auth-status[data-tone="muted"]{color:var(--ink-faint)}
+.auth-back{margin:1.5rem 0 0;color:var(--ink-faint);font-size:.85rem}
+@media(max-width:768px){.header-account{margin-left:auto}.auth-page{width:min(calc(100% - 1.25rem),520px)}}

@@ -17,6 +17,18 @@
     <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
   {{ end }}
 {{ end }}
+{{ with resources.Get "js/account.js" }}
+  {{ with . | minify | fingerprint "sha384" }}
+    <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
+  {{ end }}
+{{ end }}
+{{ if or (eq .Layout "auth") (eq .Section "login") }}
+  {{ with resources.Get "js/auth.js" }}
+    {{ with . | minify | fingerprint "sha384" }}
+      <script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>
+    {{ end }}
+  {{ end }}
+{{ end }}
 {{ if eq .Layout "search" }}
   {{ with resources.Get "js/search.js" }}
     {{ with . | minify | fingerprint "sha384" }}

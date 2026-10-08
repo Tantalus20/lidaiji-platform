@@ -15,6 +15,7 @@
         <a href="{{ $href }}"{{ if $active }} aria-current="page"{{ end }}>{{ .label }}</a>
       {{ end }}
     </nav>
+    <div class="header-account" data-account-slot><a class="account-link" href="/login/?return={{ .RelPermalink | urlquery }}">登录 / 注册</a></div>
     <button class="theme-toggle" type="button" aria-label="切换明暗模式" title="切换明暗模式">
       <span aria-hidden="true">◐</span>
     </button>
