@@ -216,9 +216,12 @@ def copy_site_overrides(source_root: Path | None, tree: Path) -> list[str]:
     return copied
 
 
-def build_content_manifest(tree: Path) -> tuple[dict, str]:
+def build_content_manifest(tree: Path, include_author_notes: bool = False) -> tuple[dict, str]:
     entries: list[dict] = []
-    for base_name in ("content", "site-overrides"):
+    base_names = ["content", "site-overrides"]
+    if include_author_notes:
+        base_names.append("data/author-notes")
+    for base_name in base_names:
         base = tree / base_name
         if not base.exists():
             continue
@@ -296,6 +299,8 @@ def create_snapshot(
     requested_commit: str | None = None,
     baseline_release_id: str = "",
     target_article_sha256: str = "",
+    author_notes_root: Path | None = None,
+    publish_author_notes: bool = False,
 ) -> dict:
     if mode not in SNAPSHOT_MODES:
         raise SnapshotError(f"snapshotMode 只能是 {'/'.join(SNAPSHOT_MODES)}。")
@@ -313,6 +318,10 @@ def create_snapshot(
         extract_archive(platform_root, commit, tree)
         copy_tree_checked(Path(content_root), tree / "content", skip_drafts=(mode == "full_site"))
         _remove_author_notes(tree)
+        if publish_author_notes:
+            if not author_notes_root:
+                raise SnapshotError("发布作者评需要提供 --author-notes-root（或 LIDAIJI_AUTHOR_NOTES_ROOT）。")
+            copy_tree_checked(Path(author_notes_root), tree / AUTHOR_NOTES_DIR)
         copy_site_overrides(site_overrides_root, tree)
         for name in ALLOWED_OVERRIDE_FILES:
             override = tree / "site-overrides" / name
@@ -323,7 +332,7 @@ def create_snapshot(
             if flat:
                 _merge_config_toml(tree / "config" / "_default" / target, flat)
 
-        manifest, manifest_sha = build_content_manifest(tree)
+        manifest, manifest_sha = build_content_manifest(tree, include_author_notes=publish_author_notes)
         (temporary / "content-manifest.json").write_text(
             canonical_json(manifest) + "\n", encoding="utf-8"
         )
@@ -337,6 +346,7 @@ def create_snapshot(
             "contentManifestSha256": manifest_sha,
             "baselineReleaseId": baseline_release_id or "",
             "targetArticleSha256": target_article_sha256 or "",
+            "publishAuthorNotes": bool(publish_author_notes),
         }
         fingerprint, snapshot_id = _fingerprint(fingerprint_fields)
         metadata = {
@@ -350,6 +360,7 @@ def create_snapshot(
             "contentManifestSha256": manifest_sha,
             "baselineReleaseId": baseline_release_id or "",
             "targetArticleSha256": target_article_sha256 or "",
+            "publishAuthorNotes": bool(publish_author_notes),
             "contentFileCount": manifest["totalFiles"],
         }
         (temporary / "snapshot.json").write_text(
@@ -407,15 +418,16 @@ def verify_snapshot(snapshot_dir: Path, expected_fingerprint: str | None = None)
     if metadata["snapshotMode"] not in SNAPSHOT_MODES:
         raise SnapshotError("快照模式非法。")
 
-    manifest, manifest_sha = build_content_manifest(tree)
+    publish_author_notes = bool(metadata.get("publishAuthorNotes", False))
+    manifest, manifest_sha = build_content_manifest(tree, include_author_notes=publish_author_notes)
     if canonical_json(manifest) != canonical_json(stored_manifest):
         raise SnapshotError("快照内容清单与实际文件不一致（可能被篡改）。")
     if manifest_sha != metadata["contentManifestSha256"]:
         raise SnapshotError("快照内容清单摘要不一致。")
 
     notes_dir = tree / AUTHOR_NOTES_DIR
-    if notes_dir.exists() and any(notes_dir.iterdir()):
-        raise SnapshotError("快照包含作者评文件，拒绝使用。")
+    if notes_dir.exists() and any(notes_dir.iterdir()) and not publish_author_notes:
+        raise SnapshotError("快照包含作者评文件但未声明公开（publishAuthorNotes=false），拒绝使用。")
     for path in tree.rglob("*"):
         if path.is_symlink():
             raise SnapshotError(f"快照树包含符号链接：{path.relative_to(tree)}")
@@ -431,6 +443,7 @@ def verify_snapshot(snapshot_dir: Path, expected_fingerprint: str | None = None)
         "contentManifestSha256": metadata["contentManifestSha256"],
         "baselineReleaseId": metadata.get("baselineReleaseId", ""),
         "targetArticleSha256": metadata.get("targetArticleSha256", ""),
+        "publishAuthorNotes": publish_author_notes,
     }
     fingerprint, snapshot_id = _fingerprint(fingerprint_fields)
     if fingerprint != metadata["snapshotFingerprint"] or snapshot_id != metadata["snapshotId"]:
@@ -452,6 +465,8 @@ def main() -> int:
     create.add_argument("--platform-root", type=Path, required=True)
     create.add_argument("--content-root", type=Path, required=True)
     create.add_argument("--site-overrides-root", type=Path)
+    create.add_argument("--author-notes-root", type=Path)
+    create.add_argument("--publish-author-notes", action="store_true")
     create.add_argument("--mode", choices=SNAPSHOT_MODES, default="full_site")
     create.add_argument("--snapshot-root", type=Path)
     create.add_argument("--platform-commit")
@@ -476,6 +491,8 @@ def main() -> int:
                 requested_commit=args.platform_commit,
                 baseline_release_id=args.baseline_release_id,
                 target_article_sha256=args.target_article_sha256,
+                author_notes_root=args.author_notes_root,
+                publish_author_notes=args.publish_author_notes,
             )
         else:
             result = verify_snapshot(args.snapshot)

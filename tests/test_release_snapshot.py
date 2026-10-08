@@ -102,6 +102,40 @@ class ReleaseSnapshotTests(unittest.TestCase):
         self.assertNotIn("content/essays/draft-one/index.md", paths)
         self.assertFalse(any((tree / "data" / "author-notes").iterdir()), "快照不得包含作者评")
 
+    def _notes_root(self):
+        notes = self.private / "data" / "author-notes"
+        notes.mkdir(parents=True, exist_ok=True)
+        return notes
+
+    def test_publish_author_notes_included(self):
+        notes = self._notes_root()
+        (notes / "article-1.yaml").write_text(
+            'version: 1\nnotes:\n  - status: published\n    text: 公开批注\n', encoding="utf-8")
+        with_notes = self._create(author_notes_root=notes, publish_author_notes=True)
+        tree = Path(with_notes["tree"])
+        self.assertTrue((tree / "data" / "author-notes" / "article-1.yaml").is_file())
+        manifest = json.loads((Path(with_notes["snapshotDir"]) / "content-manifest.json").read_text(encoding="utf-8"))
+        self.assertIn("data/author-notes/article-1.yaml", [e["path"] for e in manifest["entries"]])
+        meta = json.loads((Path(with_notes["snapshotDir"]) / "snapshot.json").read_text(encoding="utf-8"))
+        self.assertTrue(meta["publishAuthorNotes"])
+        without = self._create(author_notes_root=notes)
+        self.assertNotEqual(with_notes["snapshotId"], without["snapshotId"], "作者评是否公开应改变快照指纹")
+
+    def test_publish_author_notes_requires_root(self):
+        self._notes_root()
+        with self.assertRaises(rs.SnapshotError):
+            self._create(publish_author_notes=True)
+
+    def test_author_notes_private_by_default(self):
+        notes = self._notes_root()
+        (notes / "article-1.yaml").write_text(
+            'version: 1\nnotes:\n  - status: published\n    text: 不应公开\n', encoding="utf-8")
+        result = self._create()
+        tree = Path(result["tree"])
+        self.assertFalse(any((tree / "data" / "author-notes").iterdir()), "默认不得包含作者评")
+        manifest = json.loads((Path(result["snapshotDir"]) / "content-manifest.json").read_text(encoding="utf-8"))
+        self.assertNotIn("data/author-notes/article-1.yaml", [e["path"] for e in manifest["entries"]])
+
     def test_same_inputs_reuse_and_verify(self):
         first = self._create()
         second = self._create()

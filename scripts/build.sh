@@ -46,9 +46,14 @@ else
     CONTENT_ROOT="$CONTENT_STAGE/content"
     printf '已注入虚构排版测试内容（冻结前临时副本）：%s\n' "$LIDAIJI_LAYOUT_TEST_SOURCE"
   fi
-  SNAPSHOT_JSON="$(python3 "$ROOT/tools/release_snapshot.py" create \
-    --platform-root "$ROOT" --mode full_site \
-    --content-root "$CONTENT_ROOT" --site-overrides-root "$SITE_OVERRIDES_ROOT")"
+  AUTHOR_NOTES_ROOT="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["authorNotesRoot"])' "$WORKSPACE_JSON")"
+  SNAPSHOT_ARGS=(--platform-root "$ROOT" --mode full_site \
+    --content-root "$CONTENT_ROOT" --site-overrides-root "$SITE_OVERRIDES_ROOT" \
+    --author-notes-root "$AUTHOR_NOTES_ROOT")
+  if [[ "${LIDAIJI_PUBLISH_AUTHOR_NOTES:-0}" == "1" ]]; then
+    SNAPSHOT_ARGS+=(--publish-author-notes)
+  fi
+  SNAPSHOT_JSON="$(python3 "$ROOT/tools/release_snapshot.py" create "${SNAPSHOT_ARGS[@]}")"
 fi
 SNAPSHOT_FIELD() {
   python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2],""))' "$SNAPSHOT_JSON" "$1"

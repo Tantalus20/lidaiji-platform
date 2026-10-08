@@ -39,12 +39,15 @@ function createSnapshot() {
   ]);
   if (!workspaceJson) die("workspace show 失败。");
   const workspace = JSON.parse(workspaceJson);
-  const snapshotJson = runCapture(python, [
+  const snapshotArgs = [
     path.join(ROOT, "tools", "release_snapshot.py"), "create",
     `--platform-root=${ROOT}`, "--mode=full_site",
     `--content-root=${workspace.contentRoot}`,
     `--site-overrides-root=${workspace.siteOverridesRoot}`,
-  ]);
+    `--author-notes-root=${workspace.authorNotesRoot}`,
+  ];
+  if (process.env.LIDAIJI_PUBLISH_AUTHOR_NOTES === "1") snapshotArgs.push("--publish-author-notes");
+  const snapshotJson = runCapture(python, snapshotArgs);
   if (!snapshotJson) die("release snapshot 创建失败（平台代码必须来自干净提交）。");
   return JSON.parse(snapshotJson);
 }
