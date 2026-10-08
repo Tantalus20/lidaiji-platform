@@ -140,7 +140,10 @@ class ReleaseSnapshotTests(unittest.TestCase):
 
     def test_symlinked_content_rejected(self):
         link = self.content / "essays" / "link.md"
-        link.symlink_to(self.content / "essays" / "one" / "index.md")
+        try:
+            link.symlink_to(self.content / "essays" / "one" / "index.md")
+        except OSError as error:
+            self.skipTest(f"当前平台不允许创建符号链接（符号链接拒绝由 Linux CI 执行）：{error}")
         with self.assertRaises(rs.SnapshotError):
             self._create()
 
