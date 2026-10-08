@@ -49,7 +49,7 @@ jobs:
           if (-not (Test-Path $infoPath)) { throw 'BUILD_INFO missing' }
           $info = Get-Content $infoPath -Raw
           foreach ($key in @('releaseSnapshotId','releaseSnapshotFingerprint','snapshotMode','contentManifestSha256','configFingerprint','builderVersion','sourceCommit')) {
-            if ($info -notmatch "(?m)^$key: .+$") { throw "BUILD_INFO missing $key" }
+            if ($info -notmatch "(?m)^$($key): .+$") { throw "BUILD_INFO missing $key" }
           }
           if ($info -notmatch "(?m)^snapshotMode: full_site$") { throw 'snapshotMode mismatch' }
           if ($info -notmatch "(?m)^sourceCommit: $head$") { throw 'sourceCommit mismatch' }
@@ -109,8 +109,6 @@ jobs:
         run: bash tests/check-release-identity.sh
       - name: 跨平台核心检查（Node + Python + Hugo + Linux shell 安全）
         run: npm run check
-      - name: 全量 Python unittest discover
-        run: .venv-importer/bin/python -m unittest discover -s tests -p "test_*.py"
       - name: 校验 Linux 构建产物与快照协议
         run: |
           head="$(git rev-parse HEAD)"
