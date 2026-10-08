@@ -16,6 +16,8 @@ rsync -a \
 # 演示压力测试只消费 demo 内容：先清空仓库 content（若存在），避免嵌套目录。
 rm -rf "$TMP/content"
 cp -R "$TMP/examples/demo-content" "$TMP/content"
+# 保留平台内置读者登录页，使页头登录链接在演示构建中也有效。
+[[ -d "$ROOT/content/login" ]] && cp -R "$ROOT/content/login" "$TMP/content/login"
 mkdir -p "$TMP/data"
 cp -R "$TMP/examples/demo-author-notes" "$TMP/data/author-notes"
 node "$TMP/scripts/create-demo-content.mjs"
