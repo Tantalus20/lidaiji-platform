@@ -23,6 +23,8 @@ const pythonChecks = [
   "tests/test_preview_render.py",
   "tests/test_paragraph_ids.py",
   "tests/test_docx_import.py",
+  "tests/test_workspace_resolution.py",
+  "tests/test_release_snapshot.py",
 ];
 
 // Linux 额外可跨平台的 Studio/导入器测试（test_author_workflow 依赖 macOS 桌面入口，排除）

@@ -20,9 +20,34 @@ export SITE_BASE_URL="https://$WRITING_DOMAIN/"
 WORKSPACE_JSON="$(python3 "$ROOT/tools/workspace.py" show --platform-root "$ROOT")"
 CONTENT_REPO_ROOT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["contentRepoRoot"])' <<<"$WORKSPACE_JSON")"
 CONTENT_ROOT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["contentRoot"])' <<<"$WORKSPACE_JSON")"
+SITE_OVERRIDES_ROOT="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["siteOverridesRoot"])' <<<"$WORKSPACE_JSON")"
+WORKSPACE_MODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<<"$WORKSPACE_JSON")"
+if [[ "$WORKSPACE_MODE" != "private" ]]; then
+  printf '正式发布需要私人工作区（当前模式：%s）；请检查 .lidaiji-workspace.json 或 LIDAIJI_CONTENT_REPO_ROOT。\n' "$WORKSPACE_MODE" >&2
+  exit 1
+fi
 python3 "$ROOT/scripts/publish-summary.py" --project-root "$CONTENT_REPO_ROOT" --content-root "$CONTENT_ROOT"
 printf '本地磁盘空间：\n'
 df -h "$ROOT"
+
+# P0-B：正式发布只消费不可变 release snapshot。
+# - CLI 全站发布在这里冻结 full_site 快照；
+# - Studio 隔离发布通过 LIDAIJI_RELEASE_SNAPSHOT 传入 article_isolated 快照；
+# - 后续 build.sh / create-source-package.sh 只允许复验并复用同一份快照。
+if [[ -n "${LIDAIJI_RELEASE_SNAPSHOT:-}" ]]; then
+  SNAPSHOT_JSON="$(python3 "$ROOT/tools/release_snapshot.py" verify --snapshot "$LIDAIJI_RELEASE_SNAPSHOT")"
+else
+  SNAPSHOT_JSON="$(python3 "$ROOT/tools/release_snapshot.py" create \
+    --platform-root "$ROOT" --mode full_site \
+    --content-root "$CONTENT_ROOT" --site-overrides-root "$SITE_OVERRIDES_ROOT")"
+  LIDAIJI_RELEASE_SNAPSHOT="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["snapshotDir"])' "$SNAPSHOT_JSON")"
+  export LIDAIJI_RELEASE_SNAPSHOT
+fi
+snapshot_field() {
+  python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2],""))' "$SNAPSHOT_JSON" "$1"
+}
+printf '发布快照：%s（%s，平台 %s）\n' "$(snapshot_field snapshotId)" "$(snapshot_field snapshotMode)" "$(snapshot_field platformCommit)"
+
 "$ROOT/scripts/build.sh"
 "$ROOT/scripts/backup.sh"
 
@@ -62,6 +87,10 @@ printf '执行服务器发布前检查（磁盘、Nginx、当前release）……
 ssh "$WRITING_SSH_TARGET" \
   "df -h /opt /var 2>/dev/null || df -h /; sudo nginx -t; if [ -L /opt/writing-site/current ]; then test -f /opt/writing-site/current/index.html && test -f /opt/writing-site/current/404.html && test -f /opt/writing-site/current/search-index.json; fi"
 scp "$RELEASE_ARCHIVE" "$SOURCE_ARCHIVE" "$COMMENTS_ARCHIVE" "$ROOT/scripts/server-publish.sh" "$WRITING_SSH_TARGET:/tmp/"
+CANDIDATE_ARGS=()
+if [[ -n "${LIDAIJI_CANDIDATE_ID:-}" ]]; then
+  CANDIDATE_ARGS+=(--candidate-id "$LIDAIJI_CANDIDATE_ID" --candidate-manifest-sha "${LIDAIJI_CANDIDATE_MANIFEST_SHA256:-}")
+fi
 ssh "$WRITING_SSH_TARGET" sudo bash /tmp/server-publish.sh \
   --domain "$WRITING_DOMAIN" \
   --release "/tmp/$(basename "$RELEASE_ARCHIVE")" \
@@ -70,7 +99,12 @@ ssh "$WRITING_SSH_TARGET" sudo bash /tmp/server-publish.sh \
   --source-sha "$SOURCE_SHA" \
   --comments "/tmp/$(basename "$COMMENTS_ARCHIVE")" \
   --comments-sha "$COMMENTS_SHA" \
-  --expected-commit "$(git rev-parse HEAD)" \
+  --expected-commit "$(snapshot_field platformCommit)" \
+  --platform-commit "$(snapshot_field platformCommit)" \
+  --snapshot-id "$(snapshot_field snapshotId)" \
+  --snapshot-fingerprint "$(snapshot_field snapshotFingerprint)" \
+  --content-manifest-sha "$(snapshot_field contentManifestSha256)" \
+  ${CANDIDATE_ARGS[@]+"${CANDIDATE_ARGS[@]}"} \
   ${WRITING_VERIFY_COS_BACKUP:+--verify-cos-backup} \
   ${COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE:+--allow-large-retire}
 

@@ -217,6 +217,15 @@ assert(
 const attributes = read(".gitattributes");
 assert(attributes.includes("**/*.docx export-ignore"), "发布源码包未从Git导出层排除Word原稿");
 assert(attributes.includes("/.venv-importer export-ignore"), "发布源码包未排除导入器虚拟环境");
+assert(attributes.includes("/.lidaiji-workspace.json export-ignore"), "发布源码包未排除工作区配置");
+const buildScript = read("scripts/build.sh");
+assert(buildScript.includes("release_snapshot.py"), "build.sh 未通过 release snapshot 构建");
+assert(buildScript.includes("releaseSnapshotId"), "build.sh BUILD_INFO 缺少快照身份");
+const sourcePackage = read("scripts/create-source-package.sh");
+assert(sourcePackage.includes("LIDAIJI_RELEASE_SNAPSHOT"), "源码包未绑定 release snapshot");
+assert(sourcePackage.includes("platform-source-with-release-provenance"), "源码包缺少来源证明角色标记");
+assert(serverPublish.includes("verify_identity releaseSnapshotId"), "服务端未校验快照身份");
+assert(serverPublish.includes("verify_identity contentManifestSha256"), "服务端未校验内容清单摘要");
 assert(backup.includes("importer incoming"), "源码备份未包含导入器与Word来稿箱");
 const importShell = read("scripts/import-docx.sh");
 assert(importShell.includes('-r "$ROOT/importer/requirements.txt" >&2'), "首次安装依赖的输出会污染Python路径");
@@ -355,6 +364,7 @@ assert(editorPkg.scripts && editorPkg.scripts["build:app"], "package.json缺少b
 assert(editorPkg.devDependencies && editorPkg.devDependencies.esbuild, "缺少esbuild开发依赖");
 assert(editorPkg.devDependencies && editorPkg.devDependencies["prosemirror-model"], "缺少prosemirror-model依赖");
 assert(read(".gitignore").includes("node_modules/"), ".gitignore缺少node_modules条目");
+assert(read(".gitignore").includes(".lidaiji-workspace.json"), ".gitignore缺少工作区配置条目");
 
 // Windows 正式支持：PowerShell 脚本、跨平台 npm 入口、文档与 CI
 for (const file of [

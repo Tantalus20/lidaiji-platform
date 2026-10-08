@@ -86,6 +86,13 @@ try {
   ], { stdio: "pipe" });
   verify(naked, "裸Hugo构建", false);
 
+  // P0-B：build.sh 只消费不可变 release snapshot，平台代码必须来自干净提交。
+  execFileSync("git", ["init"], { cwd: temp, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "作者评构建测试"], { cwd: temp, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "author-notes@example.invalid"], { cwd: temp, stdio: "pipe" });
+  execFileSync("git", ["add", "--all"], { cwd: temp, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "fixture"], { cwd: temp, stdio: "pipe" });
+
   execFileSync(path.join(temp, "scripts", "build.sh"), [], {
     cwd: temp,
     env: {

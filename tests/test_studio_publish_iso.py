@@ -135,6 +135,30 @@ class IsoWorkspace:
 
         _git(self.root, "add", "-A")
         _git(self.root, "commit", "-qm", "scripts")
+
+        # P0-B：为 article_isolated release snapshot 准备一个干净的最小平台仓库。
+        self.platform = Path(tempfile.mkdtemp(prefix="studio-iso-platform-"))
+        (self.platform / "config" / "_default").mkdir(parents=True)
+        (self.platform / "themes" / "demo").mkdir(parents=True)
+        (self.platform / "tools").mkdir(parents=True)
+        (self.platform / "VERSION").write_text("0.4.3\n", encoding="utf-8")
+        (self.platform / ".gitignore").write_text("__pycache__/\n.cache/\ndist/\n", encoding="utf-8")
+        (self.platform / "config" / "_default" / "hugo.toml").write_text('title = "示例文集"\n', encoding="utf-8")
+        (self.platform / "config" / "_default" / "params.toml").write_text('siteName = "示例文集"\n', encoding="utf-8")
+        (self.platform / "themes" / "demo" / "theme.toml").write_text('name = "demo"\n', encoding="utf-8")
+        for name in ("release_snapshot.py", "workspace.py"):
+            shutil.copyfile(ROOT / "tools" / name, self.platform / "tools" / name)
+        _git(self.platform, "init", "-q")
+        _git(self.platform, "add", "-A")
+        _git(self.platform, "commit", "-qm", "platform")
+        created = subprocess.run(
+            [sys.executable, str(self.platform / "tools" / "release_snapshot.py"), "create",
+             "--platform-root", str(self.platform), "--mode", "full_site",
+             "--content-root", str(self.root / "content")],
+            capture_output=True, text=True, timeout=120, check=True,
+        )
+        self.snapshot_dir = json.loads(created.stdout)["snapshotDir"]
+
     def write_candidate_manifest(self, target_article: dict):
         """模拟隔离构建产物 manifest（基线 + 目标文章）。"""
         self.write_candidate_manifest_for(None, target_article)
@@ -149,6 +173,7 @@ class IsoWorkspace:
 
     def cleanup(self):
         shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.platform, ignore_errors=True)
 
 
 class FakeState:
@@ -156,7 +181,7 @@ class FakeState:
         self.project_root = str(workspace.root)
         self.platform_root = str(workspace.root)
         self.lock = threading.Lock()
-        self.workspace_environment = {}
+        self.workspace_environment = {"LIDAIJI_RELEASE_SNAPSHOT": workspace.snapshot_dir}
         self.article_preview = None
         self.publish_lock_info = None
         self.article_publish_result = None

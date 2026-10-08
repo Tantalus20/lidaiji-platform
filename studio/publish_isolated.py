@@ -567,6 +567,54 @@ def isolated_environment(merged: dict, base_environment: dict | None = None) -> 
     return env
 
 
+def ensure_release_snapshot(state, merged: dict, baseline: dict | None, target_sha256: str) -> dict:
+    """为隔离候选创建/复用 article_isolated release snapshot（P0-B）。
+
+    - 已有 LIDAIJI_RELEASE_SNAPSHOT（进程环境或工作区环境）时只复验，不重建；
+    - 复验使用快照自带 tree/tools/release_snapshot.py，不依赖可变平台工具；
+    - 创建失败/复验失败一律抛 IsolationError，阻止发布（fail-closed）。
+    """
+    existing = (
+        os.environ.get("LIDAIJI_RELEASE_SNAPSHOT")
+        or (getattr(state, "workspace_environment", {}) or {}).get("LIDAIJI_RELEASE_SNAPSHOT")
+        or ""
+    ).strip()
+    platform_root = Path(getattr(state, "platform_root", None) or state.project_root).resolve()
+    if existing:
+        snapshot_dir = Path(existing).resolve()
+    else:
+        tool = platform_root / "tools" / "release_snapshot.py"
+        if not tool.is_file():
+            raise IsolationError("snapshot-unavailable", "平台缺少 release snapshot 工具，发布已阻止。")
+        baseline_id = str((baseline or {}).get("releaseId") or (baseline or {}).get("manifestSha256") or "")
+        command = [
+            sys.executable, str(tool), "create",
+            "--platform-root", str(platform_root),
+            "--mode", "article_isolated",
+            "--content-root", str(merged["contentRoot"]),
+            "--site-overrides-root", str(merged["siteOverridesRoot"]),
+            "--baseline-release-id", baseline_id,
+            "--target-article-sha256", target_sha256 or "",
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            raise IsolationError("snapshot-failed", f"无法冻结发布快照：{result.stderr.strip()}")
+        snapshot_dir = Path(json.loads(result.stdout)["snapshotDir"]).resolve()
+
+    verify_tool = snapshot_dir / "tree" / "tools" / "release_snapshot.py"
+    if not verify_tool.is_file():
+        raise IsolationError("snapshot-invalid", "发布快照缺少自带校验工具，拒绝发布。")
+    verify = subprocess.run(
+        [sys.executable, str(verify_tool), "verify", "--snapshot", str(snapshot_dir)],
+        capture_output=True, text=True, timeout=120,
+    )
+    if verify.returncode != 0:
+        raise IsolationError("snapshot-invalid", f"发布快照复验失败：{verify.stderr.strip()}")
+    metadata = json.loads(verify.stdout)
+    merged["releaseSnapshot"] = metadata
+    return metadata
+
+
 def cleanup_merged_content(merged: dict) -> None:
     """发布后清理隔离仓库（保留最小报告由调用方处理）。"""
     shutil.rmtree(merged["workRoot"], ignore_errors=True)

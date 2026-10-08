@@ -16,6 +16,7 @@ REPORT_LIMIT = 50
 # 文件名/路径命中
 _NAME_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("env-file", re.compile(r"(^|/)(\.env([\w.-]*))$")),
+    ("workspace-config", re.compile(r"(^|/)\.lidaiji-workspace\.json$")),
     ("ds-store", re.compile(r"(^|/)\.DS_Store$")),
     ("ssh-config", re.compile(r"(^|/)\.ssh(/|$)|(^|/)id_rsa$|(^|/)id_ed25519$|(^|/)known_hosts$")),
     ("private-key", re.compile(r"(^|/)[\w.-]*\.(pem|key|p12|pfx)$", re.IGNORECASE)),

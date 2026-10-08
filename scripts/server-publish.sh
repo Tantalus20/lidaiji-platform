@@ -12,6 +12,12 @@ SOURCE_SHA=""
 COMMENTS_ARCHIVE=""
 COMMENTS_SHA=""
 EXPECTED_COMMIT=""
+PLATFORM_COMMIT=""
+SNAPSHOT_ID=""
+SNAPSHOT_FINGERPRINT=""
+CONTENT_MANIFEST_SHA=""
+CANDIDATE_ID=""
+CANDIDATE_MANIFEST_SHA=""
 VERIFY_COS_BACKUP=0
 ALLOW_LARGE_RETIRE=0
 
@@ -26,6 +32,12 @@ while [[ $# -gt 0 ]]; do
     --comments) COMMENTS_ARCHIVE="$2"; shift 2 ;;
     --comments-sha) COMMENTS_SHA="$2"; shift 2 ;;
     --expected-commit) EXPECTED_COMMIT="$2"; shift 2 ;;
+    --platform-commit) PLATFORM_COMMIT="$2"; shift 2 ;;
+    --snapshot-id) SNAPSHOT_ID="$2"; shift 2 ;;
+    --snapshot-fingerprint) SNAPSHOT_FINGERPRINT="$2"; shift 2 ;;
+    --content-manifest-sha) CONTENT_MANIFEST_SHA="$2"; shift 2 ;;
+    --candidate-id) CANDIDATE_ID="$2"; shift 2 ;;
+    --candidate-manifest-sha) CANDIDATE_MANIFEST_SHA="$2"; shift 2 ;;
     --verify-cos-backup) VERIFY_COS_BACKUP=1; shift ;;
     --allow-large-retire) ALLOW_LARGE_RETIRE=1; shift ;;
     *) printf '未知参数：%s\n' "$1" >&2; exit 2 ;;
@@ -42,6 +54,10 @@ done
 [[ "$(sha256sum "$RELEASE_ARCHIVE" | awk '{print $1}')" == "$RELEASE_SHA" ]] || { printf '静态发布包校验失败。\n' >&2; exit 2; }
 [[ "$(sha256sum "$SOURCE_ARCHIVE" | awk '{print $1}')" == "$SOURCE_SHA" ]] || { printf '源码包校验失败。\n' >&2; exit 2; }
 [[ "$(sha256sum "$COMMENTS_ARCHIVE" | awk '{print $1}')" == "$COMMENTS_SHA" ]] || { printf '段评服务包校验失败。\n' >&2; exit 2; }
+[[ -n "$PLATFORM_COMMIT" && -n "$SNAPSHOT_ID" && -n "$SNAPSHOT_FINGERPRINT" && -n "$CONTENT_MANIFEST_SHA" ]] || {
+  printf '缺少 release snapshot 身份参数（platform-commit/snapshot-id/snapshot-fingerprint/content-manifest-sha），禁止发布。\n' >&2
+  exit 2
+}
 
 # 候选包结构 preflight（v0.5.1）：
 #   1) 候选不得包含绝对路径或失效符号链接；
@@ -215,6 +231,44 @@ test -f "$RELEASE/404.html"
 test -f "$RELEASE/search-index.json"
 test -f "$RELEASE/comment-manifest.json"
 test -f "$SOURCE_NEXT/config/_default/hugo.toml"
+# P0-B：站点、源码包、段评包与发布请求四方身份必须一致。
+read_info() { awk -F': ' -v key="$2" '$1==key{print $2; exit}' "$1"; }
+SITE_INFO="$RELEASE/BUILD_INFO"
+SOURCE_INFO="$SOURCE_NEXT/BUILD_INFO"
+[[ -f "$SITE_INFO" ]] || { printf '静态发布包缺少BUILD_INFO，禁止发布。\n' >&2; exit 2; }
+[[ -f "$SOURCE_INFO" ]] || { printf '源码包缺少BUILD_INFO，禁止发布。\n' >&2; exit 2; }
+verify_identity() {
+  local field="$1" expected="$2"
+  local site_value source_value
+  site_value="$(read_info "$SITE_INFO" "$field")"
+  source_value="$(read_info "$SOURCE_INFO" "$field")"
+  if [[ -z "$site_value" || "$site_value" != "$source_value" || "$site_value" != "$expected" ]]; then
+    printf '发布身份不一致（%s）：站点=%s 源码包=%s 请求=%s\n' \
+      "$field" "${site_value:-缺失}" "${source_value:-缺失}" "${expected:-缺失}" >&2
+    exit 2
+  fi
+}
+verify_identity releaseSnapshotId "$SNAPSHOT_ID"
+verify_identity releaseSnapshotFingerprint "$SNAPSHOT_FINGERPRINT"
+verify_identity contentManifestSha256 "$CONTENT_MANIFEST_SHA"
+verify_identity sourceCommit "$PLATFORM_COMMIT"
+if [[ -n "$CANDIDATE_ID" ]]; then
+  verify_identity candidateId "$CANDIDATE_ID"
+  verify_identity candidateManifestSha256 "$CANDIDATE_MANIFEST_SHA"
+fi
+if [[ "$(read_info "$SOURCE_INFO" packageRole)" != "platform-source-with-release-provenance" ]]; then
+  printf '源码包角色标记缺失或不正确，禁止发布。\n' >&2
+  exit 2
+fi
+if tar -tzf "$SOURCE_ARCHIVE" | grep -qE '(^|/)(author-notes|\.lidaiji-workspace\.json)(/|$)'; then
+  printf '源码包混入作者评或工作区配置，禁止发布。\n' >&2
+  exit 2
+fi
+if [[ -e "$RELEASE/data/author-notes" ]] || [[ -e "$RELEASE/.lidaiji-workspace.json" ]]; then
+  printf '静态发布目录混入作者评或工作区配置，禁止发布。\n' >&2
+  exit 2
+fi
+printf '发布身份校验通过：snapshot=%s 平台=%s\n' "$SNAPSHOT_ID" "$PLATFORM_COMMIT"
 if find "$RELEASE" -type f \( -name '*.md' -o -name '*.sh' -o -name '.env' \) | grep -q .; then
   printf '静态发布目录包含不应公开的源码或脚本。\n' >&2
   exit 1

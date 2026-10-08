@@ -170,6 +170,16 @@ class SensitiveScanTests(unittest.TestCase):
         self.assertTrue(result["blocked"])
         self.assertIn("private-abs-path", {f["kind"] for f in result["findings"]})
 
+    def test_workspace_config_blocked_without_content(self):
+        d = self._candidate({
+            "index.html": "<html>ok</html>",
+            ".lidaiji-workspace.json": '{"contentRepoRoot": "../lidaiji-private"}',
+        })
+        result = ss.scan_candidate(d)
+        self.assertTrue(result["blocked"])
+        self.assertIn("workspace-config", {f["kind"] for f in result["findings"]})
+        self.assertNotIn("lidaiji-private", json.dumps(result, ensure_ascii=False))
+
 
 class PreviewCandidateIntegrationTests(unittest.TestCase):
     """在 ISO 假工作区里验证预览集成：候选清单 + 敏感扫描 + 结构化失效错误。"""

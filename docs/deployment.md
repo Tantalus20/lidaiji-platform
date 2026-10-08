@@ -1,6 +1,8 @@
 # 部署
 
 先在干净 Git 状态运行 `npm run check` 和 `npm run build`，再生成带 SHA-256 与清单的发布包。
+发布输入由不可变 release snapshot 固定（见 [发布快照](release-snapshot.md)）：平台代码必须来自
+已提交 commit，私人内容会先冻结为快照；站点、源码包与服务器校验共享同一快照身份。
 Nginx 与 systemd 示例位于 `deploy/`，其中 `example.com`、`/path/to/...`、
 `YOUR_VALUE_HERE` 必须在服务器安全配置中替换。Studio 不部署到公网。
 

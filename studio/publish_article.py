@@ -389,7 +389,10 @@ def article_publish_preview(state, rel_path: str) -> dict:
                 check("assets", "PASS", f"引用资源 {len(snapshot['assetManifest']['entries'])} 个")
             merged = publish_isolated.build_merged_content(state, target, snapshot, baseline)
             try:
+                release_snapshot = publish_isolated.ensure_release_snapshot(
+                    state, merged, baseline, snapshot.get("sourceFileSha256", ""))
                 iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
+                iso_env["LIDAIJI_RELEASE_SNAPSHOT"] = release_snapshot["snapshotDir"]
                 build_result = publish_center.run_preflight(
                     platform_root, full=False,
                     content_repo_root=merged["repoRoot"],
@@ -397,7 +400,7 @@ def article_publish_preview(state, rel_path: str) -> dict:
                 )
                 if build_result["success"]:
                     check("hugo-build", "PASS", f"隔离构建成功，耗时 {build_result['duration']} 秒")
-                    manifest_path = publish_center.site_output_dir(platform_root) / "comment-manifest.json"
+                    manifest_path = publish_center.site_output_dir(platform_root, getattr(state, "output_root", None)) / "comment-manifest.json"
                     if manifest_path.is_file():
                         candidate_diff = publish_isolated.candidate_diff_check(manifest_path, baseline, article_id)
                         if candidate_diff["unrelatedChangedCount"]:
@@ -411,7 +414,7 @@ def article_publish_preview(state, rel_path: str) -> dict:
                                 and candidate_diff["targetPresent"]:
                             try:
                                 candidate = candidate_manifest.materialize_candidate(
-                                    project_root, publish_center.site_output_dir(platform_root),
+                                    project_root, publish_center.site_output_dir(platform_root, getattr(state, "output_root", None)),
                                     baseline, snapshot, target_url_prefix=canonical,
                                     preview_build_id=preview_build_id,
                                     test_identity=candidate_manifest.build_test_identity())
@@ -630,7 +633,11 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
             # 使用预览时创建的快照（内容寻址不可变）；文件或资源变化会在此校验失败
             merged = publish_isolated.build_merged_content(state, target, preview["snapshot"],
                                                           preview.get("baseline"))
+            release_snapshot = publish_isolated.ensure_release_snapshot(
+                state, merged, preview.get("baseline"),
+                preview["snapshot"].get("sourceFileSha256", ""))
             iso_env = publish_isolated.isolated_environment(merged, state.workspace_environment)
+            iso_env["LIDAIJI_RELEASE_SNAPSHOT"] = release_snapshot["snapshotDir"]
             if allow_large_retire:
                 iso_env["COMMENTS_MANIFEST_ALLOW_LARGE_RETIRE"] = "1"
             update_publish_stage(state, "building")
@@ -645,7 +652,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                 state.article_publish_result = {"articleId": article_id, "ok": False,
                                                 "error": "发布前检查失败，请查看日志后重试。"}
                 return
-            manifest_path = publish_center.site_output_dir(platform_root) / "comment-manifest.json"
+            manifest_path = publish_center.site_output_dir(platform_root, getattr(state, "output_root", None)) / "comment-manifest.json"
             if manifest_path.is_file() and preview.get("baseline"):
                 candidate = publish_isolated.candidate_diff_check(manifest_path, preview["baseline"], article_id)
                 if candidate["unrelatedChangedCount"]:
@@ -657,7 +664,7 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                     return
                 try:
                     rebuilt = candidate_manifest.materialize_candidate(
-                        project_root, publish_center.site_output_dir(platform_root), preview["baseline"],
+                        project_root, publish_center.site_output_dir(platform_root, getattr(state, "output_root", None)), preview["baseline"],
                         preview["snapshot"], target_url_prefix=preview.get("canonicalUrl", ""),
                         preview_build_id=str(preview.get("buildId") or ""),
                         test_identity=candidate_manifest.build_test_identity())
@@ -707,6 +714,9 @@ def article_publish(state, rel_path: str, payload: dict) -> dict:
                                                     "error": error.message}
                     return
             update_publish_stage(state, "backing-up")
+            if entry.get("candidateId"):
+                iso_env["LIDAIJI_CANDIDATE_ID"] = entry["candidateId"]
+                iso_env["LIDAIJI_CANDIDATE_MANIFEST_SHA256"] = entry.get("candidateManifestSha256", "")
             result = publish_center.run_publish(platform_root, iso_env)
             if not result["success"]:
                 entry["status"] = "failed_publish"

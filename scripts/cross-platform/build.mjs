@@ -11,11 +11,12 @@ import { IS_WIN, ROOT, die, ensureDir, findPython, log, run, runCapture } from "
 
 const DIST = path.join(ROOT, "dist");
 let STAGING = "";
+let CONTENT_STAGE = "";
 let WORKSPACE = "";
 
 function cleanup() {
   if (STAGING) fs.rmSync(STAGING, { recursive: true, force: true });
-  if (WORKSPACE) fs.rmSync(WORKSPACE, { recursive: true, force: true });
+  if (CONTENT_STAGE) fs.rmSync(CONTENT_STAGE, { recursive: true, force: true });
 }
 process.on("exit", cleanup);
 
@@ -31,34 +32,45 @@ function findHugo() {
 export function buildSite({ layoutTestSource = "" } = {}) {
   ensureDir(DIST);
   STAGING = fs.mkdtempSync(path.join(DIST, ".site."));
-  WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-build-workspace."));
   const python = findPython() || die("未找到 Python（需 docx/PIL/yaml/pypinyin）。请先运行 setup 完成环境初始化。");
 
-  log("物化构建工作区（平台代码 + 内容仓库）……");
+  log("解析工作区并冻结 release snapshot……");
   const workspaceJson = runCapture(python, [
     path.join(ROOT, "tools", "workspace.py"),
-    "materialize",
+    "show",
     `--platform-root=${ROOT}`,
-    `--destination=${WORKSPACE}`,
   ]);
-  if (!workspaceJson) die("workspace materialize 失败。");
-  const parsed = JSON.parse(workspaceJson);
-  const contentRoot = parsed.contentRoot;
+  if (!workspaceJson) die("workspace show 失败。");
+  const workspace = JSON.parse(workspaceJson);
+  let contentRoot = workspace.contentRoot;
 
   if (layoutTestSource) {
     // 注入虚构排版测试内容：先转临时副本，绝不写入内容仓库。
     const sourceDir = path.join(ROOT, layoutTestSource);
     if (fs.existsSync(sourceDir)) {
-      fs.rmSync(path.join(WORKSPACE, "content"), { recursive: true, force: true });
-      fs.mkdirSync(path.join(WORKSPACE, "content"), { recursive: true });
-      fs.cpSync(contentRoot, path.join(WORKSPACE, "content"), { recursive: true });
-      fs.cpSync(sourceDir, path.join(WORKSPACE, "content", "essays", "layout-test"), { recursive: true });
-      log("已注入虚构排版测试内容。");
+      CONTENT_STAGE = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-layout-content."));
+      const staged = path.join(CONTENT_STAGE, "content");
+      fs.cpSync(contentRoot, staged, { recursive: true });
+      fs.cpSync(sourceDir, path.join(staged, "essays", "layout-test"), { recursive: true });
+      contentRoot = staged;
+      log("已注入虚构排版测试内容（冻结前临时副本）。");
     }
   }
 
+  const snapshotJson = runCapture(python, [
+    path.join(ROOT, "tools", "release_snapshot.py"),
+    "create",
+    `--platform-root=${ROOT}`,
+    "--mode=full_site",
+    `--content-root=${contentRoot}`,
+    `--site-overrides-root=${workspace.siteOverridesRoot}`,
+  ]);
+  if (!snapshotJson) die("release snapshot 创建失败（平台代码必须来自干净提交）。");
+  const snapshot = JSON.parse(snapshotJson);
+  WORKSPACE = snapshot.tree;
+
   log("Word 内容检查……");
-  const unsafe = findUnsafeContent(contentRoot);
+  const unsafe = findUnsafeContent(path.join(WORKSPACE, "content"));
   if (unsafe.length) {
     die(`Word 原稿不得放入 Hugo 公开内容目录：\n  ${unsafe.join("\n  ")}`);
   }
@@ -86,6 +98,20 @@ export function buildSite({ layoutTestSource = "" } = {}) {
     fs.renameSync(path.join(DIST, "site"), previous);
   }
   fs.renameSync(STAGING, path.join(DIST, "site"));
+
+  const buildInfo = [
+    `version: ${fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim()}`,
+    `sourceCommit: ${snapshot.platformCommit}`,
+    `releaseSnapshotId: ${snapshot.snapshotId}`,
+    `releaseSnapshotFingerprint: ${snapshot.snapshotFingerprint}`,
+    `snapshotMode: ${snapshot.snapshotMode}`,
+    `contentManifestSha256: ${snapshot.contentManifestSha256}`,
+    `configFingerprint: ${snapshot.configFingerprint}`,
+    `builderVersion: ${snapshot.builderVersion}`,
+    `buildTimestamp: ${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}`,
+    "entrypoint: index.html",
+  ].join("\n") + "\n";
+  fs.writeFileSync(path.join(DIST, "site", "BUILD_INFO"), buildInfo);
 
   for (const checker of ["check-reading-ui.mjs", "check-reader-tools.mjs", "check-article-comments.mjs"]) {
     run("node", [path.join(ROOT, "tests", checker), ROOT], {

@@ -23,6 +23,12 @@ PYTHON="${WRITING_IMPORT_PYTHON:-$ROOT/.venv-importer/bin/python3}"
   --project-root "$TMP" --write
 (
   cd "$TMP"
+  # P0-B：build.sh 只消费不可变 release snapshot，平台代码必须来自干净提交。
+  git init -q
+  git config user.name "压力测试"
+  git config user.email "long-site@example.invalid"
+  git add -A
+  git commit -qm "long-site fixture"
   REQUIRE_DEMO_FIXTURES=1 \
     HUGO_BIN="${HUGO_BIN:-$(command -v hugo)}" \
     WRITING_IMPORT_PYTHON="$PYTHON" \

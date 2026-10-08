@@ -7,15 +7,35 @@ COMPONENT="${2:-site}"
 
 [[ -n "$OUTPUT" ]] || { printf '用法：%s 输出.tar.gz [site|comments]\n' "$0" >&2; exit 2; }
 case "$COMPONENT" in
+  site|comments) ;;
+  *) printf '组件只能是site或comments。\n' >&2; exit 2 ;;
+esac
+
+# P0-B：site 源码包必须绑定 release snapshot，证明对应哪个平台提交与内容清单。
+SNAPSHOT_JSON=""
+PLATFORM_COMMIT=""
+if [[ "$COMPONENT" == "site" ]]; then
+  [[ -n "${LIDAIJI_RELEASE_SNAPSHOT:-}" ]] || {
+    printf '错误：site 源码包必须绑定 release snapshot（设置 LIDAIJI_RELEASE_SNAPSHOT）。\n' >&2
+    exit 2
+  }
+  command -v python3 >/dev/null || { printf '缺少python3。\n' >&2; exit 2; }
+  SNAPSHOT_JSON="$(python3 "$ROOT/tools/release_snapshot.py" verify --snapshot "$LIDAIJI_RELEASE_SNAPSHOT")"
+  PLATFORM_COMMIT="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["platformCommit"])' "$SNAPSHOT_JSON")"
+fi
+snapshot_field() {
+  python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2],""))' "$SNAPSHOT_JSON" "$1"
+}
+
+case "$COMPONENT" in
   site)
-    TREEISH=HEAD
-    VERIFY_REF='HEAD^{tree}'
+    TREEISH="$PLATFORM_COMMIT"
+    VERIFY_REF="$PLATFORM_COMMIT^{tree}"
     ;;
   comments)
     TREEISH=HEAD:comments-service
     VERIFY_REF=HEAD:comments-service
     ;;
-  *) printf '组件只能是site或comments。\n' >&2; exit 2 ;;
 esac
 
 command -v git >/dev/null
@@ -37,9 +57,13 @@ git -C "$ROOT" archive --worktree-attributes --format=tar --output="$TEMP_TAR" "
 mkdir -p "$TEMP_DIR/unpack"
 tar -xf "$TEMP_TAR" -C "$TEMP_DIR/unpack"
 
-# BUILD_INFO（v0.5.1）：记录版本、sourceCommit、构建环境与组件元数据。
+# BUILD_INFO（v0.5.1 / P0-B）：记录版本、sourceCommit、快照身份与组件元数据。
 # 不含用户名、本机绝对路径、Token 或数据库路径。
-SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+if [[ "$COMPONENT" == "site" ]]; then
+  SOURCE_COMMIT="$PLATFORM_COMMIT"
+else
+  SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+fi
 COMPONENT_VERSION=""
 ENTRYPOINT=""
 MIGRATIONS=""
@@ -49,7 +73,7 @@ case "$COMPONENT" in
     COMPONENT_VERSION="$(cat "$ROOT/VERSION")"
     ENTRYPOINT="index.html"
     MIGRATIONS="-"
-    LOCKFILE_HASH="$(git -C "$ROOT" rev-parse HEAD:package-lock.json 2>/dev/null || echo none)"
+    LOCKFILE_HASH="$(git -C "$ROOT" rev-parse "$PLATFORM_COMMIT:package-lock.json" 2>/dev/null || echo none)"
     ;;
   comments)
     COMPONENT_VERSION="$(python3 -c 'import json; print(json.load(open("'"$ROOT"'/comments-service/package.json"))["version"])')"
@@ -67,6 +91,20 @@ esac
   printf 'lockfileHash: %s\n' "$LOCKFILE_HASH"
   printf 'entrypoint: %s\n' "$ENTRYPOINT"
   printf 'migrationVersions: %s\n' "$MIGRATIONS"
+  if [[ "$COMPONENT" == "site" ]]; then
+    printf 'releaseSnapshotId: %s\n' "$(snapshot_field snapshotId)"
+    printf 'releaseSnapshotFingerprint: %s\n' "$(snapshot_field snapshotFingerprint)"
+    printf 'snapshotMode: %s\n' "$(snapshot_field snapshotMode)"
+    printf 'contentManifestSha256: %s\n' "$(snapshot_field contentManifestSha256)"
+    printf 'configFingerprint: %s\n' "$(snapshot_field configFingerprint)"
+    printf 'builderVersion: %s\n' "$(snapshot_field builderVersion)"
+    printf 'packageRole: %s\n' "platform-source-with-release-provenance"
+    printf 'reproducibleSiteFromPackage: %s\n' "false"
+    if [[ -n "${LIDAIJI_CANDIDATE_ID:-}" ]]; then
+      printf 'candidateId: %s\n' "$LIDAIJI_CANDIDATE_ID"
+      printf 'candidateManifestSha256: %s\n' "${LIDAIJI_CANDIDATE_MANIFEST_SHA256:-}"
+    fi
+  fi
 } > "$TEMP_DIR/unpack/BUILD_INFO"
 
 # 打包前自检：候选不得包含绝对路径符号链接、失效符号链接、数据库或 .env。

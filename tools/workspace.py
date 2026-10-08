@@ -22,7 +22,12 @@ ENV_KEYS = {
     "contentRoot": "LIDAIJI_CONTENT_ROOT",
     "authorNotesRoot": "LIDAIJI_AUTHOR_NOTES_ROOT",
     "siteOverridesRoot": "LIDAIJI_SITE_OVERRIDES_ROOT",
+    "outputRoot": "LIDAIJI_DIST_ROOT",
 }
+# auto：有工作区配置即 private，否则 demo（公开克隆/CI 的既有行为）。
+# private：必须有合法工作区，缺失即 fail-closed，绝不落到平台仓库 content/。
+# demo：显式演示模式，忽略工作区配置。
+WORKSPACE_MODES = ("auto", "private", "demo")
 
 
 @dataclass(frozen=True)
@@ -32,6 +37,7 @@ class Workspace:
     contentRoot: str
     authorNotesRoot: str
     siteOverridesRoot: str
+    outputRoot: str
     mode: str
     label: str
 
@@ -60,18 +66,35 @@ def _resolve_path(value: str, platform_root: Path) -> Path:
     return path.resolve()
 
 
-def resolve_workspace(platform_root: Path, overrides: dict | None = None, writable_demo: bool = False) -> Workspace:
-    """按 命令行覆盖→环境变量→配置文件→demo 的顺序解析工作区。"""
+def resolve_workspace(
+    platform_root: Path,
+    overrides: dict | None = None,
+    writable_demo: bool = False,
+    mode: str | None = None,
+) -> Workspace:
+    """按 命令行覆盖→环境变量→配置文件 解析工作区；无配置时按模式进入演示。
+
+    ``private`` 模式 fail-closed：缺少合法工作区直接报错，绝不回退到平台仓库内容。
+    """
     platform_root = Path(platform_root).resolve()
-    force_demo = os.environ.get("LIDAIJI_WORKSPACE_MODE", "").strip().lower() == "demo"
-    config = {} if force_demo else _load_config(platform_root)
+    requested = str(mode or os.environ.get("LIDAIJI_WORKSPACE_MODE", "") or "auto").strip().lower()
+    if requested not in WORKSPACE_MODES:
+        raise ValueError("工作区模式只能是 auto/private/demo。")
+    config = {} if requested == "demo" else _load_config(platform_root)
     chosen: dict[str, str] = {}
-    for key, environment in ENV_KEYS.items():
-        value = None if force_demo else ((overrides or {}).get(key) or os.environ.get(environment) or config.get(key))
-        if value:
-            chosen[key] = str(value)
+    if requested != "demo":
+        for key, environment in ENV_KEYS.items():
+            value = (overrides or {}).get(key) or os.environ.get(environment) or config.get(key)
+            if value:
+                chosen[key] = str(value)
+    if requested == "private" and "contentRepoRoot" not in chosen:
+        raise ValueError(
+            "私人模式要求有效的 .lidaiji-workspace.json（或 --content-repo-root / "
+            "LIDAIJI_CONTENT_REPO_ROOT）；不会回退到平台仓库内容。"
+        )
 
     if "contentRepoRoot" not in chosen:
+        output_root = str(platform_root / "dist")
         if writable_demo:
             demo_repo = platform_root / ".cache" / "studio-demo-workspace"
             content = demo_repo / "content"
@@ -85,20 +108,28 @@ def resolve_workspace(platform_root: Path, overrides: dict | None = None, writab
             overrides_root = platform_root / "examples" / "demo-site-overrides"
             return Workspace(
                 str(platform_root), str(demo_repo), str(content), str(notes), str(overrides_root),
-                "demo", "演示内容（临时副本）",
+                output_root, "demo", "演示内容（临时副本）",
             )
+        # 只读演示：contentRepoRoot 指向缓存占位目录而非平台仓库根；
+        # 任何按 project_root/content 的写入都会失败，而不会落到平台内容。
         return Workspace(
-            str(platform_root), str(platform_root),
+            str(platform_root), str(platform_root / ".cache" / "studio-demo-workspace"),
             str((platform_root / "examples" / "demo-content").resolve()),
             str((platform_root / "examples" / "demo-author-notes").resolve()),
             str((platform_root / "examples" / "demo-site-overrides").resolve()),
-            "demo", "演示内容",
+            output_root, "demo", "演示内容",
         )
+
+    for key in ENV_KEYS:
+        configured = config.get(key)
+        if configured and Path(str(configured)).expanduser().is_absolute():
+            raise ValueError(f"{CONFIG_NAME} 的 {key} 必须使用相对路径，不要记录私人绝对路径。")
 
     repo = _resolve_path(chosen["contentRepoRoot"], platform_root)
     content = _resolve_path(chosen.get("contentRoot", str(repo / "content")), platform_root)
     notes = _resolve_path(chosen.get("authorNotesRoot", str(repo / "data" / "author-notes")), platform_root)
     site_overrides = _resolve_path(chosen.get("siteOverridesRoot", str(repo / "site-overrides")), platform_root)
+    output_root = _resolve_path(chosen.get("outputRoot", str(platform_root / "dist")), platform_root)
     if not repo.is_dir() or not content.is_dir():
         raise ValueError("私人内容仓库或content目录不存在。")
     if repo not in content.parents:
@@ -111,7 +142,7 @@ def resolve_workspace(platform_root: Path, overrides: dict | None = None, writab
     site_overrides.mkdir(parents=True, exist_ok=True)
     return Workspace(
         str(platform_root), str(repo), str(content), str(notes), str(site_overrides),
-        "private", f"私人内容仓库：{repo.name}",
+        str(output_root), "private", f"私人内容仓库：{repo.name}",
     )
 
 
@@ -249,6 +280,8 @@ def main() -> int:
     parser.add_argument("--content-root")
     parser.add_argument("--author-notes-root")
     parser.add_argument("--site-overrides-root")
+    parser.add_argument("--output-root", help="构建产物根目录；默认平台 dist/")
+    parser.add_argument("--mode", choices=WORKSPACE_MODES, help="工作区模式；默认 auto")
     parser.add_argument("--writable-demo", action="store_true")
     args = parser.parse_args()
     overrides = {
@@ -256,9 +289,10 @@ def main() -> int:
         "contentRoot": args.content_root,
         "authorNotesRoot": args.author_notes_root,
         "siteOverridesRoot": args.site_overrides_root,
+        "outputRoot": args.output_root,
     }
     try:
-        workspace = resolve_workspace(args.platform_root, overrides, args.writable_demo)
+        workspace = resolve_workspace(args.platform_root, overrides, args.writable_demo, mode=args.mode)
         if args.action == "materialize":
             if not args.destination:
                 raise ValueError("materialize需要--destination。")

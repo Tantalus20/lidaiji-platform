@@ -22,6 +22,8 @@ def main() -> int:
     parser.add_argument("--content-root", help="内容目录；优先于环境变量和工作区配置")
     parser.add_argument("--author-notes-root", help="作者评目录；优先于环境变量和工作区配置")
     parser.add_argument("--site-overrides-root", help="私人站点覆盖配置目录")
+    parser.add_argument("--output-root", help="构建产物根目录；默认平台 dist/")
+    parser.add_argument("--mode", choices=("auto", "private", "demo"), help="工作区模式；默认 auto（有工作区配置即 private）")
     parser.add_argument("--no-browser", action="store_true", help="启动后不自动打开浏览器")
     args = parser.parse_args()
 
@@ -41,9 +43,17 @@ def main() -> int:
                 "contentRoot": args.content_root,
                 "authorNotesRoot": args.author_notes_root,
                 "siteOverridesRoot": args.site_overrides_root,
+                "outputRoot": args.output_root,
             },
             writable_demo=True,
+            mode=args.mode,
         )
+        if workspace.mode == "demo" and not args.mode and not os.environ.get("LIDAIJI_WORKSPACE_MODE", "").strip():
+            print(
+                "警告：未找到私人工作区配置，当前使用演示内容（仅写入 .cache 副本，"
+                "不会触碰平台仓库或真实作者内容）。",
+                file=sys.stderr,
+            )
         server = create_server(
             workspace.contentRepoRoot,
             host=args.host,
@@ -52,6 +62,9 @@ def main() -> int:
             workspace_mode=workspace.mode,
             workspace_label=workspace.label,
             workspace_environment=workspace.environment(),
+            content_root=workspace.contentRoot,
+            author_notes_root=workspace.authorNotesRoot,
+            output_root=workspace.outputRoot,
         )
         server.state.auth_mode = auth_mode
     except ValueError as error:

@@ -192,6 +192,9 @@ class StudioState:
     workspace_mode: str = "legacy"
     workspace_label: str = "当前项目"
     workspace_environment: dict[str, str] = field(default_factory=dict)
+    content_root: Path | None = None
+    author_notes_root: Path | None = None
+    output_root: Path | None = None
     sessions: dict[str, Session] = field(default_factory=dict)
     preview_process: subprocess.Popen | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -1319,6 +1322,9 @@ class StudioHandler(BaseHTTPRequestHandler):
                 "mode": self.state.workspace_mode,
                 "label": self.state.workspace_label,
                 "contentRepoRoot": str(self.state.project_root),
+                "contentRoot": str(self.state.content_root or (self.state.project_root / "content")),
+                "authorNotesRoot": str(self.state.author_notes_root or (self.state.project_root / "data" / "author-notes")),
+                "outputRoot": str(self.state.output_root or ((self.state.platform_root or self.state.project_root) / "dist")),
                 "platformRoot": str(self.state.platform_root or self.state.project_root),
             },
             "auth": {
@@ -1352,6 +1358,9 @@ def create_server(
     workspace_mode: str = "legacy",
     workspace_label: str = "当前项目",
     workspace_environment: dict[str, str] | None = None,
+    content_root=None,
+    author_notes_root=None,
+    output_root=None,
 ) -> StudioHTTPServer:
     """构建（尚未启动的）服务；project_root 可指向任意项目根（测试用临时目录）。"""
     if not is_loopback(host):
@@ -1370,5 +1379,8 @@ def create_server(
         workspace_mode=workspace_mode,
         workspace_label=workspace_label,
         workspace_environment=dict(workspace_environment or {}),
+        content_root=Path(content_root).resolve() if content_root else None,
+        author_notes_root=Path(author_notes_root).resolve() if author_notes_root else None,
+        output_root=Path(output_root).resolve() if output_root else None,
     )
     return StudioHTTPServer(("127.0.0.1", int(port)), StudioHandler, state)

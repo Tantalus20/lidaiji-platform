@@ -1,8 +1,8 @@
 /* 跨平台 npm 入口：npm run package。
- * 生成标准发布包（与 scripts/publish.sh 的打包步骤一致）：
+ * P0-B：打包前必须冻结 release snapshot；站点与源码包必须记录同一快照身份。
  *   - 静态站点包：dist/site → tar.gz
- *   - 源码包：git archive HEAD → tar.gz + manifest + sha256
- * Windows 使用系统自带 tar.exe（Windows 10 1803+）或 Git 的 tar；Unix 用系统 tar。
+ *   - 源码包：Unix 走 scripts/create-source-package.sh（canonical，快照绑定）；
+ *     Windows 使用 git archive <platformCommit> + BUILD_INFO 来源证明（tar.exe）。
  * 输出目录：dist/releases/<时间戳>/，同时打印各包 SHA-256。
  */
 
@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ROOT, ensureDir, log, die } from "./cross-platform/common.mjs";
+import { ROOT, ensureDir, log, die, findPython, runCapture } from "./cross-platform/common.mjs";
 
 function shasum(file) {
   if (process.platform === "win32") {
@@ -32,33 +32,38 @@ function makeTar(sourceDir, outputFile) {
   if (result.status !== 0) die(`tar 打包失败：${(result.stderr || "").toString()}`);
 }
 
-function gitArchive(outputFile) {
-  if (process.platform === "win32") {
-    // Windows 自带 tar.exe（bsdtar）支持 --exclude 与 gzip；
-    // 从工作树打包源码（排除 .git/node_modules/.cache/dist）
-    const result = spawnSync(
-      "tar",
-      [
-        "-czf", outputFile,
-        "--exclude", ".git",
-        "--exclude", "node_modules",
-        "--exclude", ".cache",
-        "--exclude", "dist",
-        ".",
-      ],
-      { stdio: "pipe", cwd: ROOT, windowsHide: true },
-    );
-    if (result.status !== 0) die(`源码包打包失败：${(result.stderr || "").toString().trim()}`);
-    return;
-  }
-  const result = spawnSync("git", ["archive", "--format=tar", "HEAD"], {
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 512 * 1024 * 1024,
-    cwd: ROOT,
-    windowsHide: true,
-  });
-  if (result.status !== 0) die(`git archive 失败（需要已提交的工作区）：${(result.stderr || "").toString().trim()}`);
-  fs.writeFileSync(outputFile, result.stdout);
+function createSnapshot() {
+  const python = findPython() || die("未找到 Python，无法创建 release snapshot。");
+  const workspaceJson = runCapture(python, [
+    path.join(ROOT, "tools", "workspace.py"), "show", `--platform-root=${ROOT}`,
+  ]);
+  if (!workspaceJson) die("workspace show 失败。");
+  const workspace = JSON.parse(workspaceJson);
+  const snapshotJson = runCapture(python, [
+    path.join(ROOT, "tools", "release_snapshot.py"), "create",
+    `--platform-root=${ROOT}`, "--mode=full_site",
+    `--content-root=${workspace.contentRoot}`,
+    `--site-overrides-root=${workspace.siteOverridesRoot}`,
+  ]);
+  if (!snapshotJson) die("release snapshot 创建失败（平台代码必须来自干净提交）。");
+  return JSON.parse(snapshotJson);
+}
+
+function buildInfoText(snapshot, version) {
+  return [
+    `version: ${version}`,
+    `sourceCommit: ${snapshot.platformCommit}`,
+    `releaseSnapshotId: ${snapshot.snapshotId}`,
+    `releaseSnapshotFingerprint: ${snapshot.snapshotFingerprint}`,
+    `snapshotMode: ${snapshot.snapshotMode}`,
+    `contentManifestSha256: ${snapshot.contentManifestSha256}`,
+    `configFingerprint: ${snapshot.configFingerprint}`,
+    `builderVersion: ${snapshot.builderVersion}`,
+    `buildTimestamp: ${new Date().toISOString().replace(/\.\d{3}Z$/, "Z")}`,
+    "packageRole: platform-source-with-release-provenance",
+    "reproducibleSiteFromPackage: false",
+    "entrypoint: index.html",
+  ].join("\n") + "\n";
 }
 
 const version = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "0.0.0";
@@ -71,30 +76,50 @@ if (!fs.existsSync(path.join(siteDir, "index.html"))) {
   die("缺少 dist/site 构建产物，请先运行 npm run build。");
 }
 
+const snapshot = createSnapshot();
 const releaseTar = path.join(outDir, `lidaiji-site-v${version}_${stamp}.tar.gz`);
 const sourceTar = path.join(outDir, `lidaiji-source-v${version}_${stamp}.tar.gz`);
 
 makeTar(siteDir, releaseTar);
-if (process.platform === "win32") {
-  gitArchive(sourceTar); // Windows 分支直接生成 .tar.gz
-} else {
-  const sourceTmp = path.join(outDir, "source.tar");
-  gitArchive(sourceTmp);
-  const gzip = spawnSync("gzip", ["-c", sourceTmp], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
-  if (gzip.status !== 0) die("源码包压缩失败。");
-  fs.writeFileSync(sourceTar, gzip.stdout);
-  fs.rmSync(sourceTmp, { force: true });
-}
 
-// 源码包清单
-const manifestLines = spawnSync("git", ["ls-files"], { encoding: "utf8", cwd: ROOT })
-  .stdout.split("\n").filter(Boolean);
-fs.writeFileSync(`${sourceTar}.manifest.txt`, manifestLines.join("\n") + "\n");
-fs.writeFileSync(`${sourceTar}.sha256`, `${shasum(sourceTar)}  ${path.basename(sourceTar)}\n`);
+if (process.platform !== "win32") {
+  const result = spawnSync("bash", [path.join(ROOT, "scripts", "create-source-package.sh"), sourceTar, "site"], {
+    stdio: "inherit",
+    windowsHide: true,
+    env: { ...process.env, LIDAIJI_RELEASE_SNAPSHOT: snapshot.snapshotDir },
+  });
+  if (result.status !== 0) die("源码包生成失败。");
+} else {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lidaiji-source-"));
+  const rawTar = path.join(tmp, "source.tar");
+  const archive = spawnSync("git", ["archive", "--format=tar", snapshot.platformCommit], {
+    cwd: ROOT,
+    maxBuffer: 512 * 1024 * 1024,
+    windowsHide: true,
+  });
+  if (archive.status !== 0) die("git archive 失败。");
+  fs.writeFileSync(rawTar, archive.stdout);
+  const unpack = path.join(tmp, "unpack");
+  ensureDir(unpack);
+  if (spawnSync("tar", ["-xf", rawTar, "-C", unpack], { stdio: "pipe", windowsHide: true }).status !== 0) {
+    die("源码包解包失败。");
+  }
+  fs.writeFileSync(path.join(unpack, "BUILD_INFO"), buildInfoText(snapshot, version));
+  if (spawnSync("tar", ["-czf", sourceTar, "-C", unpack, "."], {
+    stdio: "pipe", windowsHide: true, env: { ...process.env, COPYFILE_DISABLE: "1" },
+  }).status !== 0) {
+    die("源码包打包失败。");
+  }
+  const listing = spawnSync("tar", ["-tzf", sourceTar], { encoding: "utf8", windowsHide: true });
+  fs.writeFileSync(`${sourceTar}.manifest.txt`, (listing.stdout || "").trim().split("\n").filter(Boolean).join("\n") + "\n");
+  fs.writeFileSync(`${sourceTar}.sha256`, `${shasum(sourceTar)}  ${path.basename(sourceTar)}\n`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
 
 log(`发布包目录：${outDir}`);
 console.log(`静态站包：${releaseTar}`);
 console.log(`  SHA-256：${shasum(releaseTar)}`);
 console.log(`源码包：${sourceTar}`);
 console.log(`  SHA-256：${shasum(sourceTar)}`);
+console.log(`发布快照：${snapshot.snapshotId}（${snapshot.snapshotMode}）`);
 console.log("上传后可在服务器执行部署脚本（见 docs/deployment.md）。");
