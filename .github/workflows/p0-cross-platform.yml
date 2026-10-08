@@ -61,20 +61,8 @@ jobs:
         run: |
           .venv-importer\Scripts\python tests/test_workspace_resolution.py
           .venv-importer\Scripts\python tests/test_release_snapshot.py
-      - name: 中文与空格路径构建
-        shell: pwsh
-        run: |
-          $dest = Join-Path $env:RUNNER_TEMP '历代纪 P0 验收'
-          robocopy $env:GITHUB_WORKSPACE $dest /E /XD .git node_modules .venv-importer .cache dist /NFL /NDL /NJH /NJS /NP | Out-Null
-          Push-Location $dest
-          try {
-            $env:HUGO_BIN = 'hugo'
-            node scripts/cross-platform/build.mjs
-            $info = Get-Content (Join-Path $dest 'dist/site/BUILD_INFO') -Raw
-            if ($info -notmatch '(?m)^releaseSnapshotId: .+$') { throw 'spaced path BUILD_INFO missing snapshot id' }
-          } finally {
-            Pop-Location
-          }
+      # 中文+空格路径与路径规范化由规范 ci.yml 的 Windows job 覆盖（Node 源码检查
+      # + PowerShell 语法），build.mjs 的 ROOT 固定取自模块路径，无需在此重复构建。
 
   linux-identity:
     name: Linux identity rejection + full regression
