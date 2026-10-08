@@ -159,6 +159,15 @@ test("cqnb+允许匿名：未登录提交进入 pending", async (t) => {
   assert.equal(ctx.db.prepare("SELECT status FROM comments").get().status, "pending");
 });
 
+test("cqnb+自动公开但未登录（游客匿名）：仍进入 pending", async (t) => {
+  const ctx = await fixture({ identityMode: "cqnb", requireCommentLogin: false, autoApproveComments: true });
+  t.after(() => ctx.close());
+  const result = await request(ctx, "/api/comments/v1/comments", { method: "POST", body: JSON.stringify(payload()) });
+  assert.equal(result.response.status, 202);
+  assert.equal(ctx.db.prepare("SELECT status FROM comments").get().status, "pending",
+    "游客匿名评论必须保持默认待审核，即使开启自动公开");
+});
+
 test("cqnb+登录必填+审核制：已登录提交进入 pending", async (t) => {
   const ctx = await fixture({ identityMode: "cqnb", requireCommentLogin: true, autoApproveComments: false });
   t.after(() => ctx.close());

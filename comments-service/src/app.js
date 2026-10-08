@@ -272,7 +272,9 @@ async function submitComment(request, response, db, config) {
   const finalDisplayName = identity
     ? safeText(identity.displayName || identity.username, 1, 40, "显示名")
     : displayName;
-  const status = honeypot ? "spam" : (config.autoApproveComments ? "approved" : "pending");
+  const status = honeypot ? "spam" : "pending";
+  // 游客段评始终保持默认待审核；仅已登录（cqnb 身份）评论可配置直接公开。
+  const finalStatus = identity && config.autoApproveComments && status === "pending" ? "approved" : status;
   const id = `comment_${randomToken(12)}`;
   const now = new Date().toISOString();
   transaction(db, () => {
@@ -280,7 +282,7 @@ async function submitComment(request, response, db, config) {
       INSERT INTO comments(id,article_id,article_revision,paragraph_id,paragraph_excerpt,display_name,body,status,
         source_fingerprint,browser_fingerprint,contains_link,duplicate_hash,created_at,updated_at,scope)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(id, articleId, article.current_revision, paragraphId, paragraphExcerpt, finalDisplayName, body, status,
+    `).run(id, articleId, article.current_revision, paragraphId, paragraphExcerpt, finalDisplayName, body, finalStatus,
       source, browser, linkCount ? 1 : 0, duplicateHash, now, now, scope);
     db.prepare(`
       INSERT INTO rate_limit_events(source_fingerprint,browser_fingerprint,article_id,paragraph_id,kind,created_at)
@@ -288,7 +290,9 @@ async function submitComment(request, response, db, config) {
     `).run(source, browser, articleId, paragraphId, "comment", now);
     createNotificationTask(db, { commentId: id, publicReviewId: "", now: Date.now() });
   });
-  const message = scope === "article" ? "章评已提交，等待审核。" : "段评已经提交，审核通过后将公开显示。";
+  const message = finalStatus === "approved"
+    ? "评论已公开。"
+    : (scope === "article" ? "章评已提交，等待审核。" : "段评已经提交，审核通过后将公开显示。");
   json(response, 202, { ok: true, message }, { "Cache-Control": "no-store" });
 }
 
