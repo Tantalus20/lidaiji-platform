@@ -2497,3 +2497,8 @@ main {
 .auth-status[data-tone="muted"]{color:var(--ink-faint)}
 .auth-back{margin:1.5rem 0 0;color:var(--ink-faint);font-size:.85rem}
 @media(max-width:768px){.header-account{margin-left:auto}.auth-page{width:min(calc(100% - 1.25rem),520px)}}
+
+/* align 短代码排版容器（origin 平台新增，视觉校准合并保留）。 */
+.article-content .text-align-left { text-align: left; }
+.article-content .text-align-center { text-align: center; }
+.article-content .text-align-right { text-align: right; }
