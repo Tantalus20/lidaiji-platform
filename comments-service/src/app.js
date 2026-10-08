@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const http = require("node:http");
+const https = require("node:https");
 const path = require("node:path");
 const { URL } = require("node:url");
 const { transaction } = require("./db");
@@ -197,6 +198,36 @@ function requireAdmin(request, db, csrf = false) {
   return session;
 }
 
+function cqnbUser(request, config) {
+  const cookie = parseCookies(request.headers.cookie)["cqnb_platform"];
+  if (!cookie) return Promise.resolve(null);
+  let target;
+  try { target = new URL(config.cqnbSessionUrl); } catch { return Promise.resolve(null); }
+  return new Promise((resolve) => {
+    const transport = target.protocol === "https:" ? https : http;
+    const upstream = transport.request(target, { method: "GET", headers: {
+      Cookie: `cqnb_platform=${cookie}`,
+      Origin: config.publicOrigin,
+      Referer: `${config.publicOrigin}/`,
+      Accept: "application/json",
+    }, timeout: 4000 }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { body += chunk; if (body.length > 64_000) upstream.destroy(); });
+      response.on("end", () => {
+        if (response.statusCode !== 200) return resolve(null);
+        try {
+          const parsed = JSON.parse(body);
+          resolve(parsed?.user?.id ? { id: String(parsed.user.id), username: String(parsed.user.username || ""), displayName: String(parsed.user.displayName || "") } : null);
+        } catch { resolve(null); }
+      });
+    });
+    upstream.on("timeout", () => { upstream.destroy(); resolve(null); });
+    upstream.on("error", () => resolve(null));
+    upstream.end();
+  });
+}
+
 async function submitComment(request, response, db, config) {
   if (!originAllowed(request, config)) throw Object.assign(new Error("请求来源不被接受。"), { statusCode: 403 });
   const payload = await readJson(request, config.maxBodyBytes);
@@ -231,7 +262,17 @@ async function submitComment(request, response, db, config) {
   `).get(source, browser, duplicateHash, new Date(Date.now() - 30 * 60_000).toISOString());
   if (duplicate) throw Object.assign(new Error("相同评论已经提交，请不要重复发送。"), { statusCode: 429 });
   const honeypot = String(payload.website || "").trim();
-  const status = honeypot ? "spam" : "pending";
+  const identity = config.identityMode === "cqnb" ? await cqnbUser(request, config) : null;
+  if (config.requireCommentLogin) {
+    if (config.identityMode !== "cqnb") {
+      throw Object.assign(new Error("评论身份校验未配置（IDENTITY_MODE 不是 cqnb），已禁止提交。"), { statusCode: 500 });
+    }
+    if (!identity) throw Object.assign(new Error("请先登录澄清南北账号后再发表评论。"), { statusCode: 401 });
+  }
+  const finalDisplayName = identity
+    ? safeText(identity.displayName || identity.username, 1, 40, "显示名")
+    : displayName;
+  const status = honeypot ? "spam" : (config.autoApproveComments ? "approved" : "pending");
   const id = `comment_${randomToken(12)}`;
   const now = new Date().toISOString();
   transaction(db, () => {
@@ -239,7 +280,7 @@ async function submitComment(request, response, db, config) {
       INSERT INTO comments(id,article_id,article_revision,paragraph_id,paragraph_excerpt,display_name,body,status,
         source_fingerprint,browser_fingerprint,contains_link,duplicate_hash,created_at,updated_at,scope)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(id, articleId, article.current_revision, paragraphId, paragraphExcerpt, displayName, body, status,
+    `).run(id, articleId, article.current_revision, paragraphId, paragraphExcerpt, finalDisplayName, body, status,
       source, browser, linkCount ? 1 : 0, duplicateHash, now, now, scope);
     db.prepare(`
       INSERT INTO rate_limit_events(source_fingerprint,browser_fingerprint,article_id,paragraph_id,kind,created_at)
