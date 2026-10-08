@@ -13,6 +13,8 @@ rsync -a \
   --exclude 'dist' \
   --exclude 'public' \
   "$ROOT/" "$TMP/"
+# 演示压力测试只消费 demo 内容：先清空仓库 content（若存在），避免嵌套目录。
+rm -rf "$TMP/content"
 cp -R "$TMP/examples/demo-content" "$TMP/content"
 mkdir -p "$TMP/data"
 cp -R "$TMP/examples/demo-author-notes" "$TMP/data/author-notes"
