@@ -165,7 +165,7 @@ class SensitiveScanTests(unittest.TestCase):
         self.assertNotIn("BEGIN OPENSSH", raw)
 
     def test_private_abs_path_blocked(self):
-        d = self._candidate({"index.html": "file:///Users/haminster/secret/x"})
+        d = self._candidate({"index.html": "file:///Users/example/secret/x"})
         result = ss.scan_candidate(d)
         self.assertTrue(result["blocked"])
         self.assertIn("private-abs-path", {f["kind"] for f in result["findings"]})
