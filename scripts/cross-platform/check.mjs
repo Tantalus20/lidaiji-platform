@@ -87,6 +87,8 @@ export function runCrossPlatformCheck() {
     }
     log(`PowerShell 脚本语法检查通过（${bad.length === 0 ? "全部" : "部分"}）。`);
   } else {
+    log("发布身份校验拒绝测试……");
+    run("bash", [path.join(ROOT, "tests", "check-release-identity.sh")]);
     log("bash 脚本语法检查……");
     const scripts = [];
     for (const dir of ["scripts", "tests", "deploy"]) {
