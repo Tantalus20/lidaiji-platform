@@ -71,7 +71,10 @@ for (const file of htmlFiles) {
   assert(!remoteRuntime.test(html), `${relative} 含远程运行时资源`);
   assert(!inlineHandler.test(html), `${relative} 含内联事件处理器`);
   assert(!mixedContent.test(html), `${relative} 含HTTP混合内容`);
-  assert(!/password|api[_-]?key|private[_-]?key/i.test(html), `${relative} 疑似泄露敏感字段`);
+  // 读者登录页（/login/）的密码输入是表单字段，不是泄露；其余页面仍禁止敏感字段。
+  if (!relative.startsWith("login/")) {
+    assert(!/password|api[_-]?key|private[_-]?key/i.test(html), `${relative} 疑似泄露敏感字段`);
+  }
 
   const links = [...html.matchAll(/\shref=["']([^"'#]+)(?:#[^"']*)?["']/gi)].map((match) => match[1]);
   for (const href of links) {
