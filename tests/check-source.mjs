@@ -224,8 +224,11 @@ assert(buildScript.includes("releaseSnapshotId"), "build.sh BUILD_INFO 缺少快
 const sourcePackage = read("scripts/create-source-package.sh");
 assert(sourcePackage.includes("LIDAIJI_RELEASE_SNAPSHOT"), "源码包未绑定 release snapshot");
 assert(sourcePackage.includes("platform-source-with-release-provenance"), "源码包缺少来源证明角色标记");
-assert(serverPublish.includes("verify_identity releaseSnapshotId"), "服务端未校验快照身份");
-assert(serverPublish.includes("verify_identity contentManifestSha256"), "服务端未校验内容清单摘要");
+const releaseVerifier = read("scripts/verify-release-identity.sh");
+assert(releaseVerifier.includes("verify_identity releaseSnapshotId"), "身份校验脚本未校验快照身份");
+assert(releaseVerifier.includes("verify_identity contentManifestSha256"), "身份校验脚本未校验内容清单摘要");
+assert(releaseVerifier.includes("article_isolated"), "身份校验脚本未约束 article_isolated 候选身份");
+assert(serverPublish.includes("verify-release-identity.sh"), "服务器发布未调用独立身份校验脚本");
 assert(backup.includes("importer incoming"), "源码备份未包含导入器与Word来稿箱");
 const importShell = read("scripts/import-docx.sh");
 assert(importShell.includes('-r "$ROOT/importer/requirements.txt" >&2'), "首次安装依赖的输出会污染Python路径");

@@ -86,7 +86,7 @@ fi
 printf '执行服务器发布前检查（磁盘、Nginx、当前release）……\n'
 ssh "$WRITING_SSH_TARGET" \
   "df -h /opt /var 2>/dev/null || df -h /; sudo nginx -t; if [ -L /opt/writing-site/current ]; then test -f /opt/writing-site/current/index.html && test -f /opt/writing-site/current/404.html && test -f /opt/writing-site/current/search-index.json; fi"
-scp "$RELEASE_ARCHIVE" "$SOURCE_ARCHIVE" "$COMMENTS_ARCHIVE" "$ROOT/scripts/server-publish.sh" "$WRITING_SSH_TARGET:/tmp/"
+scp "$RELEASE_ARCHIVE" "$SOURCE_ARCHIVE" "$COMMENTS_ARCHIVE" "$ROOT/scripts/server-publish.sh" "$ROOT/scripts/verify-release-identity.sh" "$WRITING_SSH_TARGET:/tmp/"
 CANDIDATE_ARGS=()
 if [[ -n "${LIDAIJI_CANDIDATE_ID:-}" ]]; then
   CANDIDATE_ARGS+=(--candidate-id "$LIDAIJI_CANDIDATE_ID" --candidate-manifest-sha "${LIDAIJI_CANDIDATE_MANIFEST_SHA256:-}")
