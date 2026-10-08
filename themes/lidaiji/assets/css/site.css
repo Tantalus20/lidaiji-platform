@@ -2502,3 +2502,12 @@ main {
 .article-content .text-align-left { text-align: left; }
 .article-content .text-align-center { text-align: center; }
 .article-content .text-align-right { text-align: right; }
+
+/* 正文语义排版：以 <em>/<strong> 为准（origin 平台新增，视觉校准合并保留）。 */
+.article-content strong {
+  font-weight: 700;
+}
+
+.article-content em {
+  font-style: italic;
+}
