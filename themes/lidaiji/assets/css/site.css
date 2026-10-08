@@ -1,23 +1,30 @@
 :root {
   color-scheme: light;
-  --paper: #f5f1e8;
-  --paper-raised: #fbf8f1;
-  --paper-muted: #ece3d3;
-  --ink: #27231e;
-  --ink-soft: #5f574c;
-  --ink-faint: #8b8174;
-  --line: #d4c7b5;
-  --accent: #8a3f32;
-  --accent-dark: #673028;
-  --gold: #9a7840;
-  --danger: #a2402f;
-  --shadow: 0 12px 36px rgba(65, 47, 31, 0.07);
+  --paper: #f7f3ea;
+  --paper-raised: #fffdf7;
+  --paper-muted: #efe9db;
+  --ink: #2b2620;
+  --ink-soft: #4c453c;
+  --ink-faint: #8d8478;
+  --line: rgba(43, 38, 32, 0.14);
+  --line-strong: rgba(43, 38, 32, 0.24);
+  --accent: #33566b;
+  --accent-dark: #264252;
+  --accent-soft: #e3ebf0;
+  --gold: #9a7b2d;
+  --danger: #a63d2a;
+  --danger-soft: #f5e4de;
+  --success: #3f6b4f;
+  --warning: #8a6420;
+  --focus: #33566b;
+  --shadow: 0 2px 8px rgba(43, 38, 32, 0.10);
+  --shadow-raised: 0 12px 32px rgba(43, 38, 32, 0.18);
   --font-serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --radius-sm: 0.45rem;
-  --radius: 0.55rem;
-  --radius-lg: 1rem;
-  --leading-body: 1.95;
+  --radius-sm: 3px;
+  --radius: 5px;
+  --radius-lg: 6px;
+  --leading-body: 1.85;
   --leading-tight: 1.45;
   --content: 760px;
   --wide: 1160px;
@@ -25,18 +32,25 @@
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --paper: #181613;
-  --paper-raised: #201e1a;
-  --paper-muted: #2b2822;
-  --ink: #e7dfd2;
-  --ink-soft: #bcb2a4;
-  --ink-faint: #8f8578;
-  --line: #443e35;
-  --accent: #c67b6b;
-  --accent-dark: #d49486;
-  --gold: #c6a268;
-  --danger: #df8c7b;
-  --shadow: 0 12px 36px rgba(0, 0, 0, 0.3);
+  --paper: #1e211f;
+  --paper-raised: #272b29;
+  --paper-muted: #303532;
+  --ink: #e8e5dc;
+  --ink-soft: #c2c1b8;
+  --ink-faint: #999b92;
+  --line: rgba(232, 229, 220, 0.14);
+  --line-strong: rgba(232, 229, 220, 0.24);
+  --accent: #8fb1c2;
+  --accent-dark: #b2ccda;
+  --accent-soft: #2b3940;
+  --gold: #b6a16a;
+  --danger: #d28a79;
+  --danger-soft: #432e2a;
+  --success: #8eb19a;
+  --warning: #c7ab69;
+  --focus: #9bbdce;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-raised: 0 12px 32px rgba(0, 0, 0, 0.32);
 }
 
 *,
@@ -59,7 +73,7 @@ body {
   min-width: 320px;
   overflow-x: hidden;
   background:
-    linear-gradient(90deg, transparent 0, rgba(138, 63, 50, 0.025) 50%, transparent 100%),
+    linear-gradient(90deg, transparent 0, color-mix(in srgb, var(--accent) 2%, transparent) 50%, transparent 100%),
     var(--paper);
 }
 
@@ -83,8 +97,19 @@ img {
 }
 
 button,
-input {
+input,
+textarea,
+select {
   font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
 }
 
 .skip-link {
@@ -126,10 +151,11 @@ input {
 }
 
 .site-header {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 20;
   border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
   backdrop-filter: blur(12px);
 }
 
@@ -140,11 +166,10 @@ input {
 }
 
 .header-inner {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
-  min-height: 82px;
-  gap: 2rem;
+  min-height: 68px;
+  gap: clamp(1rem, 3vw, 2.25rem);
 }
 
 .site-brand {
@@ -176,7 +201,7 @@ input {
   height: 2.6rem;
   place-items: center;
   border: 1px solid var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--paper-raised);
   font-family: var(--font-serif);
@@ -186,13 +211,18 @@ input {
 .site-nav {
   display: flex;
   justify-content: flex-end;
-  gap: 1.25rem;
+  gap: clamp(0.65rem, 1.5vw, 1.25rem);
+  margin-left: auto;
 }
 
 .site-nav a {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
   color: var(--ink-soft);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   text-decoration: none;
+  transition: color 150ms ease, box-shadow 150ms ease;
 }
 
 .site-nav a:hover {
@@ -201,9 +231,11 @@ input {
 
 .site-nav a[aria-current="page"] {
   color: var(--accent);
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
+  font-weight: 700;
+  text-decoration: none;
+  text-decoration-thickness: 2px;
   text-underline-offset: 0.45em;
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .theme-toggle {
@@ -211,15 +243,18 @@ input {
   width: 2.5rem;
   height: 2.5rem;
   place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
   background: var(--paper-raised);
-  color: var(--ink);
+  color: var(--accent);
   cursor: pointer;
+  box-shadow: var(--shadow);
 }
 
-.theme-toggle:hover {
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
   border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 main {
@@ -247,18 +282,17 @@ main {
 }
 
 /* 首屏衬底的淡印“纪”字，仅宽屏显示 */
-@media (min-width: 961px) {
+@media (min-width: 1025px) {
   .home-hero::after {
-    content: "纪";
+    content: "";
     position: absolute;
     z-index: -1;
-    top: 50%;
-    left: -2.5rem;
-    transform: translateY(-54%);
-    color: color-mix(in srgb, var(--ink) 5%, transparent);
-    font-family: var(--font-serif);
-    font-size: 24rem;
-    line-height: 1;
+    right: 12%;
+    bottom: 1.5rem;
+    width: 8rem;
+    height: 2px;
+    background: var(--accent);
+    opacity: 0.3;
     pointer-events: none;
   }
 }
@@ -318,45 +352,55 @@ main {
 
 .button {
   display: inline-flex;
-  min-height: 46px;
+  min-height: 40px;
   align-items: center;
   justify-content: center;
-  padding: 0.65rem 1.2rem;
-  border: 1px solid var(--line);
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
   color: var(--ink);
   text-decoration: none;
+  box-shadow: var(--shadow);
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
 }
 
 .button.primary {
   border-color: var(--accent);
-  background: transparent;
-  color: var(--accent-dark);
+  background: var(--accent);
+  color: #fff;
 }
 
 .button.primary:hover {
-  background: var(--accent);
-  color: var(--paper);
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
+  color: #fff;
 }
 
 .button.quiet:hover {
   border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-dark);
 }
+
+.button:active { transform: translateY(1px); }
 
 .archive-plaque {
   position: relative;
   min-height: 330px;
   padding: 2rem;
   border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius);
   background: var(--paper-raised);
   box-shadow: var(--shadow);
 }
 
-/* 档案标签式的内框细线 */
 .archive-plaque::before {
   content: "";
   position: absolute;
-  inset: 9px;
-  border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  inset: 12px;
+  border: 1px solid var(--line);
   pointer-events: none;
 }
 
@@ -412,7 +456,7 @@ main {
   color: var(--ink-faint);
 }
 
-@media (max-width: 680px) {
+@media (max-width: 768px) {
   .plaque-vertical {
     display: none;
   }
@@ -441,14 +485,13 @@ main {
   font-weight: 600;
 }
 
-/* 分区标题前的朱砂小印 */
 .section-heading h2::before {
   content: "";
   display: inline-block;
-  width: 0.46em;
-  height: 0.46em;
-  margin-right: 0.55rem;
-  transform: translateY(-0.06em);
+  width: 2rem;
+  height: 2px;
+  margin-right: 0.7rem;
+  transform: translateY(-0.18em);
   background: var(--accent);
 }
 
@@ -469,15 +512,18 @@ main {
   flex-direction: column;
   padding: 1.5rem;
   border: 1px solid var(--line);
+  border-top: 2px solid var(--accent);
+  border-radius: var(--radius);
   background: var(--paper-raised);
   color: var(--ink);
   text-decoration: none;
-  transition: transform 180ms ease, border-color 180ms ease;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .collection-card:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   border-color: var(--accent);
+  box-shadow: var(--shadow);
 }
 
 .collection-status {
@@ -746,7 +792,7 @@ main {
 
 .collection-volume > h3 {
   margin: 0 0 0.8rem;
-  color: var(--gold);
+  color: var(--ink-soft);
   font-family: var(--font-serif);
   font-size: 1.35rem;
   font-weight: 600;
@@ -761,7 +807,7 @@ main {
 }
 
 .chapter-number {
-  color: var(--gold);
+  color: var(--accent);
   font-family: var(--font-serif);
   font-size: 1.2rem;
 }
@@ -813,15 +859,18 @@ main {
   word-break: break-word;
 }
 
-/* 标题两侧的金菱饰 */
-.article-header h1::before,
+/* 文章题签：以一条靛青细线建立层级，不用两侧金菱 */
+.article-header h1::before {
+  content: "";
+  display: block;
+  width: 2.5rem;
+  height: 3px;
+  margin: 0 auto 1.25rem;
+  background: var(--accent);
+}
+
 .article-header h1::after {
-  content: "◆";
-  margin: 0 0.7em;
-  color: var(--gold);
-  font-size: 0.25em;
-  letter-spacing: 0;
-  vertical-align: 0.42em;
+  content: none;
 }
 
 .article-subtitle {
@@ -853,7 +902,7 @@ main {
 .subtitle-entry::after {
   content: "";
   flex: 1 1 1.5rem;
-  border-top: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+  border-top: 1px solid var(--line);
 }
 
 .subtitle-entry::before {
@@ -864,7 +913,7 @@ main {
   margin-left: 1rem;
 }
 
-@media (max-width: 680px) {
+@media (max-width: 768px) {
   .subtitle-entry {
     font-size: 0.95rem;
     letter-spacing: 0.02em;
@@ -895,13 +944,14 @@ main {
   color: var(--ink-soft);
 }
 
-/* 标题区收尾的金石小饰 */
+/* 标题区收尾的细线，不再重复使用金色菱饰 */
 .article-header::after {
-  content: "◆";
+  content: "";
   display: block;
-  margin-top: 1.5rem;
-  color: var(--gold);
-  font-size: 0.55rem;
+  width: 2.5rem;
+  height: 1px;
+  margin: 1.5rem auto 0;
+  background: var(--line-strong);
 }
 
 /* 阅读工具区：字号调节（仅文章页，JS 未运行时不显示） */
@@ -955,7 +1005,7 @@ main {
   font-weight: 600;
 }
 
-@media (max-width: 680px) {
+@media (max-width: 768px) {
   .reader-font-group button {
     min-width: 3rem;
     padding: 0.55rem 0.9rem;
@@ -990,58 +1040,19 @@ main {
   margin-bottom: 0;
 }
 
-/* 加粗与斜体必须显式渲染：正文可能被其他规则设置过 font-weight/font-style。
-   斜体在中文环境多用合成倾斜（浏览器对 CJK 字体自动 fake-oblique），
-   语义以 <em>/<strong> 为准，禁止用内联样式替代。 */
-.article-content strong {
-  font-weight: 700;
-}
-
-.article-content em {
-  font-style: italic;
-}
-
-/* 段落级排版：左/中/右对齐与诗歌/尾注块。
-   全部是受控类名（来自 shortcode），正文里不保存任何内联 style。 */
-.article-content .text-align-left {
-  text-align: left;
-}
-
-.article-content .text-align-center {
-  text-align: center;
-}
-
-.article-content .text-align-right {
-  text-align: right;
-}
-
-.article-content .poetry-block {
-  width: fit-content;
-  max-width: 100%;
-  margin: 1.5em auto;
-  text-align: left;
-}
-
-.article-content .poetry-block p {
-  margin: 0.2em 0;
-  line-height: 1.7;
-}
-
-.article-content .end-note {
-  margin-top: 2em;
-  text-align: right;
-  font-size: 0.92em;
-  line-height: 1.7;
-  color: var(--ink-soft);
-}
-
-.article-content .end-note p {
-  margin: 0.25em 0;
-}
-
 .article-content > p:not(.text-center):not(.text-mark) {
   text-indent: 2em;
 }
+
+.article-content > .text-align-left > p,
+.article-content > .text-align-right > p,
+.article-content > .text-align-center > p {
+  text-indent: 0;
+}
+
+.article-content > .text-align-left { text-align: left; }
+.article-content > .text-align-center { text-align: center; }
+.article-content > .text-align-right { text-align: right; }
 
 .paragraph-comment-button {
   display: inline-flex;
@@ -1076,7 +1087,7 @@ main {
   opacity: 1;
 }
 
-@media (max-width: 680px) {
+@media (max-width: 768px) {
   .paragraph-comment-button {
     margin: -0.55em 0 -0.55em 0.45em;
     padding: 0.55em 0.4em;
@@ -1236,6 +1247,13 @@ main {
   color: var(--ink-faint);
 }
 
+.comment-login-link {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
 .comments-empty {
   color: var(--ink-faint);
   font-size: 0.9rem;
@@ -1250,7 +1268,7 @@ main {
   margin-top: 0.4rem;
 }
 
-@media (max-width: 560px) {
+@media (max-width: 480px) {
   .paragraph-comments-dialog {
     width: 100%;
     max-width: 100vw;
@@ -1430,8 +1448,10 @@ main {
   top: 2rem;
   max-height: calc(100vh - 4rem);
   overflow-y: auto;
-  padding-left: 1rem;
-  border-left: 1px solid var(--line);
+  padding: 0.9rem 0.9rem 0.9rem 1rem;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: color-mix(in srgb, var(--paper-raised) 68%, transparent);
   color: var(--ink-soft);
   font-size: 0.78rem;
 }
@@ -1488,13 +1508,14 @@ main {
   margin-bottom: 2rem;
   padding: 0.8rem 1rem;
   border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--paper-raised);
 }
 
 .article-footer {
   margin-top: 5rem;
   padding-top: 2rem;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-strong);
 }
 
 .article-taxonomies > div {
@@ -2153,19 +2174,20 @@ main {
   outline-offset: 3px;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1024px) {
   .header-inner {
-    grid-template-columns: 1fr auto;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
     padding-block: 0.75rem;
   }
 
   .site-nav {
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
     order: 3;
     justify-content: flex-start;
+    margin-left: 0;
     overflow-x: auto;
-    padding-bottom: 0.4rem;
+    padding-bottom: 0.35rem;
     white-space: nowrap;
   }
 
@@ -2195,7 +2217,7 @@ main {
   }
 }
 
-@media (max-width: 680px) {
+@media (max-width: 768px) {
   .header-inner,
   .footer-inner,
   .home-hero,
@@ -2425,4 +2447,29 @@ main {
   .author-note:not([open]) > *:not(summary) {
     display: block !important;
   }
+}
+
+/* 以下为 origin 平台新增的排版短代码样式（诗歌块 / 尾注），由本项目视觉校准合并保留。 */
+.article-content .poetry-block {
+  width: fit-content;
+  max-width: 100%;
+  margin: 1.5em auto;
+  text-align: left;
+}
+
+.article-content .poetry-block p {
+  margin: 0.2em 0;
+  line-height: 1.7;
+}
+
+.article-content .end-note {
+  margin-top: 2em;
+  text-align: right;
+  font-size: 0.92em;
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+.article-content .end-note p {
+  margin: 0.25em 0;
 }
