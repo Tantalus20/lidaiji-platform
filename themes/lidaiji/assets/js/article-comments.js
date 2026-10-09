@@ -16,6 +16,7 @@
   const moreButton = section.querySelector("[data-ac-more]");
   const list = section.querySelector("[data-ac-list]");
   const status = section.querySelector("[data-ac-status]");
+  let currentUser = null;
   const form = section.querySelector("[data-ac-form]");
   const bodyInput = form.querySelector("[data-ac-body]");
   const counter = section.querySelector("[data-ac-count]");
@@ -128,12 +129,19 @@
   async function requireReaderLogin() {
     try {
       const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) return false;
+      if (!response.ok) return null;
       const data = await response.json();
-      return Boolean(data?.user);
+      return data?.user || null;
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  function fillIdentity(user) {
+    const input = form.querySelector("[data-ac-name-input]");
+    if (input) input.value = user?.displayName || user?.username || "";
+    const span = form.querySelector("[data-ac-name]");
+    if (span) span.textContent = user?.displayName || user?.username || "";
   }
 
   function loginUrl() {
@@ -152,14 +160,17 @@
   }
 
   async function openForm() {
-    if (!(await requireReaderLogin())) {
+    const user = await requireReaderLogin();
+    if (!user) {
       showLoginRequired();
       return;
     }
+    currentUser = user;
+    fillIdentity(user);
     form.hidden = false;
     openButton.hidden = true;
     setStatus("");
-    form.querySelector("input[name=displayName]").focus();
+    form.querySelector("[data-ac-body]").focus();
   }
 
   function closeForm() {
@@ -202,16 +213,17 @@
       const data = await response.json().catch(() => ({ error: "服务响应异常。" }));
       if (!response.ok) throw new Error(data.error || "提交失败，请稍后再试。");
       form.reset();
+      fillIdentity(currentUser);
       counter.textContent = "0 / 3000";
       form.hidden = true;
       if (mode === "open") openButton.hidden = false;
-      setStatus(data.message || "章评已提交，等待审核。", "success");
+      setStatus(data.message || "章评已提交。", "success");
       openButton.focus();
     } catch (error) {
       setStatus(error.message, "error");
     } finally {
       submitButton.disabled = false;
-      submitButton.textContent = "提交章评，等待审核";
+      submitButton.textContent = "提交章评";
     }
   });
 

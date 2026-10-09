@@ -16,8 +16,9 @@
   const close = panel.querySelector("[data-comments-close]");
   let trigger = null;
   let paragraphId = "";
+  let currentUser = null;
 
-  // 状态提示分三级：muted（读取中）、success（已提交待审）、error（失败/不可用）。
+  // 状态提示分三级：muted（读取中）、success（已提交）、error（失败/不可用）。
   function setStatus(message, tone = "") {
     status.textContent = message;
     if (tone) status.dataset.tone = tone;
@@ -37,12 +38,19 @@
   async function requireReaderLogin() {
     try {
       const response = await fetch("/api/auth/session", { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) return false;
+      if (!response.ok) return null;
       const data = await response.json();
-      return Boolean(data?.user);
+      return data?.user || null;
     } catch {
-      return false;
+      return null;
     }
+  }
+
+  function fillIdentity(user) {
+    const input = form.querySelector("[data-comments-name-input]");
+    if (input) input.value = user?.displayName || user?.username || "";
+    const span = panel.querySelector("[data-comments-name]");
+    if (span) span.textContent = user?.displayName || user?.username || "";
   }
 
   function loginUrl() {
@@ -73,8 +81,8 @@
     close.focus();
     fetchComments();
     if (mode === "locked") setStatus("本文段评已锁定，已公开内容仍可阅读。", "muted");
-    if (mode === "open") requireReaderLogin().then((loggedIn) => {
-      if (loggedIn) form.hidden = false;
+    if (mode === "open") requireReaderLogin().then((user) => {
+      if (user) { currentUser = user; form.hidden = false; fillIdentity(user); }
       else showLoginRequired();
     });
   }
@@ -180,12 +188,13 @@
       const data = await response.json().catch(() => ({ error: "服务响应异常。" }));
       if (!response.ok) throw new Error(data.error || "提交失败，请稍后再试。");
       form.reset();
+      fillIdentity(currentUser);
       setStatus(data.message, "success");
     } catch (error) {
       setStatus(error.message, "error");
     } finally {
       submit.disabled = false;
-      submit.textContent = "提交段评，等待审核";
+      submit.textContent = "提交段评";
     }
   });
 })();

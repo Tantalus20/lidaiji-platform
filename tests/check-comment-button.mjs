@@ -55,7 +55,8 @@ assert(printBlock && printBlock[1].includes(".paragraph-comment-button"),
 
 // 6. 面板焦点返回与状态提示逻辑保持不变。
 assert(/trigger\?\.focus\(\)/.test(commentsJs), "关闭面板后必须把焦点还给段评按钮");
-assert(/提交段评，等待审核/.test(commentsJs), "提交按钮文案与状态提示不得改变");
+assert(/textContent\s*=\s*"提交段评"\s*;/.test(commentsJs), "提交按钮文案与状态提示不得改变");
+assert(!/提交段评，等待审核/.test(commentsJs), "登录直接公开策略下按钮不得再写“等待审核”");
 
 if (failures.length) {
   console.error(`段评入口契约检查失败（${failures.length}项）：`);

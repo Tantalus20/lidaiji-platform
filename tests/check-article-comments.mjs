@@ -41,7 +41,7 @@ assert(js.includes("openButton.focus()"), "关闭表单后焦点必须返还写�
 assert(js.includes("submitButton.disabled = true"), "提交中必须禁用重复提交");
 assert(js.includes("lidaiji-comment-client"), "章评必须复用段评的匿名浏览器标识");
 assert(js.includes("章评暂时无法加载，正文阅读不受影响"), "API失败必须有统一提示");
-assert(js.includes('data.message || "章评已提交，等待审核。"'), "提交成功必须显示待审核提示");
+assert(js.includes('data.message || "章评已提交。"'), "提交成功必须回到提交提示（登录直接公开）");
 
 // 5. 计数与分页：只统计approved章评，默认小批量加载。
 assert(js.includes("articleCount"), "章评数量必须来自counts接口的articleCount");

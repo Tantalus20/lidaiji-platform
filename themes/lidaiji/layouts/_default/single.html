@@ -63,9 +63,9 @@
         <button type="button" class="article-comments-more" data-ac-more hidden>查看更多章评</button>
         <form class="article-comment-form" data-ac-form hidden>
           <h3>写一则章评</h3>
-          <p>章评提交后需经站主审核，通过后公开显示。昵称未经身份核验。</p>
-          <label>显示名
-            <input name="displayName" required minlength="1" maxlength="40" autocomplete="nickname">
+          <p>已通过澄清南北身份验证，将以昵称「<span data-ac-name></span>」发表章评；登录评论提交后直接公开。</p>
+          <label>昵称（澄清南北账号）
+            <input name="displayName" data-ac-name-input readonly required minlength="1" maxlength="40" autocomplete="nickname">
           </label>
           <label>章评正文
             <textarea name="body" required minlength="10" maxlength="3000" rows="6" data-ac-body></textarea>
@@ -76,10 +76,10 @@
           </label>
           <label class="privacy-confirm">
             <input name="privacy" type="checkbox" required>
-            <span>我确认内容可以在审核后公开，且不含他人隐私、违法内容或无权公开的信息。本站会使用必要的技术信息防止垃圾提交，但不公开IP或技术标识。</span>
+            <span>我确认内容可以公开，且不含他人隐私、违法内容或无权公开的信息。本站会使用必要的技术信息防止垃圾提交，但不公开IP或技术标识。</span>
           </label>
           <div class="article-comment-form-actions">
-            <button type="submit">提交章评，等待审核</button>
+            <button type="submit">提交章评</button>
             <button type="button" class="article-comment-cancel" data-ac-cancel>取消</button>
           </div>
         </form>
@@ -150,9 +150,9 @@
     <div class="paragraph-comments-list" data-comments-list></div>
     <form class="paragraph-comment-form">
       <h3>写一则段评</h3>
-      <p>昵称未经身份核验。所有段评均须经站主审核，通过后才会公开。</p>
-      <label>显示名
-        <input name="displayName" required minlength="1" maxlength="40" autocomplete="nickname">
+      <p>已通过澄清南北身份验证，将以昵称「<span data-comments-name></span>」发表段评；登录评论提交后直接公开。</p>
+      <label>昵称（澄清南北账号）
+        <input name="displayName" data-comments-name-input readonly required minlength="1" maxlength="40" autocomplete="nickname">
       </label>
       <label>段评正文
         <textarea name="body" required minlength="5" maxlength="3000" rows="7"></textarea>
@@ -162,9 +162,9 @@
       </label>
       <label class="privacy-confirm">
         <input name="privacy" type="checkbox" required>
-        <span>我确认内容可以在审核后公开，且不含他人隐私、违法内容或无权公开的信息。本站会使用必要的技术信息防止垃圾提交，但不公开IP或技术标识。</span>
+        <span>我确认内容可以公开，且不含他人隐私、违法内容或无权公开的信息。本站会使用必要的技术信息防止垃圾提交，但不公开IP或技术标识。</span>
       </label>
-      <button type="submit">提交段评，等待审核</button>
+      <button type="submit">提交段评</button>
     </form>
     <p class="comments-status" data-comments-status aria-live="polite"></p>
   </div>
