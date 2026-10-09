@@ -1,4 +1,9 @@
 # 将 __WRITING_DOMAIN__ 替换为最终域名后启用。
+# 注意：生产站（game-server 43.132.227.252）自 20261009 起为双域名正式站，
+# xn--mnqv6ix00c.cn 与 writing.nsdynastygame.cn 均直接服务（不互相跳转）。
+# 服务器实际配置在 /etc/nginx/conf.d/writing-site.conf，含两个完整 server 块
+# （各自证书 + /api/auth/、/api/account 反代）；本模板为单域名渲染参考，
+# 部署覆盖前必须保留双域名结构与 writing.nsdynastygame.cn 自有证书。
 server {
     listen 80;
     listen [::]:80;
