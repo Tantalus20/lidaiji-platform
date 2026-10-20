@@ -116,7 +116,7 @@ Origin https://evil.example                 → 403 请求来源不被接受
 | 位置 | 内容 | 状态 |
 |---|---|---|
 | `/Users/haminster/Projects/writing-site` | 平台仓库，当前检出 `main` `39544c5` | **不是生产代码**；HANDOFF/AGENTS/.gitignore 有文档改动，旧登录改动在 stash |
-| `p0/production-features` `c031efb` | 生产分支，线上代码是 `3105c66`（仅差 Windows 清理）；GitHub 默认分支 | **已推送到 `origin/p0/production-features`** |
+| `p0/production-features` `c031efb` + 文档 `6ccffa4` | 生产分支，线上代码是 `3105c66`（仅差 Windows 清理）；GitHub 默认分支 | **已推送到 `origin/p0/production-features`** |
 | `origin/main` `d2183c2` | GitHub 远端主线 | 不含登录/身份策略/双域名修复/Windows 清理等 14 个生产提交 |
 | `p0/workspace-snapshot` | 已推送到远端的 P0 分支 | 生产分支的祖先，不是生产 HEAD |
 | `/Users/haminster/Projects/lidaiji-private` | 私人文章、图片、作者评、站点覆盖 | **Git 已恢复**，见 §2.3 |
@@ -183,14 +183,14 @@ export LIDAIJI_CONTENT_REPO_ROOT=/Users/haminster/Projects/lidaiji-private
 | 备份 | 路径 | 说明 |
 |---|---|---|
 | 本地平台最新备份 | `~/Documents/历代纪备份/lidaiji-platform_20261021_002437.tar.gz` | 源码目录快照 |
-| 本地平台 Git bundle | `~/Documents/历代纪备份/lidaiji-platform-git_20261021_002437.bundle` | 含 `p0/production-features=3105c66`；远端已含更新的 `c031efb` |
+| 本地平台 Git bundle | `~/Documents/历代纪备份/lidaiji-platform-git_20261021_002437.bundle` | 含 `p0/production-features=3105c66`；远端已含 `c031efb` 与文档提交 `6ccffa4` |
 | 本地内容备份 | `~/Documents/历代纪备份/lidaiji-content_20261021_002437.tar.gz` | 当前私仓内容 |
 | 本地内容 bundle | `~/Documents/历代纪备份/lidaiji-content-git_20261021_002437.bundle` | `main=736a76c`，`origin/main=7106a0a` |
 | 服务器源码包 | `/opt/writing-site/source` | 生产提交 `3105c66` 的源码，无 `.git` |
 | 服务器评论库备份 | `/var/backups/lidaiji-comments/` | 发布前一致性备份 |
 | 服务器旧 release | `/opt/writing-site/releases/` | 保留最近 5 个，可回滚 |
 
-新 bundle 已包含 `3105c66`，`c031efb` 已推送到 `origin/p0/production-features`。生产分支现在有 GitHub 远端备份；本地 bundle 可再生成一次以包含最新提交。
+新 bundle 已包含 `3105c66`；`c031efb` 与文档提交 `6ccffa4` 已推送到 `origin/p0/production-features`。生产分支现在有 GitHub 远端备份；本地 bundle 可再生成一次以包含最新提交。
 
 ---
 
@@ -431,7 +431,7 @@ nginx -t && systemctl reload nginx
 已处理：
 
 1. 生产工作树已恢复（§2.2），包含生产代码提交 `c031efb`。
-2. 分支已推送到 `origin/p0/production-features`；远端包含 `3105c66` 和 Windows 清理提交 `c031efb`。
+2. 分支已推送到 `origin/p0/production-features`；远端包含 `3105c66`、Windows 清理提交 `c031efb` 和文档提交 `6ccffa4`。
 3. 新 bundle `lidaiji-platform-git_20261021_002437.bundle` 包含 `3105c66`。
 4. 不要用 `main` 合并/覆盖 p0；两者已分叉。
 
@@ -573,7 +573,7 @@ stash@{0}: On main: 2026-10-20: stale login work superseded by p0/production-fea
 - 生产分支契约：`check-source`、`check-login-page`、`check-comment-button`、`check-article-comments` → 通过。
 - 生产分支隔离构建：30 个 HTML，2.6M；内容指纹 `90fcdf…`、配置指纹 `8933ac…` 与线上一致。
 - Windows 适配清理：删除 `scripts/windows/`、`docs/windows.md`、Windows CI job 与 Windows 打包/发布分支；`check-source` 断言 Windows 文件/文档/CI 不再存在；JS/Python 语法、评论测试、前端契约均通过。
-- 生产分支 `c031efb` 已推送到 `origin/p0/production-features`（首次推送 `3105c66`，Windows 清理后再次推送成功）。
+- 生产分支 `c031efb` 与文档提交 `6ccffa4` 已推送到 `origin/p0/production-features`（首次推送 `3105c66`，Windows 清理后再次推送成功）。GitHub 默认分支已切到 `p0/production-features`。
 - 私仓：`.git` 已恢复，`main=736a76c`，工作区干净。
 - `main`：旧登录改动已 `stash@{0}`；仅 HANDOFF/AGENTS/.gitignore 文档改动未提交。
 
