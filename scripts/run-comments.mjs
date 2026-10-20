@@ -25,7 +25,7 @@ function runCli(args, input) {
   const result = spawnSync(
     "node",
     ["--experimental-sqlite", path.join(ROOT, "comments-service", "src", "cli.js"), ...args],
-    { stdio: ["pipe", "inherit", "inherit"], input, env, windowsHide: true },
+    { stdio: ["pipe", "inherit", "inherit"], input, env },
   );
   if (result.status !== 0) process.exit(result.status ?? 1);
 }

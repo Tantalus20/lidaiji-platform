@@ -1,0 +1,53 @@
+name: p0-workspace-snapshot
+
+# P0 工作区/快照验收专用：仅在历史验证分支触发；只读权限，无任何部署步骤。
+on:
+  push:
+    branches:
+      - p0/workspace-snapshot
+
+permissions:
+  contents: read
+
+jobs:
+  linux-identity:
+    name: Linux identity rejection + full regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: peaceiris/actions-hugo@v3
+        with:
+          hugo-version: '0.162.0'
+          extended: true
+      - run: python -m venv .venv-importer
+      - run: .venv-importer/bin/pip install -r importer/requirements.txt
+      - run: npm ci
+      - run: npm --prefix comments-service ci
+      - run: npm run comments:init
+      - name: 记录工具链版本
+        run: |
+          node --version
+          python3 --version
+          git --version
+          hugo version
+          bash --version | head -1
+          git rev-parse HEAD
+      - name: 发布身份校验拒绝套件（真实执行 verify-release-identity.sh）
+        run: bash tests/check-release-identity.sh
+      - name: 核心检查（Node + Python + Hugo + Linux shell 安全）
+        run: npm run check
+      - name: 校验 Linux 构建产物与快照协议
+        run: |
+          head="$(git rev-parse HEAD)"
+          grep -q "^sourceCommit: $head$" dist/site/BUILD_INFO
+          grep -q "^snapshotMode: full_site$" dist/site/BUILD_INFO
+          snapshot="$(find .cache/releases -maxdepth 1 -mindepth 1 -type d -not -name '.*' | head -1)"
+          test -n "$snapshot"
+          .venv-importer/bin/python tools/release_snapshot.py verify --snapshot "$snapshot"

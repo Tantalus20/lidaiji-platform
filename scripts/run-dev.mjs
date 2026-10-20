@@ -34,7 +34,7 @@ const env = {
 
 const cli = path.join(ROOT, "comments-service", "src", "cli.js");
 const runCli = (extra) =>
-  spawn("node", ["--experimental-sqlite", cli, ...extra], { stdio: "inherit", env, windowsHide: true });
+  spawn("node", ["--experimental-sqlite", cli, ...extra], { stdio: "inherit", env });
 
 runCli(["sync-manifest", path.join(ROOT, "dist", "site", "comment-manifest.json")]);
 log(`本地预览（含段评服务）：http://${host}:${port}`);
@@ -42,6 +42,6 @@ log(`本地预览（含段评服务）：http://${host}:${port}`);
 const server = spawn(
   "node",
   ["--experimental-sqlite", path.join(ROOT, "comments-service", "src", "server.js")],
-  { stdio: "inherit", env, windowsHide: true },
+  { stdio: "inherit", env },
 );
 server.on("exit", (code) => process.exit(code ?? 0));

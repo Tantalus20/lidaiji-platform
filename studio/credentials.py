@@ -2,14 +2,13 @@
 
 凭据来源优先级（与任务书一致）：
   1. macOS Keychain（service = cn.lidaiji.studio，account = 管理员用户名）；
-  2. 仅本机用户可读的 600 配置文件（macOS/Linux/Windows 通用兜底）；
+  2. 仅本机用户可读的 600 配置文件（macOS/Linux 通用兜底）；
   3. 启动时环境变量（LIDAIJI_COMMENTS_ADMIN_USERNAME / _PASSWORD）。
 
 约束：
 - 任何读取/写入路径都不得把凭据打印到日志或终端；
 - 读取失败必须抛出 CredentialError，绝不回退到空字符串或匿名管理员；
-- Keychain 使用 macOS 自带 ``security`` CLI，不引入第三方依赖；
-- Windows 兜底文件写入时尝试 icacls 收紧为当前用户（尽力而为）。
+- Keychain 使用 macOS 自带 ``security`` CLI，不引入第三方依赖。
 """
 
 from __future__ import annotations
@@ -45,8 +44,6 @@ class CommentsCredentials:
 def _credential_file() -> Path:
     if sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support" / "LidaijiStudio"
-    elif os.name == "nt":
-        base = Path(os.environ.get("APPDATA", str(Path.home()))) / "LidaijiStudio"
     else:
         base = Path.home() / ".config" / "lidaiji-studio"
     return base / "comments-admin.json"
@@ -58,7 +55,7 @@ def _read_file_credentials() -> CommentsCredentials | None:
         return None
     try:
         mode = path.stat().st_mode & 0o777
-        if sys.platform != "win32" and mode & 0o077:
+        if mode & 0o077:
             raise CredentialError("本机凭据文件权限过宽（非 600），已拒绝读取。")
         data = json.loads(path.read_text(encoding="utf-8"))
     except OSError:
@@ -167,11 +164,6 @@ def store_comments_credentials(username: str, password: str) -> str:
             encoding="utf-8",
         )
         path.chmod(0o600)
-        if os.name == "nt":
-            subprocess.run(
-                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{os.environ.get('USERNAME', '')}:(R,W)"],
-                capture_output=True, timeout=10,
-            )
         return f"已写入本机凭据文件（仅当前用户可读）：{path}"
     except OSError:
         raise CredentialError("本机凭据文件写入失败。") from None

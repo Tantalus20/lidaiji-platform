@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-10-21 移除 Windows 适配
+
+- 删除 `scripts/windows/` PowerShell 启动器与 `docs/windows.md`。
+- 移除 CI 的 Windows job 与 `p0-cross-platform` 工作流中的 Windows 构建；保留 macOS/Linux 检查。
+- npm 入口统一为 macOS/Linux：build/check/publish/studio/package 不再分派 Windows 分支。
+- README 与部署文档的平台支持收窄为 macOS + Linux。
+- Studio 凭据只使用 macOS Keychain 或 600 文件，不再包含 Windows `icacls` 分支。
+
 ## 2026-10-20 双域名评论与登录契约修复
 
 - 评论服务 `COMMENTS_PUBLIC_ORIGIN` 支持逗号分隔的多个正式域名；第一个作为

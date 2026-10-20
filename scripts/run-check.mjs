@@ -1,6 +1,6 @@
-/* 跨平台 npm 入口：npm run check。
- * Windows/Linux → scripts/cross-platform/check.mjs（Node 核心检查集 + 构建）；
- * macOS → scripts/check.sh（全套既有检查，行为不变）。 */
+/* npm 入口：npm run check（macOS/Linux）。
+ * macOS → scripts/check.sh（全套既有检查）；
+ * Linux → scripts/cross-platform/check.mjs（Node 核心检查集 + 构建）。 */
 
 import path from "node:path";
 import { ROOT, run } from "./cross-platform/common.mjs";

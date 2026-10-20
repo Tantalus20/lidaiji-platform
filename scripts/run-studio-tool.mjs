@@ -1,14 +1,12 @@
-/* 跨平台 npm 入口：studio:open / status / stop / restart / install / uninstall。
+/* npm 入口：studio:open / status / stop / restart / install / uninstall（macOS/Linux）。
  * 按 npm_lifecycle_event 分发：
- *   Windows → scripts/windows/*.ps1
  *   macOS   → scripts/macos/*.sh（LaunchAgent/.app 可选便利功能）
  *   Linux   → open/status/stop/restart 用 Node 内联实现；install/uninstall 给出指引
  */
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
-import { IS_WIN, ROOT, die, log } from "./cross-platform/common.mjs";
+import { ROOT, die, log } from "./cross-platform/common.mjs";
 
 const event = process.env.npm_lifecycle_event || "";
 const tool = event.replace(/^studio:/, ""); // open/status/stop/restart/install/uninstall/setup
@@ -31,26 +29,6 @@ function runSetup() {
     process.exit(result.status ?? 1);
   }
   die("未找到 Python 运行环境，无法执行本机授权设置。");
-}
-
-if (IS_WIN) {
-  const script = {
-    open: "open-studio.ps1",
-    status: "status-studio.ps1",
-    stop: "stop-studio.ps1",
-    restart: "restart-studio.ps1",
-    install: "install-startup-task.ps1",
-    uninstall: "uninstall-startup-task.ps1",
-  }[tool];
-  if (tool === "setup") runSetup();
-  if (!script) die(`未知操作：${tool}`);
-  const ps = path.join(ROOT, "scripts", "windows", script);
-  const result = spawnSync(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps, ...process.argv.slice(2)],
-    { stdio: "inherit", windowsHide: true },
-  );
-  process.exit(result.status ?? 1);
 }
 
 if (process.platform === "darwin") {

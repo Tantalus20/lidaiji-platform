@@ -1,4 +1,4 @@
-/* 跨平台构建核心（Windows 使用；Unix 继续走 scripts/build.sh，行为不变）。
+/* 开发构建核心（`npm run dev` 使用；正式构建走 scripts/build.sh）。
  * 流程与 scripts/build.sh 等价：materialize 工作区 → 内容/图片检查 →
  * 段评锚点准备 → Hugo 构建 → manifest → 产物检查 → 输出 dist/site。 */
 
@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
-import { IS_WIN, ROOT, die, ensureDir, findPython, log, run, runCapture } from "./common.mjs";
+import { ROOT, die, ensureDir, findPython, log, run, runCapture } from "./common.mjs";
 
 const DIST = path.join(ROOT, "dist");
 let STAGING = "";

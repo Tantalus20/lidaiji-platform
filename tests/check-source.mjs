@@ -1,10 +1,7 @@
 import fs from "node:fs";
 
 const failures = [];
-const IS_WIN = process.platform === "win32";
 function assertExecutable(target) {
-  // Windows 的 Git 检出不设置 Unix 可执行位，此检查仅适用于 Unix 平台
-  if (IS_WIN) return;
   const mode = fs.statSync(target).mode;
   assert((mode & 0o111) !== 0, `${target}没有执行权限`);
 }
@@ -377,18 +374,8 @@ assert(editorPkg.devDependencies && editorPkg.devDependencies["prosemirror-model
 assert(read(".gitignore").includes("node_modules/"), ".gitignore缺少node_modules条目");
 assert(read(".gitignore").includes(".lidaiji-workspace.json"), ".gitignore缺少工作区配置条目");
 
-// Windows 正式支持：PowerShell 脚本、跨平台 npm 入口、文档与 CI
+// 平台支持：macOS + Linux；Windows 适配已移除
 for (const file of [
-  "scripts/windows/common.ps1",
-  "scripts/windows/setup.ps1",
-  "scripts/windows/start-studio.ps1",
-  "scripts/windows/stop-studio.ps1",
-  "scripts/windows/restart-studio.ps1",
-  "scripts/windows/status-studio.ps1",
-  "scripts/windows/open-studio.ps1",
-  "scripts/windows/install-startup-task.ps1",
-  "scripts/windows/uninstall-startup-task.ps1",
-  "scripts/windows/create-shortcut.ps1",
   "scripts/run-studio.mjs",
   "scripts/run-studio-tool.mjs",
   "scripts/run-check.mjs",
@@ -400,10 +387,11 @@ for (const file of [
   "scripts/cross-platform/common.mjs",
   "scripts/cross-platform/build.mjs",
   "scripts/cross-platform/check.mjs",
-  "docs/windows.md",
 ]) {
-  assert(fs.existsSync(file), `缺少Windows/跨平台文件：${file}`);
+  assert(fs.existsSync(file), `缺少共享/平台入口文件：${file}`);
 }
+assert(!fs.existsSync("scripts/windows"), "Windows PowerShell 启动器应已移除");
+assert(!fs.existsSync("docs/windows.md"), "Windows 用户文档应已移除");
 const pkgScripts = JSON.parse(read("package.json")).scripts;
 for (const [name, command] of Object.entries({
   studio: "node scripts/run-studio.mjs",
@@ -413,22 +401,15 @@ for (const [name, command] of Object.entries({
   package: "node scripts/run-package.mjs",
   "comments:init": "node scripts/run-comments.mjs",
 })) {
-  assert(pkgScripts[name] === command, `npm script ${name} 未跨平台化：${pkgScripts[name]}`);
+  assert(pkgScripts[name] === command, `npm script ${name} 未接入统一入口：${pkgScripts[name]}`);
 }
 const readme = read("README.md");
-assert(readme.includes("不需要 Mac"), "README 缺少跨平台表述");
-assert(readme.includes("平台支持") && readme.includes("Windows"), "README 缺少平台支持表");
-assert(read("docs/deployment.md").includes("Windows 作者电脑 + Linux 服务器"), "部署文档缺少 Windows 方案");
-assert(read(".github/workflows/ci.yml").includes("windows-latest"), "CI 缺少 windows-latest job");
-assert(read(".github/workflows/ci.yml").includes("ubuntu-latest"), "CI 缺少 ubuntu-latest job");
-assert(
-  read("scripts/windows/setup.ps1").includes("-CheckOnly"),
-  "setup.ps1 缺少只读预检模式",
-);
-assert(
-  !/Stop-Process -Name node\b|taskkill \/IM node\.exe \/F/i.test(read("scripts/windows/stop-studio.ps1")),
-  "stop-studio.ps1 不得误杀全部 Node 进程",
-);
+assert(readme.includes("平台支持") && readme.includes("macOS") && readme.includes("Linux"), "README 缺少 macOS/Linux 平台支持表");
+assert(!readme.includes("Windows"), "README 不得再声明 Windows 支持");
+assert(!read("docs/deployment.md").includes("Windows"), "部署文档不得再包含 Windows 方案");
+const ci = read(".github/workflows/ci.yml");
+assert(!ci.includes("windows-latest"), "CI 不得再包含 Windows job");
+assert(ci.includes("macos-14") && ci.includes("ubuntu-latest"), "CI 缺少 macOS/Linux job");
 
 if (failures.length) {
   console.error(`源码检查失败（${failures.length}项）：`);

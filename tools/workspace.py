@@ -2,7 +2,7 @@
 """解析并物化《历代纪》平台/内容双仓库工作区。"""
 
 from __future__ import annotations
-# Windows 控制台默认 GBK/cp936 无法编码中文输出；统一强制 UTF-8（跨平台一致）。
+# 统一强制 UTF-8，保证中文输出在 macOS 与 Linux 上一致。
 import sys
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):

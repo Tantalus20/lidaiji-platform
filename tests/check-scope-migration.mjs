@@ -104,7 +104,7 @@ assert.equal(Number(restored.prepare("SELECT COUNT(*) count FROM comments WHERE 
 assert.equal(restored.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
 restored.close();
 
-// Windows 上 SQLite 文件句柄释放可能有延迟；清理失败时带重试
+// SQLite 文件句柄释放可能有延迟；清理失败时带重试
 let cleaned = false;
 for (let attempt = 0; attempt < 5; attempt += 1) {
   try {
