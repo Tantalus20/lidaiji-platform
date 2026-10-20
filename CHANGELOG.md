@@ -1,5 +1,19 @@
 # 更新日志
 
+## 2026-10-20 双域名评论与登录契约修复
+
+- 评论服务 `COMMENTS_PUBLIC_ORIGIN` 支持逗号分隔的多个正式域名；第一个作为
+  规范 Origin（CQNB 会话校验使用），别名域提交不再是 403。新增多域名白名单测试。
+- 登录页移除浏览器禁止手动设置的 `Origin` 请求头；`?return=/login/` 不再造成
+  已登录用户的重定向循环；登录页加 `noindex`。
+- 新增 `tests/check-login-page.mjs`：锁定阅读公开、评论前登录、同源 `/login/`
+  回跳、身份昵称、登录评论直接公开和 Nginx 认证反代契约。
+- `server-publish.sh` 发布前校验 `/api/auth/session` 为 401，切换后校验 `/login/`
+  为 200，避免 Nginx 认证路由缺失时静默发布。
+- 更新 README、comments README、comments 文档、`.env.example` 与
+  `COMPONENTS.json`（platform 0.2.1 / site 0.4.3 / comments 0.5.1 / studio 0.2.6），
+  并由 `check-source` 校验组件清单与各版本唯一来源一致。
+
 ## Studio v0.2.5（2026-08-06，文章级隔离发布收尾）
 
 - 候选 manifest：隔离候选逐文件 SHA-256 清单 + 分类（target-article /

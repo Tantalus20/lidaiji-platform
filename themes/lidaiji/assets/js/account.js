@@ -15,7 +15,7 @@
       out.className = "account-logout";
       out.textContent = "退出";
       out.addEventListener("click", async () => {
-        await fetch("/api/auth/logout", { method: "POST", headers: { Origin: location.origin }, credentials: "same-origin" });
+        await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
         location.reload();
       });
       slot.append(name, out);

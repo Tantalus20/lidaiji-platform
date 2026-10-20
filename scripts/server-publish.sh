@@ -144,6 +144,13 @@ REQUIRED_KB="$(( ($(stat -c '%s' "$RELEASE_ARCHIVE") + $(stat -c '%s' "$SOURCE_A
   exit 2
 }
 nginx -t
+# 认证反代是手工维护的 Nginx 配置；发布前确认它仍然存在，避免站点更新后登录静默失效。
+AUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" \
+  "https://$DOMAIN/api/auth/session" 2>/dev/null || true)"
+if [[ "$AUTH_STATUS" != "401" ]]; then
+  printf '认证反代未就绪：/api/auth/session 返回 %s（期望 401），禁止发布。\n' "${AUTH_STATUS:-无响应}" >&2
+  exit 2
+fi
 if [[ -L "$ROOT/current" ]]; then
   test -f "$ROOT/current/index.html"
   test -f "$ROOT/current/404.html"
@@ -299,6 +306,18 @@ SWITCHED=1
 
 curl -fsS --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/" >/dev/null
 curl -fsS --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/search-index.json" >/dev/null
+LOGIN_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" \
+  "https://$DOMAIN/login/" 2>/dev/null || true)"
+if [[ "$LOGIN_STATUS" != "200" ]]; then
+  printf '登录页自检失败：/login/ 返回 %s（期望 200）。\n' "${LOGIN_STATUS:-无响应}" >&2
+  exit 1
+fi
+AUTH_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" \
+  "https://$DOMAIN/api/auth/session" 2>/dev/null || true)"
+if [[ "$AUTH_STATUS" != "401" ]]; then
+  printf '认证反代自检失败：/api/auth/session 返回 %s（期望 401）。\n' "${AUTH_STATUS:-无响应}" >&2
+  exit 1
+fi
 
 if [[ -d "$SOURCE_BEFORE" ]]; then rm -rf "$SOURCE_BEFORE"; fi
 find "$ROOT/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \

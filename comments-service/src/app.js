@@ -111,10 +111,19 @@ function sourceFingerprint(request, config) {
   return fingerprint(config.hmacSecret, clientAddress(request, config));
 }
 
+function publicOriginsOf(config) {
+  // 兼容直接构造 config 的旧测试/调用方；由 loadConfig 产出的配置总有 publicOrigins。
+  return Array.isArray(config.publicOrigins) && config.publicOrigins.length
+    ? config.publicOrigins
+    : [config.publicOrigin];
+}
+
 function originAllowed(request, config) {
   const origin = String(request.headers.origin || "");
   const referer = String(request.headers.referer || "");
-  return origin === config.publicOrigin || (!origin && referer.startsWith(`${config.publicOrigin}/`));
+  const origins = publicOriginsOf(config);
+  if (origin) return origins.includes(origin);
+  return origins.some((allowed) => referer.startsWith(`${allowed}/`));
 }
 
 function isLoopbackAddress(address) {
@@ -130,8 +139,9 @@ function adminOriginAllowed(request, config) {
   // （SSH 隧道、CLI、curl）。错误 Origin 即使来自回环也拒绝。
   const origin = String(request.headers.origin || "");
   const referer = String(request.headers.referer || "");
-  if (origin) return origin === config.publicOrigin;
-  if (referer) return referer.startsWith(`${config.publicOrigin}/`);
+  const origins = publicOriginsOf(config);
+  if (origin) return origins.includes(origin);
+  if (referer) return origins.some((allowed) => referer.startsWith(`${allowed}/`));
   return isLoopbackAddress(String(request.socket?.remoteAddress || ""));
 }
 

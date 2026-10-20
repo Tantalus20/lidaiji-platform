@@ -49,6 +49,8 @@ assert(serverPublish.includes('[[ -L "$ROOT/current" && -e "$ROOT/current" ]]'),
 assert(!serverPublish.includes("tar -tzf \"$RELEASE_ARCHIVE\" | grep -q"), "发布包校验仍存在pipefail/SIGPIPE风险");
 assert(serverPublish.includes("umask 077"), "服务器发布未固定私有文件掩码");
 assert(serverPublish.includes('chmod 0600 "$COMMENTS_DB_BACKUP"'), "发布前评论数据库备份未固定0600权限");
+assert(serverPublish.includes('/api/auth/session'), "发布脚本必须校验认证反代是否仍可用");
+assert(serverPublish.includes('/login/'), "发布后必须校验登录页可访问");
 const serverRollback = read("scripts/server-rollback.sh");
 assert(serverRollback.includes("umask 077"), "服务器回滚未固定私有文件掩码");
 assert(serverRollback.includes('chmod 0600 "$ROLLBACK_BACKUP"'), "回滚前评论数据库备份未固定0600权限");
@@ -62,6 +64,12 @@ assert(/^\d+\.\d+\.\d+$/.test(studioVersion), "package.json.studioVersion 格式
 assert(read("studio/static/index.html").includes(`工作台 v${studioVersion}`), "Studio页面版本与 studioVersion 不一致");
 assert(read("README.md").includes(`studio v${studioVersion}`), "README组件版本与 studioVersion 不一致");
 assert(read("scripts/macos/common.sh").includes(`STUDIO_APP_VERSION="${studioVersion}"`), "macOS应用版本与 studioVersion 不一致");
+// 组件清单必须与各版本唯一来源一致，避免交接时读到过期版本。
+const components = JSON.parse(read("COMPONENTS.json"));
+assert(components.platform === JSON.parse(read("package.json")).version, "COMPONENTS.platform 与 package.json 不一致");
+assert(components.site === read("VERSION").trim(), "COMPONENTS.site 与 VERSION 不一致");
+assert(components.comments === JSON.parse(read("comments-service/package.json")).version, "COMPONENTS.comments 与 comments-service/package.json 不一致");
+assert(components.studio === studioVersion, "COMPONENTS.studio 与 studioVersion 不一致");
 // 本地免登录（v0.2.1）：认证模式、凭据存储、CSRF令牌与设置命令必须存在。
 const studioAuthServer = read("studio/server.py");
 assert(studioAuthServer.includes('AUTH_MODES = ("local-bootstrap", "password")'), "Studio缺少认证模式定义");

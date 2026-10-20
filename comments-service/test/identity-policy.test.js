@@ -65,7 +65,7 @@ async function fixture(overrides = {}) {
   const config = loadConfig({
     dataDir: directory,
     database: path.join(directory, "comments.sqlite3"),
-    publicOrigin: "http://example.test",
+    publicOrigins: overrides.publicOrigins || ["http://example.test"],
     hmacSecret: "test-secret-that-is-at-least-thirty-two-bytes",
     rateMinute: 60,
     rateHour: 600,
@@ -186,4 +186,39 @@ test("登录必填但身份模式未启用：fail-closed 500 且不写入", asyn
   const result = await request(ctx, "/api/comments/v1/comments", { method: "POST", body: JSON.stringify(payload()) });
   assert.equal(result.response.status, 500);
   assert.equal(ctx.db.prepare("SELECT COUNT(*) c FROM comments").get().c, 0);
+});
+
+test("多域名白名单：别名 Origin 的登录评论被接受", async (t) => {
+  const ctx = await fixture({
+    publicOrigins: ["http://example.test", "http://alias.test"],
+    identityMode: "cqnb",
+    requireCommentLogin: true,
+    autoApproveComments: true,
+  });
+  t.after(() => ctx.close());
+  const result = await request(ctx, "/api/comments/v1/comments", {
+    method: "POST",
+    body: JSON.stringify(payload()),
+    headers: { Origin: "http://alias.test", Cookie: "cqnb_platform=good-session" },
+  });
+  assert.equal(result.response.status, 202);
+  assert.equal(ctx.db.prepare("SELECT status FROM comments").get().status, "approved");
+});
+
+test("多域名白名单：未知 Origin 仍然 403", async (t) => {
+  const ctx = await fixture({ publicOrigins: ["http://example.test", "http://alias.test"] });
+  t.after(() => ctx.close());
+  const result = await request(ctx, "/api/comments/v1/comments", {
+    method: "POST",
+    body: JSON.stringify(payload()),
+    headers: { Origin: "http://evil.test" },
+  });
+  assert.equal(result.response.status, 403);
+});
+
+test("Origin 白名单解析：去尾斜杠、去重、拒绝带路径", () => {
+  const config = loadConfig({ publicOrigins: "http://example.test/, http://alias.test,http://example.test" });
+  assert.equal(config.publicOrigin, "http://example.test");
+  assert.deepEqual(config.publicOrigins, ["http://example.test", "http://alias.test"]);
+  assert.throws(() => loadConfig({ publicOrigins: "http://example.test/path" }), /只能填写站点 Origin/);
 });

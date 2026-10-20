@@ -6,7 +6,9 @@
   const status = page.querySelector("[data-auth-status]");
   const returnUrl = (() => {
     const value = new URLSearchParams(location.search).get("return") || "/";
-    return value.startsWith("/") && !value.startsWith("//") && !value.includes("\\") ? value : "/";
+    const local = value.startsWith("/") && !value.startsWith("//") && !value.includes("\\");
+    const notLogin = !/^\/login(?:\/|$|\?)/.test(value);
+    return local && notLogin ? value : "/";
   })();
   page.querySelector("[data-auth-return]").href = returnUrl;
   const setStatus = (message, tone = "") => {
@@ -45,7 +47,7 @@
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Origin": location.origin },
+        headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
         body: JSON.stringify(values),
       });

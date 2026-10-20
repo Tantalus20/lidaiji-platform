@@ -15,6 +15,7 @@ if [[ -z "${HUGO_BIN:-}" ]]; then
 fi
 
 node "$ROOT/tests/check-source.mjs"
+node "$ROOT/tests/check-login-page.mjs" "$ROOT"
 node "$ROOT/tests/check-comment-button.mjs" "$ROOT"
 node "$ROOT/tests/check-reading-ui.mjs" "$ROOT"
 node "$ROOT/tests/check-reader-tools.mjs" "$ROOT"
